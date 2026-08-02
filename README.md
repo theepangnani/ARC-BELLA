@@ -16,6 +16,9 @@ python run.py
 
 Opens itself at <http://localhost:8420>.
 
+On Windows, `start-arc.vbs` does the same thing with no console window, and
+`stop-arc.vbs` shuts it down. Both live next to `run.py`.
+
 **Use Chrome or Edge.** Speech recognition is a Chromium API. Other browsers
 still work through the text field, just without voice input.
 
@@ -29,6 +32,8 @@ still work through the text field, just without voice input.
 | Hands free | Tick **Always listening**, then say the wake word — `bella` by default |
 | Follow-up question | Just keep talking. No wake word needed for ~16 seconds after a reply |
 | Interrupt a reply | Tap the ring while it's speaking |
+| Spin the ball (3D) | Drag across the ring. Flick and it coasts |
+| Poke it | Touch or hover — nearby bars swell under your finger |
 | Type instead | The box on the right |
 
 ### Reading the ring
@@ -60,9 +65,34 @@ Say the wake word and your question together: *"bella, what's the weather."*
 
 ---
 
+## Timers
+
+The one thing ARC can actually *do*. Ask for a timer and it sets one; it
+chimes and announces itself when it finishes, and survives a page reload.
+
+Deliberately implemented entirely in the browser. Nothing runs on your
+machine — which is what keeps it safe to put on the internet. Launching
+applications or running commands would mean handing a web-reachable server the
+ability to execute things on your PC, and that is a back door the moment the
+site is shared.
+
+ARC can't cancel a timer; reload the page to clear them.
+
+## Staying quiet
+
+ARC can decide it wasn't being spoken to and say nothing at all. It's told to
+use this for half-sentences, one side of someone else's conversation, thinking
+aloud, and audio picked up from a television — but explicitly *not* merely
+because a message is short or badly transcribed, since a garbled question is
+still a question. When unsure it answers, on the grounds that a needless reply
+is a smaller failure than ignoring someone.
+
+The transcript still records that it heard you, so silence is never
+indistinguishable from a fault.
+
 ## Memory
 
-ARC keeps a handful of durable facts about you — your name, how you like
+ARC keeps up to 120 durable facts about you — your name, how you like
 answers pitched, projects that keep coming up — and feeds them back on every
 request. Stored in your browser on your own machine, never anywhere else.
 
@@ -92,8 +122,24 @@ Three layers, because a rough transcript is not a written sentence:
 
 ## Appearance
 
-Under the transcript: seven colour themes, three core shapes (rings, hex,
-waveform), and a reactivity slider from 0.4× to 4×. All persist locally.
+Under the transcript: seven colour themes, four core shapes (HUD, rings, hex,
+waveform), a flat/3D toggle, and a reactivity slider from 0.4× to 4×. All
+persist locally.
+
+**3D** replaces the flat shape with an actual sphere: 150 points scattered
+evenly over its surface by Fibonacci spiral (latitude bands would bunch at the
+poles), each growing outward along its own normal, wrapped in a wireframe of
+three latitudes and three longitudes. It turns slowly, faster while speaking.
+
+Drag to spin it and to tilt it up or down. A press that stays put is
+push-to-talk exactly as before; a press that moves is treated as a drag and
+cancels the recording, so spinning the ball never sends a stray clip. Touch or
+hover pushes the nearby surface outward, easing back when you let go.
+
+Depth is driven off z rather than perspective — at this scale perspective
+barely separates front from back, so the far hemisphere goes thin and dim
+instead. That is what makes it read as a solid ball rather than a scatter of
+dots. The flat backdrop layers fade right back in 3D.
 
 ---
 

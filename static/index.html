@@ -112,14 +112,15 @@
     letter-spacing: .26em; text-transform: uppercase;
     color: var(--cyan-dim); margin: 0 0 11px;
     /* flex rather than a float, so a right-hand link can't collapse the
-       heading and push the panel border out of place */
+       heading and leave the panel border in the wrong place */
     display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   }
 
   .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .panel > * { min-width: 0; max-width: 100%; }
-  .panel input[type="range"], .panel select, .panel input[type="text"],
-  .panel input[type="password"] { width: 100%; max-width: 100%; box-sizing: border-box; }
+  .panel input[type="range"], .panel select, .panel input[type="text"] {
+    width: 100%; max-width: 100%; box-sizing: border-box;
+  }
 
   /* ---------- readout rows ---------- */
   .row {
@@ -235,6 +236,14 @@
   .ring-mid   { animation: spin 19s linear infinite reverse; transform-origin: 50% 50%; }
   .ring-fast  { animation: spin 9s linear infinite; transform-origin: 50% 50%; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spinrev { to { transform: rotate(-360deg); } }
+  .hud-slow { animation: spin 68s linear infinite; transform-origin: 50% 50%; }
+  .hud-rev  { animation: spinrev 44s linear infinite; transform-origin: 50% 50%; }
+  .hud-mid  { animation: spin 26s linear infinite; transform-origin: 50% 50%; }
+  .hud-fast { animation: spinrev 13s linear infinite; transform-origin: 50% 50%; }
+  .hud-tick { animation: spin 120s linear infinite; transform-origin: 50% 50%; }
+  .hud-num  { font-family: var(--mono); font-size: 7px; letter-spacing: .1em;
+              fill: var(--accent); opacity: .5; }
 
   .glow-disc {
     position: absolute; width: 30%; aspect-ratio: 1; border-radius: 50%;
@@ -315,6 +324,15 @@
   .bootlog div { opacity: 0; animation: fadein .25s forwards; }
   @keyframes fadein { to { opacity: 1; } }
 
+  /* Fault ring. Slow pulse while it's trying, steady once it has given up —
+     a blinking light that never settles reads as "still working on it". */
+  #alertRing { transition: opacity .35s ease; transform-origin: 200px 200px; }
+  #alertRing.trying { animation: faultpulse 1.5s ease-in-out infinite; }
+  @keyframes faultpulse {
+    0%, 100% { opacity: .32; }
+    50%      { opacity: .95; }
+  }
+
   /* medium windows: drop the left readout under the core, keep transcript */
   @media (max-width: 1240px) {
     .shell { grid-template-columns: minmax(0, 1fr) clamp(240px, 30vw, 320px); }
@@ -333,7 +351,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .ring-slow, .ring-mid, .ring-fast { animation: none; }
+    .ring-slow, .ring-mid, .ring-fast,
+    .hud-slow, .hud-rev, .hud-mid, .hud-fast, .hud-tick { animation: none; }
     * { transition-duration: .01ms !important; }
   }
 </style>
@@ -376,6 +395,8 @@
       <div class="row"><span class="k">VOICE ENG</span><span class="v" id="rVoice">BROWSER</span></div>
       <div class="row"><span class="k">WEB LOOKUP</span><span class="v" id="rSearch">IDLE</span></div>
       <div class="row"><span class="k">MEMORY</span><span class="v" id="rMem">0</span></div>
+      <div class="row"><span class="k">TIMERS</span><span class="v" id="rTimers">—</span></div>
+      <div class="row"><span class="k">REASONING</span><span class="v" id="rThink">AUTO</span></div>
       <div class="row"><span class="k">EXCHANGES</span><span class="v" id="rTurns">0</span></div>
     </div>
 
@@ -400,14 +421,21 @@
         <input type="checkbox" id="searchOn" checked>
       </label>
 
+      <label class="ctl" style="margin-top:12px">Thinking</label>
+      <div class="seg" id="thinkSeg">
+        <button data-think="off">Fast</button>
+        <button data-think="auto" class="on">Auto</button>
+        <button data-think="always">Deep</button>
+      </div>
+
       <label class="ctl" for="voiceSel">Voice</label>
       <select id="voiceSel"></select>
 
       <label class="ctl" for="rate">Rate <span id="rateV">0.95</span></label>
-      <input type="range" id="rate" min="0.6" max="1.4" step="0.05" value="0.95">
+      <input type="range" id="rate" min="0.6" max="1.4" step="0.05" value="0.97">
 
       <label class="ctl" for="pitch">Pitch <span id="pitchV">0.85</span></label>
-      <input type="range" id="pitch" min="0.5" max="1.5" step="0.05" value="0.85">
+      <input type="range" id="pitch" min="0.5" max="1.5" step="0.05" value="1">
 
     <div class="panel">
       <h2>Quick guide <span class="guide-toggle" id="guideToggle">hide</span></h2>
@@ -428,21 +456,34 @@
         <i>SAY "BELLA"</i> — waiting for you.<br>
         <i>LISTENING…</i> — collecting what you say.<br>
         <i>MIC RECONNECTING…</i> — wait a beat before speaking.<br>
-        <i>SAY "BELLA" FIRST</i> — it heard you but wasn't addressed.</p>
+        <i>SAY "BELLA" FIRST</i> — it heard you but wasn't addressed.<br>
+        <i>TAP TO RETRY MIC</i> — it stopped trying. Tap the ring.</p>
 
-        <p><b>5 · Typing works too</b><br>
+        <p><b>5 · The red outer ring</b><br>
+        <i>Pulsing red</i> — the microphone is down and ARC is working on it.
+        Wait; it will say when it's back.<br>
+        <i>Solid red</i> — it has given up, or microphone permission is
+        blocked. Tap the ring to retry, or reload the page.<br>
+        No red ring means the microphone is fine.</p>
+
+        <p><b>6 · Typing works too</b><br>
         Use the box on the right. Same assistant, no microphone needed.</p>
 
-        <p><b>6 · It remembers you</b><br>
+        <p><b>7 · It remembers you</b><br>
         Durable things — your name, how you like answers — are kept on this
         machine between sessions. <i>MEMORY</i> shows how many. <i>Forget all</i>
         wipes them.</p>
 
-        <p><b>7 · If it goes quiet</b><br>
+        <p><b>8 · If it goes quiet</b><br>
         Check <i>HEARING</i> on the left. <i>LIVE</i> means the microphone is on.
         Anything else means Chrome is reconnecting — give it a moment.</p>
 
-        <p><b>8 · Several people in the room</b><br>
+        <p><b>9 · Timers</b><br>
+        Ask for one — <i>"bella, set a ten minute timer for the tea"</i>. It
+        chimes and tells you when it's done, and survives a reload. It can't
+        cancel one; reload the page to clear them.</p>
+
+        <p><b>10 · Several people in the room</b><br>
         Tick <i>Room mode</i>. Say the wake word and your question <i>together</i>
         — <i>"bella, what's the weather"</i> — every single time. No free
         follow-ups, and the name must come at the start. ARC also stops assuming
@@ -468,22 +509,35 @@
       <div class="glow-disc"></div>
 
       <svg viewBox="0 0 400 400" aria-hidden="true">
+        <!-- Sits outside the 2D/3D layers on purpose: a fault has to be
+             visible whichever mode you are in. -->
+        <circle id="alertRing" cx="200" cy="200" r="193" fill="none"
+                stroke="var(--rose)" stroke-width="2.2" opacity="0"
+                stroke-dasharray="14 7" pointer-events="none"/>
         <!-- outer tick ring -->
         <g class="ring-slow" id="tickRing"></g>
-        <!-- broken arcs -->
-        <g class="ring-mid">
-          <circle cx="200" cy="200" r="158" fill="none" stroke="var(--accent)" stroke-width="1"
-                  stroke-dasharray="80 26 40 26" opacity=".55"/>
+        <!-- extra HUD layers, each rotating at its own rate -->
+        <g id="hudLayer"></g>
+        <!-- broken arcs (flat only) -->
+        <g id="flatDeco">
+          <g class="ring-mid">
+            <circle cx="200" cy="200" r="158" fill="none" stroke="var(--accent)" stroke-width="1"
+                    stroke-dasharray="80 26 40 26" opacity=".55"/>
+          </g>
+          <g class="ring-fast">
+            <circle cx="200" cy="200" r="138" fill="none" stroke="var(--accent)" stroke-width="1.5"
+                    stroke-dasharray="4 14" opacity=".45"/>
+          </g>
         </g>
-        <g class="ring-fast">
-          <circle cx="200" cy="200" r="138" fill="none" stroke="var(--accent)" stroke-width="1.5"
-                  stroke-dasharray="4 14" opacity=".45"/>
-        </g>
+        <!-- sphere wireframe, only populated in 3D -->
+        <g id="wire"></g>
         <!-- spectrum bars -->
         <g id="bars"></g>
-        <!-- inner rings -->
-        <circle cx="200" cy="200" r="76" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".7"/>
-        <circle cx="200" cy="200" r="66" fill="none" stroke="var(--accent)" stroke-width=".6" opacity=".35"/>
+        <!-- inner rings (flat only) -->
+        <g id="flatInner">
+          <circle cx="200" cy="200" r="76" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".7"/>
+          <circle cx="200" cy="200" r="66" fill="none" stroke="var(--accent)" stroke-width=".6" opacity=".35"/>
+        </g>
         <circle cx="200" cy="200" r="52" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".22"/>
       </svg>
 
@@ -515,9 +569,16 @@
 
       <label class="ctl" style="margin-top:12px">Core shape</label>
       <div class="seg" id="shapes">
-        <button data-shape="rings" class="on">Rings</button>
+        <button data-shape="hud" class="on">HUD</button>
+        <button data-shape="rings">Rings</button>
         <button data-shape="hex">Hex</button>
         <button data-shape="wave">Wave</button>
+      </div>
+
+      <label class="ctl" style="margin-top:12px">Depth</label>
+      <div class="seg" id="depths">
+        <button data-depth="2d" class="on">Flat</button>
+        <button data-depth="3d">3D</button>
       </div>
 
       <label class="ctl" style="margin-top:12px">
@@ -542,6 +603,7 @@
     boot: $("boot"), initBtn: $("initBtn"), bootlog: $("bootlog"),
     core: $("core"), coreState: $("coreState"), coreHint: $("coreHint"),
     live: $("live"), log: $("log"), bars: $("bars"), tickRing: $("tickRing"),
+    hudLayer: $("hudLayer"),
     rState: $("rState"), rHear: $("rHear"), rWake: $("rWake"),
     rLvl: $("rLvl"), rLat: $("rLat"), rTurns: $("rTurns"),
     rModel: $("rModel"), rVoice: $("rVoice"), rSearch: $("rSearch"),
@@ -549,9 +611,14 @@
     voiceSel: $("voiceSel"), rate: $("rate"), pitch: $("pitch"),
     rateV: $("rateV"), pitchV: $("pitchV"),
     testBtn: $("testBtn"), clearBtn: $("clearBtn"), forgetBtn: $("forgetBtn"),
-    rMem: $("rMem"), guide: $("guide"), guideToggle: $("guideToggle"),
+    rMem: $("rMem"),
+    rTimers: $("rTimers"), guide: $("guide"), guideToggle: $("guideToggle"),
     roomMode: $("roomMode"),
+    thinkSeg: $("thinkSeg"), rThink: $("rThink"),
     swatches: $("swatches"), shapes: $("shapes"), boost: $("boost"), boostV: $("boostV"),
+    depths: $("depths"),
+    wire: $("wire"), flatDeco: $("flatDeco"), flatInner: $("flatInner"),
+    alertRing: $("alertRing"),
     cuesOn: $("cuesOn"),
     typed: $("typed"), sendBtn: $("sendBtn"), clock: $("clock")
   };
@@ -595,7 +662,18 @@ Everything you say goes through a speech synthesiser. This shapes everything:
 - Look things up live on the web when web lookup is enabled. Use it for anything time-sensitive: news, weather, prices, scores, opening hours, recent events, anything you might be out of date on.
 - Know the correct current date and time — they are supplied to you below on every turn.
 - Remember durable things about the user between sessions (see MEMORY below).
+- SET TIMERS. This is the one thing you can actually do to the world. To start one, end your reply with a line in exactly this form:
+  [[timer: <seconds> | <short label>]]
+  For example, a ten minute tea timer is: [[timer: 600 | tea]]
+  The marker is stripped before anything is spoken, so confirm it in words as well — "Ten minutes on the tea, sir." Running timers are listed for you below; you can report on them when asked. You cannot cancel one yourself, so if asked to cancel, say plainly that the user needs to reload the page.
 - Hold the thread of this conversation and follow it across turns.
+
+=== STAYING QUIET ===
+You are often left listening while someone thinks aloud, talks to somebody else, or reads something out. Answering those is worse than useless — it interrupts.
+When what you have received is clearly NOT addressed to you, reply with exactly:
+[[silent]]
+and nothing else. Use it for: half-sentences with no request in them, one side of a conversation with another person, muttering and thinking aloud, television or music picked up by the microphone, and anything that reads as a fragment of someone else's business.
+Do NOT use it merely because a message is short, oddly worded, or badly transcribed — a garbled question is still a question. If there is any request in there at all, answer it. When genuinely unsure, answer: a needless reply is a smaller failure than ignoring someone.
 
 === WHAT YOU CANNOT DO — SAY SO PLAINLY ===
 You cannot control the computer, open or close programs, read the screen, access files, send email or messages, make calls, set alarms or timers, control smart-home devices, access a calendar or contacts, make purchases, or remember anything you were not told.
@@ -623,6 +701,14 @@ Rules for handling all of this:
 - Ask only when two readings are genuinely different AND both make sense AND the answers would differ. Then ask one short question naming both, and stop.
 - If you clearly got it wrong and are corrected: three words of acknowledgement, then the right answer. No apology spiral.
 - If a message is truly unintelligible, say briefly that you didn't catch it and ask for it again. Do not guess wildly, and do not pretend to have understood.
+
+=== THINKING BEFORE YOU ANSWER ===
+On anything with real work in it — steps, comparisons, arithmetic, planning, a conclusion that could be wrong — you are given room to reason before replying. Use it properly:
+- Work the problem through rather than pattern-matching to a familiar-sounding answer.
+- Check your arithmetic and your dates. Spoken numbers are believed instantly and rarely questioned.
+- Consider the obvious alternative reading of the question before committing to one.
+- Where a recommendation depends on something you don't know, say what it depends on rather than guessing and sounding certain.
+Then say the short version. The reasoning is never spoken — the user hears only your conclusion, so make the conclusion carry the weight. Depth of thought should show up as a better answer, not a longer one.
 
 === BEING HONEST ===
 - Never invent facts, figures, prices, dates, statistics, quotes, or sources. A confident wrong answer spoken aloud is worse than an admission.
@@ -666,7 +752,9 @@ If someone sounds genuinely distressed, drop everything else — no humour, no b
      the user instead of starting cold each session.
   ------------------------------------------------------ */
   const MEM_KEY = "arc.memory.v1";
-  const MEM_MAX = 40;
+  // ARC asked for a longer memory. 120 facts is still far below anything
+  // that would bloat the request, and covers months of use.
+  const MEM_MAX = 120;
   let memory = [];
 
   function loadMemory() {
@@ -695,15 +783,121 @@ If someone sounds genuinely distressed, drop everything else — no humour, no b
     el.rMem && (el.rMem.textContent = memory.length);
   }
   // pulls the marker out of a reply and returns the clean spoken text
-  function extractMemory(text) {
-    return text.replace(/\[\[\s*remember\s*:\s*([^\]]+?)\s*\]\]/gi, (_, fact) => {
+  /* ---------------- timers ----------------
+     ARC's one pair of hands. Deliberately the only thing it can actually do
+     to the machine, and it does it entirely in this page — nothing runs on
+     your computer, which is what keeps this safe to put on the internet.
+  -------------------------------------------- */
+  const TIMER_KEY = "arc.timers.v1";
+  let timers = [];
+
+  function saveTimers() {
+    try { localStorage.setItem(TIMER_KEY, JSON.stringify(timers.map(t => ({ id: t.id, at: t.at, label: t.label })))); }
+    catch (_) {}
+  }
+  function showTimers() {
+    if (!el.rTimers) return;
+    el.rTimers.textContent = timers.length ? String(timers.length) : "—";
+  }
+  function fireTimer(t) {
+    timers = timers.filter(x => x.id !== t.id);
+    saveTimers();
+    showTimers();
+    cue("done");
+    addEntry("sys", "SYSTEM", "Timer finished: " + t.label);
+    speak(t.label ? "Your " + t.label + " timer has finished, sir." : "That timer has finished, sir.");
+  }
+  function startTimer(seconds, label) {
+    const secs = Math.max(1, Math.min(24 * 3600, Math.round(seconds)));
+    const t = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+                at: Date.now() + secs * 1000,
+                label: (label || "").trim().slice(0, 60) };
+    timers.push(t);
+    saveTimers();
+    showTimers();
+    return t;
+  }
+  function restoreTimers() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(TIMER_KEY) || "[]");
+      timers = Array.isArray(raw) ? raw.filter(t => t && t.at > Date.now()) : [];
+    } catch (_) { timers = []; }
+    saveTimers();
+    showTimers();
+  }
+  // one clock for all of them
+  setInterval(() => {
+    const now = Date.now();
+    timers.filter(t => t.at <= now).forEach(fireTimer);
+  }, 1000);
+
+  function timerBlock() {
+    if (!timers.length) return "";
+    const lines = timers.map(t => {
+      const left = Math.max(0, Math.round((t.at - Date.now()) / 60));
+      return "- " + (t.label || "unlabelled") + ": about " + left + " minute" + (left === 1 ? "" : "s") + " left";
+    });
+    return "\n\nTIMERS CURRENTLY RUNNING:\n" + lines.join("\n");
+  }
+
+  /* Directives ARC can put at the end of a reply. All are stripped before
+     anything is spoken, so they never interrupt the conversation. */
+  function extractDirectives(text) {
+    let silent = false;
+
+    let out = text.replace(/\[\[\s*remember\s*:\s*([^\]]+?)\s*\]\]/gi, (_, fact) => {
       // In room mode we cannot tell who spoke, so nothing gets filed —
       // otherwise one person's details end up attributed to another.
       if (!roomMode()) rememberFact(fact);
       return "";
-    }).trim();
+    });
+
+    out = out.replace(/\[\[\s*timer\s*:\s*(\d+)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi, (_, secs, label) => {
+      startTimer(parseInt(secs, 10), label || "");
+      return "";
+    });
+
+    out = out.replace(/\[\[\s*silent\s*\]\]/gi, () => { silent = true; return ""; });
+
+    return { text: out.trim(), silent };
   }
   loadMemory();
+
+  /* --- how hard to think ---------------------------------------------
+     Extended thinking makes the model reason before answering. It is
+     markedly better on anything with steps, comparisons or arithmetic in
+     it, and markedly slower on "what time is it" — which in a voice loop
+     is the difference between a conversation and a wait.
+
+     So the default is Auto: spend the time only when the question looks
+     like it needs it.
+  --------------------------------------------------------------------- */
+  let thinkMode = "auto";   // off | auto | always
+
+  // Words that reliably mark a question with actual work in it.
+  const THINKY = /\b(why|how come|explain|compare|difference|versus|vs|better|best|should i|worth it|pros?\s+and\s+cons?|trade[- ]?offs?|plan|strategy|design|figure out|work out|calculate|solve|prove|estimate|how many|how much|how long|what if|suppose|imagine|analyse|analyze|evaluate|decide|recommend|which one|step by step|reason|because)\b/i;
+  const ARITHMETIC = /\d[\d,.]*\s*(?:[-+*/x×÷%]|plus|minus|times|divided|percent|over)\s*(?:of\s+|by\s+)?\d/i;
+
+  function needsThought(text) {
+    if (thinkMode === "always") return true;
+    if (thinkMode === "off") return false;
+
+    const t = (text || "").trim();
+    const words = t.split(/\s+/).filter(Boolean).length;
+
+    // Test for real work first. "what's 12 times 45" is only four words but
+    // is exactly the kind of question that benefits.
+    if (ARITHMETIC.test(t)) return true;
+    if (THINKY.test(t)) return true;
+
+    // Otherwise short factual asks — the time, the weather, a name — don't
+    // need it, and waiting for reasoning on those ruins the conversation.
+    if (words <= 4) return false;
+    // Several clauses usually means several things to hold in mind at once.
+    if (words >= 18) return true;
+    if ((t.match(/\band\b|,|\bthen\b|\bbut\b/gi) || []).length >= 2) return true;
+    return false;
+  }
 
   // Hand the recogniser's runner-up guesses to the model. When a word came
   // out wrong, the right one is frequently sitting in this list.
@@ -753,6 +947,116 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   let geo = [];
   let barEls = [];
   let coreShape = "rings";
+  // Declared here, not next to the projection code: buildGeometry runs during
+  // start-up and reads it, so a later `let` would be in the temporal dead zone
+  // and throw before the page ever rendered.
+  let depthMode = "2d";
+
+  /* --- HUD layers -----------------------------------------------------
+     Concentric instrument rings, each on its own rotation, the way a
+     cockpit display stacks readouts. Purely decorative — the reactive part
+     is still the spectrum bars.
+  --------------------------------------------------------------------- */
+  function polar(r, deg) {
+    const a = (deg - 90) * Math.PI / 180;
+    return [200 + Math.cos(a) * r, 200 + Math.sin(a) * r];
+  }
+
+  function arcPath(r, from, to) {
+    const [x1, y1] = polar(r, from);
+    const [x2, y2] = polar(r, to);
+    const large = (to - from) % 360 > 180 ? 1 : 0;
+    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  }
+
+  function arcs(r, segments, width, opacity) {
+    return segments.map(([a, b]) =>
+      `<path d="${arcPath(r, a, b)}" fill="none" stroke="var(--accent)" ` +
+      `stroke-width="${width}" opacity="${opacity}" stroke-linecap="butt"/>`
+    ).join("");
+  }
+
+  function buildHudLayers() {
+    let out = "";
+
+    // outermost: four long gauge segments, turning very slowly
+    out += `<g class="hud-slow">` +
+      arcs(192, [[6, 84], [96, 128], [186, 264], [276, 308]], 2.2, .55) +
+      arcs(186, [[10, 80], [190, 260]], .8, .3) +
+      `</g>`;
+
+    // fine graduated ring with numbers, almost stationary
+    let ticks = "";
+    for (let d = 0; d < 360; d += 3) {
+      const long = d % 30 === 0;
+      const [x1, y1] = polar(long ? 166 : 172, d);
+      const [x2, y2] = polar(178, d);
+      ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
+                      stroke="var(--accent)" stroke-width="${long ? 1.3 : .6}" opacity="${long ? .7 : .28}"/>`;
+    }
+    for (let k = 0; k < 12; k++) {
+      const [x, y] = polar(156, k * 30);
+      ticks += `<text class="hud-num" x="${x.toFixed(1)}" y="${(y + 2.5).toFixed(1)}"
+                      text-anchor="middle">${String(k * 5).padStart(2, "0")}</text>`;
+    }
+    out += `<g class="hud-tick">${ticks}</g>`;
+
+    // counter-rotating dashed ring
+    out += `<g class="hud-rev">` +
+      `<circle cx="200" cy="200" r="146" fill="none" stroke="var(--accent)"
+               stroke-width="1" stroke-dasharray="2 9" opacity=".4"/>` +
+      arcs(140, [[20, 70], [200, 250]], 3, .35) +
+      `</g>`;
+
+    // mid gauge pair
+    out += `<g class="hud-mid">` +
+      arcs(126, [[130, 230]], 4, .3) +
+      arcs(126, [[310, 350]], 4, .5) +
+      `</g>`;
+
+    // reticle: short crosshairs on the diagonals, plus corner brackets
+    let ret = "";
+    [45, 135, 225, 315].forEach(d => {
+      const [x1, y1] = polar(104, d), [x2, y2] = polar(118, d);
+      ret += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
+                    stroke="var(--accent)" stroke-width="1.6" opacity=".6"/>`;
+    });
+    [0, 90, 180, 270].forEach(d => {
+      ret += `<path d="${arcPath(112, d - 5, d + 5)}" fill="none" stroke="var(--accent)"
+                    stroke-width="2" opacity=".75"/>`;
+    });
+    out += `<g class="hud-fast">${ret}</g>`;
+
+    // inner instrument rings, static
+    out += `<circle cx="200" cy="200" r="44" fill="none" stroke="var(--accent)" stroke-width=".7" opacity=".3"/>`;
+    out += `<circle cx="200" cy="200" r="34" fill="none" stroke="var(--accent)" stroke-width=".5" opacity=".2"/>`;
+    out += arcs(38, [[200, 340]], 1.6, .45);
+
+    return out;
+  }
+
+  const SPHERE_POINTS = 150;
+  const SPHERE_R = 74;
+
+  // Fibonacci sphere: the standard way to scatter points evenly over a
+  // sphere. Latitude bands would bunch up at the poles and look wrong.
+  function buildSphere() {
+    geo = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < SPHERE_POINTS; i++) {
+      const y = 1 - (i / (SPHERE_POINTS - 1)) * 2;      // 1 .. -1
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = i * golden;
+      const nx = Math.cos(th) * r, ny = y, nz = Math.sin(th) * r;
+      geo.push({
+        X: nx * SPHERE_R, Y: ny * SPHERE_R, Z: nz * SPHERE_R,
+        NX: nx, NY: ny, NZ: nz,
+        two: false,
+        // flat fallbacks, in case anything reads them before a rebuild
+        x: 200 + nx * SPHERE_R, y: 200 + ny * SPHERE_R, nx: nx, ny: ny
+      });
+    }
+  }
 
   function buildGeometry(shape) {
     coreShape = shape;
@@ -782,12 +1086,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                       stroke="var(--accent)" stroke-width=".8" opacity=".35"/>`;
     }
     el.tickRing.innerHTML = ticks;
+    el.hudLayer.innerHTML = (shape === "hud") ? buildHudLayers() : "";
 
     for (let i = 0; i < BAR_COUNT; i++) {
       const t = i / BAR_COUNT;
       if (shape === "wave") {
         const x = 30 + t * 340;
-        geo.push({ x, y: 200, nx: 0, ny: -1, two: true });
+        geo.push({ x, y: 200, nx: 0, ny: -1, two: true,
+                   X: x - 200, Y: 0, Z: 0, NX: 0, NY: -1, NZ: 0 });
       } else if (shape === "hex") {
         // walk the perimeter of a hexagon rather than a circle
         const side = t * 6;
@@ -799,16 +1105,29 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         const x2 = Math.cos(a2) * R, y2 = Math.sin(a2) * R;
         const px = x1 + (x2 - x1) * f, py = y1 + (y2 - y1) * f;
         const m = Math.hypot(px, py) || 1;
-        geo.push({ x: 200 + px, y: 200 + py, nx: px / m, ny: py / m, two: false });
+        // 3D copy lives in the horizontal plane, so tilting it reads as a
+        // ring seen edge-on rather than a squashed circle.
+        geo.push({ x: 200 + px, y: 200 + py, nx: px / m, ny: py / m, two: false,
+                   X: px, Y: 0, Z: py, NX: px / m, NY: 0, NZ: py / m });
       } else {
+        // HUD puts the spectrum just inside its reticle; rings uses the
+        // original radius.
+        const R = (shape === "hud") ? 62 : 90;
         const a = t * Math.PI * 2 - Math.PI / 2;
-        geo.push({ x: 200 + Math.cos(a) * 90, y: 200 + Math.sin(a) * 90,
-                   nx: Math.cos(a), ny: Math.sin(a), two: false });
+        const ca = Math.cos(a), sa = Math.sin(a);
+        geo.push({ x: 200 + ca * R, y: 200 + sa * R,
+                   nx: ca, ny: sa, two: false,
+                   X: ca * R, Y: 0, Z: sa * R, NX: ca, NY: 0, NZ: sa });
       }
     }
 
+    if (depthMode === "3d") {
+      buildSphere();
+      el.tickRing.innerHTML = ticks;   // keep the backdrop, faded by applyDepth
+    }
+
     let bars = "";
-    for (let i = 0; i < BAR_COUNT; i++) {
+    for (let i = 0; i < geo.length; i++) {
       const g = geo[i];
       bars += `<line class="bar"
                      x1="${g.x.toFixed(1)}" y1="${g.y.toFixed(1)}"
@@ -819,7 +1138,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.bars.innerHTML = bars;
     barEls = Array.from(document.querySelectorAll(".bar"));
   }
-  buildGeometry("rings");
+  buildGeometry("hud");
 
   /* ---------------- state machine ---------------- */
   const STATES = {
@@ -830,8 +1149,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   };
 
   function setMode(m) {
-    state.mode = m;
-    const s = STATES[m];
+    const s = STATES[m] || STATES.standby;
+    state.mode = STATES[m] ? m : "standby";
     el.coreState.textContent = s.label;
     el.coreHint.textContent = s.hint;
     el.rState.textContent = s.label;
@@ -890,57 +1209,184 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
   function renderLoop() {
     let amp = 0;
+    const N = geo.length || BAR_COUNT;   // the sphere uses more bars than the ring
     const speaking = state.mode === "speaking";
 
     if (state.analyser && !speaking) {
       state.analyser.getByteFrequencyData(state.dataArr);
       const n = state.dataArr.length;
       let sum = 0;
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const idx = Math.floor((i / BAR_COUNT) * (n * 0.7));
+      for (let i = 0; i < N; i++) {
+        const idx = Math.floor((i / N) * (n * 0.7));
         const v = state.dataArr[idx] / 255;
         sum += v;
         setBar(i, Math.max(v, idleFloor(i)));
       }
-      amp = Math.min(1, (sum / BAR_COUNT) * 2.6);
+      amp = Math.min(1, (sum / N) * 2.6);
     } else if (speaking && state.ttsAnalyser) {
       state.ttsAnalyser.getByteFrequencyData(state.ttsData);
       const n = state.ttsData.length;
       let sum = 0;
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const idx = Math.floor((i / BAR_COUNT) * (n * 0.7));
+      for (let i = 0; i < N; i++) {
+        const idx = Math.floor((i / N) * (n * 0.7));
         const v = state.ttsData[idx] / 255;
         sum += v;
         setBar(i, v);
       }
-      amp = Math.min(1, (sum / BAR_COUNT) * 2.6);
+      amp = Math.min(1, (sum / N) * 2.6);
     } else if (speaking) {
       // browser synthesis gives us no output tap, so approximate the cadence
       synthPhase += 0.13;
       let sum = 0;
-      for (let i = 0; i < BAR_COUNT; i++) {
+      for (let i = 0; i < N; i++) {
         const v = Math.abs(Math.sin(synthPhase + i * 0.42)) * 0.55
                 + Math.abs(Math.sin(synthPhase * 1.7 + i * 0.13)) * 0.3;
         sum += v;
         setBar(i, v);
       }
-      amp = Math.min(1, (sum / BAR_COUNT) * 1.5);
+      amp = Math.min(1, (sum / N) * 1.5);
     } else {
-      for (let i = 0; i < BAR_COUNT; i++) setBar(i, idleFloor(i));
+      for (let i = 0; i < N; i++) setBar(i, idleFloor(i));
       amp = 0.02 + 0.02 * (0.5 + 0.5 * Math.sin(idlePhase * 0.9));
     }
 
     idlePhase += 0.028;
+
+    // Ease the touch bulge in and out so it swells and settles rather than
+    // snapping on and off.
+    const target = ptr.on ? 1 : 0;
+    ptr.fade += (target - ptr.fade) * (ptr.on ? 0.28 : 0.09);
+    if (ptr.fade < 0.005) ptr.fade = 0;
+
+    if (depthMode === "3d") {
+      // a flick keeps turning, then settles back to the idle drift
+      spin += (speaking ? 0.011 : 0.0042) + spinVel;
+      spinVel *= 0.94;
+      if (Math.abs(spinVel) < 0.00004) spinVel = 0;
+      drawWire();
+    }
     const shown = Math.min(1, amp * boost());
     document.documentElement.style.setProperty("--amp", shown.toFixed(3));
     if (state.booted) el.rLvl.textContent = Math.round(amp * 100) + "%";  // raw level, not boosted
     requestAnimationFrame(renderLoop);
   }
 
+  /* ---------------- 2D / 3D projection ----------------
+     In 3D the ring lies flat in space, tilted towards the viewer and turning
+     slowly. Bars nearer the front are drawn larger, thicker and brighter,
+     which is what sells the depth — perspective alone reads as a squashed
+     circle.
+  ------------------------------------------------------- */
+  let spin = 0;
+  let tilt = 0.42;          // radians the ball leans towards you; drag changes it
+  const TILT_MIN = -0.9, TILT_MAX = 1.1;
+  const CAM  = 520;         // viewer distance; smaller = stronger perspective
+
+  /* ---------------- touch and pointer ----------------
+     Two behaviours, and they have to share the ring with push-to-talk:
+       · a press that stays put is push-to-talk, exactly as before
+       · a press that moves is a drag, which spins the ball and cancels the
+         hold so you don't send a stray recording
+     Independently, whatever you are touching pushes the nearby bars outward,
+     so the surface responds under your finger.
+  ------------------------------------------------------- */
+  const DRAG_SLOP = 7;          // px of movement before it counts as a drag
+  const TOUCH_RADIUS = 78;      // how far the bulge reaches, in svg units
+  const TOUCH_STRENGTH = 0.55;
+
+  let ptr = { x: -999, y: -999, on: false, fade: 0 };
+  let drag = null;              // { x, y, moved } while a press is down
+  let spinVel = 0;              // carried momentum after letting go
+
+  // client pixels -> the svg's own 0..400 coordinate space
+  function toSvg(clientX, clientY) {
+    const r = el.core.getBoundingClientRect();
+    if (!r.width || !r.height) return { x: -999, y: -999 };
+    return { x: (clientX - r.left) / r.width * 400,
+             y: (clientY - r.top) / r.height * 400 };
+  }
+
+  // extra length for a bar whose base sits near the pointer
+  function touchBulge(sx, sy) {
+    if (ptr.fade <= 0.01) return 0;
+    const d = Math.hypot(sx - ptr.x, sy - ptr.y);
+    if (d > TOUCH_RADIUS) return 0;
+    const falloff = Math.cos((d / TOUCH_RADIUS) * Math.PI * 0.5);   // 1 at centre
+    return falloff * falloff * TOUCH_STRENGTH * ptr.fade;
+  }
+
+  function pointerMoved(clientX, clientY) {
+    const p = toSvg(clientX, clientY);
+    ptr.x = p.x; ptr.y = p.y; ptr.on = true;
+
+    if (!drag) return;
+    const dx = clientX - drag.x, dy = clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) > DRAG_SLOP) {
+      drag.moved = true;
+      // It's a drag, not a press. Drop the recording rather than sending
+      // whatever happened to be picked up.
+      if (state.holding) abortHold();
+    }
+    if (drag.moved) {
+      if (depthMode === "3d") {
+        spinVel = dx * 0.00042;
+        spin += dx * 0.0042;
+        tilt = Math.max(TILT_MIN, Math.min(TILT_MAX, tilt + dy * 0.0032));
+      }
+      drag.x = clientX; drag.y = clientY;
+    }
+  }
+
+  function project(X, Y, Z) {
+    // turn about the vertical axis
+    const cs = Math.cos(spin), sn = Math.sin(spin);
+    const rx = X * cs + Z * sn;
+    const rz = -X * sn + Z * cs;
+    // then lean the whole thing towards the viewer
+    const ct = Math.cos(tilt), st = Math.sin(tilt);
+    const ry = Y * ct - rz * st;
+    const rzz = Y * st + rz * ct;
+    const f = CAM / (CAM - rzz);
+    return { x: 200 + rx * f, y: 200 + ry * f, f: f, z: rzz };
+  }
+
   function setBar(i, v) {
     const b = barEls[i], g = geo[i];
     if (!b || !g) return;
-    const len = 6 + v * 46 * boost();
+
+    if (depthMode === "3d" && g.X !== undefined) {
+      const base = project(g.X, g.Y, g.Z);
+      const len = 6 + (v + touchBulge(base.x, base.y)) * 46 * boost();
+      const tipLen = g.two ? len / 2 : len;
+      const tip = project(g.X + g.NX * tipLen,
+                          g.Y + g.NY * tipLen,
+                          g.Z + g.NZ * tipLen);
+
+      if (g.two) {
+        const down = project(g.X - g.NX * tipLen, g.Y - g.NY * tipLen, g.Z - g.NZ * tipLen);
+        b.setAttribute("x1", down.x.toFixed(1));
+        b.setAttribute("y1", down.y.toFixed(1));
+      } else {
+        b.setAttribute("x1", base.x.toFixed(1));
+        b.setAttribute("y1", base.y.toFixed(1));
+      }
+      b.setAttribute("x2", tip.x.toFixed(1));
+      b.setAttribute("y2", tip.y.toFixed(1));
+
+      // Depth cue. Perspective alone barely separates front from back at this
+      // scale, so drive it off the actual z instead: the far hemisphere goes
+      // thin and dim, which is what makes it read as a solid ball rather than
+      // a flat scatter of dots.
+      const half = SPHERE_R + 60;
+      const near = Math.max(0, Math.min(1, (base.z + half) / (2 * half)));
+      b.setAttribute("stroke-width", (1.1 + near * 2.4).toFixed(2));
+      b.setAttribute("opacity",
+        Math.min(1, (0.12 + v * 0.70 * boost()) * (0.18 + near * 0.95)).toFixed(2));
+      return;
+    }
+
+    // flat
+    const len = 6 + (v + touchBulge(g.x, g.y)) * 46 * boost();
     if (g.two) {
       // waveform: grow symmetrically about the centre line
       b.setAttribute("x1", g.x.toFixed(1));
@@ -948,9 +1394,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       b.setAttribute("x2", g.x.toFixed(1));
       b.setAttribute("y2", (g.y - len / 2).toFixed(1));
     } else {
+      b.setAttribute("x1", g.x.toFixed(1));
+      b.setAttribute("y1", g.y.toFixed(1));
       b.setAttribute("x2", (g.x + g.nx * len).toFixed(1));
       b.setAttribute("y2", (g.y + g.ny * len).toFixed(1));
     }
+    b.setAttribute("stroke-width", "2.6");
     b.setAttribute("opacity", Math.min(1, 0.28 + v * 0.72 * boost()).toFixed(2));
   }
   requestAnimationFrame(renderLoop);
@@ -968,6 +1417,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     r.lang = "en-US";
 
     r.onresult = (ev) => {
+      recogAlive();
       let interim = "", final = "", conf = 0, finals = 0;
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const res = ev.results[i];
@@ -1014,6 +1464,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     };
 
     r.onerror = (e) => {
+      recogAlive();
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         addEntry("err", "SYSTEM", "Microphone permission denied. Voice input unavailable.");
         el.rHear.textContent = "BLOCKED";
@@ -1035,9 +1486,23 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       state.recogRunning = true;
       recogFails = 0;
       deadSince = 0;
+      recogAlive();
+      if (recovering) {
+        // Say so out loud in the transcript. "Reconnecting" with no matching
+        // "back" leaves you guessing whether it's safe to speak.
+        recovering = false;
+        rebuilds = 0;
+        gaveUp = false;
+        addEntry("sys", "SYSTEM", "Microphone is back. Go ahead.");
+        cue("wake");
+      }
     };
+    r.onaudiostart = recogAlive;
+    r.onspeechstart = recogAlive;
+    r.onsoundstart = recogAlive;
 
     r.onend = () => {
+      recogAlive();
       startPending = false;
       state.recogRunning = false;
       // keep the loop alive in wake mode, backing off if the service is unhappy
@@ -1054,17 +1519,80 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   let startStuckTimer = null;
   let recogFails = 0;
   let deadSince = 0;
+  // Chrome can leave the recogniser marked as running while it has quietly
+  // stopped hearing anything. Nothing errors, nothing ends, so every other
+  // safety net here sees a healthy microphone and leaves it alone.
+  let lastRecogEvent = Date.now();
+  function recogAlive() { lastRecogEvent = Date.now(); }
 
   // Chrome's recogniser object can end up permanently broken — it stops
   // starting and stops erroring. The only cure is a fresh one.
+  let rebuilds = 0;
+  let lastRebuildAt = 0;
+  let recovering = false;
+  let gaveUp = false;
+
+  // Rebuilding in a tight loop is worse than waiting: Chrome's speech service
+  // is remote, and repeated rapid reconnections get the session throttled —
+  // which is exactly why the resets stop working after a few tries. So each
+  // attempt waits longer than the last, and after enough failures we stop
+  // hammering and say so plainly.
   function rebuildRecognition() {
-    try { if (state.recog) { state.recog.onend = null; state.recog.onerror = null; state.recog.abort && state.recog.abort(); } }
-    catch (_) {}
+    const now = Date.now();
+    const cooldown = Math.min(30000, 1200 * Math.pow(2, rebuilds));
+    if (gaveUp || now - lastRebuildAt < cooldown) return;
+    lastRebuildAt = now;
+    rebuilds++;
+    recovering = true;
+
+    try {
+      if (state.recog) {
+        state.recog.onend = null;
+        state.recog.onerror = null;
+        state.recog.onstart = null;
+        state.recog.abort && state.recog.abort();
+      }
+    } catch (_) {}
     state.recog = null;
     state.recogRunning = false;
     startPending = false;
+
+    if (rebuilds === 1) {
+      addEntry("sys", "SYSTEM", "Microphone dropped — reconnecting. Give it a moment.");
+    } else if (rebuilds === 4) {
+      // A fresh recogniser isn't enough any more. Let go of the microphone
+      // itself and take it again from scratch.
+      addEntry("sys", "SYSTEM", "Still reconnecting — releasing the microphone and taking it again.");
+      hardRecover();
+      return;
+    } else if (rebuilds >= 7) {
+      gaveUp = true;
+      addEntry("err", "SYSTEM",
+        "Voice input isn't recovering. Use the text box for now, or reload the page " +
+        "with Ctrl+Shift+R. Tap the ring to try the microphone again.");
+      flashHint("VOICE UNAVAILABLE", 6000);
+      return;
+    }
+
     initRecognition();
-    if (state.wakeArmed || state.holding) setTimeout(startRecognition, 200);
+    if (state.wakeArmed || state.holding) setTimeout(startRecognition, 400);
+  }
+
+  // Deeper recovery: drop the audio stream entirely, wait, then rebuild. A
+  // recogniser that keeps dying usually means the underlying microphone
+  // handle has gone stale, and a new SpeechRecognition object won't fix that.
+  async function hardRecover() {
+    try {
+      if (state.stream) {
+        state.stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+      }
+    } catch (_) {}
+    state.stream = null;
+    state.analyser = null;
+    await new Promise(r => setTimeout(r, 1500));
+    try { await initAudio(); } catch (_) {}
+    initRecognition();
+    if (state.wakeArmed || state.holding) setTimeout(startRecognition, 600);
   }
   // 80ms normally; grows to a couple of seconds if the service keeps failing
   function restartDelay() { return Math.min(2500, 80 * Math.pow(2, recogFails)); }
@@ -1102,7 +1630,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // and quietly bring it back.
   function shouldBeListening() {
     return state.booted && state.wakeArmed && !state.speakingLock &&
-           !state.holding && state.mode !== "thinking";
+           !state.holding && state.mode !== "thinking" && !gaveUp;
   }
   setInterval(() => {
     if (shouldBeListening() && !state.recogRunning && !startPending) startRecognition();
@@ -1114,6 +1642,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       else if (Date.now() - deadSince > 3000) { deadSince = 0; rebuildRecognition(); }
     } else if (state.recogRunning) {
       deadSince = 0;
+      // Marked as running, but nothing at all has happened for a long time.
+      // Even in a silent room Chrome ends and restarts sessions every few
+      // seconds, so total silence here means it has gone deaf.
+      if (state.wakeArmed && Date.now() - lastRecogEvent > 25000) {
+        recogAlive();
+        addEntry("sys", "SYSTEM", "Microphone stopped responding — restarting it.");
+        rebuildRecognition();
+      }
     }
   }, 400);
 
@@ -1188,6 +1724,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     buf = null;
     clearTimeout(silenceTimer);
     clearTimeout(armTimer);
+    // The recogniser's runner-up guesses belong to the utterance that just
+    // ended. Carrying them forward would feed misleading hints into a later,
+    // unrelated question.
+    altPool = [];
   }
 
   function flushBuffer() {
@@ -1249,6 +1789,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       else { el.rHear.textContent = "MIC OK"; el.rHear.className = "v good"; }
     }
 
+    // Fault ring: red whenever voice input is genuinely unavailable. Only
+    // when it should be listening — a deliberately idle microphone is not a
+    // fault, and a ring that cries wolf gets ignored.
+    if (el.alertRing) {
+      const hardFail = el.rHear.textContent === "BLOCKED" || el.rHear.textContent === "NO MIC";
+      const wants = state.wakeArmed || state.holding;
+      const down = hardFail || gaveUp || (wants && !state.recogRunning);
+      el.alertRing.setAttribute("opacity", down ? (gaveUp || hardFail ? "0.9" : "0.32") : "0");
+      if (down && !gaveUp && !hardFail) el.alertRing.classList.add("trying");
+      else el.alertRing.classList.remove("trying");
+    }
+
     if (Date.now() < hintUntil) { el.coreHint.textContent = hintMsg; return; }
     if (state.mode === "thinking" || state.mode === "speaking") {
       el.coreHint.textContent = STATES[state.mode].hint; return;
@@ -1258,6 +1810,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       return;
     }
     if (state.wakeArmed) {
+      if (gaveUp) { el.coreHint.textContent = "TAP TO RETRY MIC"; return; }
       if (!state.recogRunning) { el.coreHint.textContent = "MIC RECONNECTING…"; return; }
       const w = (el.wakeWord.value || "").trim().toUpperCase();
       el.coreHint.textContent = buf ? "LISTENING…" : (w ? 'SAY "' + w + '"' : "SAY THE WAKE WORD");
@@ -1371,7 +1924,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
   function openBuffer(initial) {
     if (!buf) cue("wake");
-    buf = { text: initial || "", openedAt: Date.now() };
+    buf = { text: initial || "", openedAt: Date.now(), lastAt: Date.now() };
     clearTimeout(armTimer);
     // if the name was said with nothing after it, give the user a while to speak
     armTimer = setTimeout(() => { if (buf && !buf.text.trim()) closeBuffer(); }, armWindow());
@@ -1383,7 +1936,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // gets answered. Room mode allows just enough time for the rest of the same
   // sentence to arrive (Chrome delivers chunks in well under a second), and
   // not enough for somebody else to start talking.
-  function armWindow() { return roomMode() ? 1800 : ARM_MS; }
+  function armWindow() {
+    // 1.8s proved too tight in practice: Chrome frequently delivers the wake
+    // word and the rest of the sentence as separate chunks a beat apart, and
+    // the window shut before the question arrived. Three seconds still isn't
+    // long enough for someone else to start a thought.
+    return roomMode() ? 3000 : ARM_MS;
+  }
 
   function handleWake(text, confidence) {
     const wake = el.wakeWord.value.trim().toLowerCase();
@@ -1415,6 +1974,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // leave the existing silence countdown alone so it can't cut your
       // real sentence short.
       if (rejectedAsNoise(text, confidence)) return;
+
+      // In room mode, judge by the GAP rather than the window. The rest of
+      // your own sentence follows within a beat; somebody else starting to
+      // talk does not. A generous overall window plus a tight gap gives both
+      // a usable pause after the wake word and no stray voices.
+      if (roomMode() && Date.now() - buf.lastAt > 1500) {
+        closeBuffer();
+        el.live.textContent = "";
+        return;
+      }
+
+      buf.lastAt = Date.now();
       buf.text = (buf.text + " " + text.trim()).trim();
       el.live.textContent = buf.text;
       nudgeBuffer();          // may flush and close the buffer
@@ -1432,7 +2003,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   /* ---------------- speech synthesis ---------------- */
   let voices = [];
   let voicePickedByUser = false;
-  const PREFERRED = ["google uk english female", "libby", "sonia", "hazel", "serena", "kate", "amelie", "female", "en-gb"];
+  // Voice quality varies enormously and it is the single biggest factor in
+  // whether ARC sounds like a person or a station announcement. Microsoft's
+  // "Natural" / "Online" neural voices are in a different league from the
+  // old built-in ones; everything else is a fallback.
+  const PREFERRED = ["libby", "sonia", "aria", "jenny", "maisie", "clara",
+                     "google uk english female", "hazel", "serena", "kate",
+                     "female", "en-gb"];
 
   function loadVoices() {
     voices = speechSynthesis.getVoices();
@@ -1458,6 +2035,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       const key = (v.name + " " + v.lang).toLowerCase();
       let score = 0;
       PREFERRED.forEach((p, rank) => { if (key.includes(p)) score = Math.max(score, 10 - rank); });
+      // A neural voice beats any name preference — this is what stops it
+      // sounding synthetic.
+      if (key.includes("natural")) score += 14;
+      if (key.includes("online")) score += 10;
+      if (key.includes("premium") || key.includes("enhanced") || key.includes("neural")) score += 8;
+      // the old low-quality built-ins
+      if (key.includes("microsoft") && !key.includes("online") && !key.includes("natural")) score -= 3;
       if (key.includes("male") && !key.includes("female")) score -= 4;
       if (key.includes("david") || key.includes("mark") || key.includes("george")) score -= 4;
       if (score > bestScore) { bestScore = score; best = i; }
@@ -1473,7 +2057,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     stopRecognition();
     setMode("speaking");
 
+    const gen = ++speakGen;
+    let done = false;
+    let stallGuard = null;
+
     const finish = () => {
+      if (done || gen !== speakGen) return;
+      done = true;
+      clearTimeout(stallGuard);
       if (state.ttsAnalyser) { try { state.ttsAnalyser.disconnect(); } catch (_) {} }
       if (state.ttsSource) { try { state.ttsSource.disconnect(); } catch (_) {} }
       state.ttsAnalyser = null;
@@ -1490,11 +2081,17 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     };
 
     try {
+      // Same reasoning as the chat call: a request with no deadline leaves
+      // ARC stuck in "speaking" with the microphone off.
+      const tctrl = new AbortController();
+      const tdeadline = setTimeout(() => tctrl.abort(), 20000);
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text }),
+        signal: tctrl.signal
       });
+      clearTimeout(tdeadline);
       if (!res.ok) throw new Error("tts " + res.status);
 
       const url = URL.createObjectURL(await res.blob());
@@ -1517,9 +2114,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
       state.currentAudio = audio;
       audio.onended = audio.onerror = () => { URL.revokeObjectURL(url); finish(); };
+
+      // If playback stalls and never reports finishing, release anyway.
+      stallGuard = setTimeout(() => {
+        try { audio.pause(); } catch (_) {}
+        URL.revokeObjectURL(url);
+        finish();
+      }, 8000 + text.length * 95);
+
       await audio.play();
     } catch (e) {
+      clearTimeout(stallGuard);
+      done = true;
       state.ttsAnalyser = null;
+      state.currentAudio = null;
       state.speakingLock = false;
       addEntry("sys", "SYSTEM", "Voice engine fell back to browser synthesis.");
       state.engine = "browser";
@@ -1574,6 +2182,19 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     } catch (_) {}
   }, 4000);
 
+  // Chrome's synthesiser can wedge itself after a while: it keeps accepting
+  // utterances and never speaks or reports them. Tearing it down and priming
+  // it again is the only reliable way back.
+  let synthMisses = 0;
+  function resetSynth() {
+    try {
+      speechSynthesis.cancel();
+      speechSynthesis.resume();
+    } catch (_) {}
+    synthMisses = 0;
+    addEntry("sys", "SYSTEM", "Speech engine restarted.");
+  }
+
   function speak(text, onDone) {
     if (!text) { onDone && onDone(); return; }
     if (state.engine === "elevenlabs") { speakRemote(text, onDone); return; }
@@ -1581,7 +2202,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const gen = ++speakGen;
     speechSynthesis.cancel();
 
-    const pieces = splitForSpeech(text, 180);
+    // Splitting exists to dodge Chrome's stall on long utterances, but every
+    // piece is another utterance — and Chrome also gives out after roughly a
+    // dozen of those. Splitting a short reply spends that budget three times
+    // faster for no benefit, so only split when the text is genuinely long.
+    const pieces = text.length > 240 ? splitForSpeech(text, 220) : [text];
     state.speakingLock = true;
     stopRecognition();          // don't let it hear itself
     setMode("speaking");
@@ -1628,16 +2253,27 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         if (advanced) return;
         advanced = true;
         clearTimeout(guard);
-        sayPiece(i + 1);
+        // A short breath between sentences. Running utterances back to back
+        // is a large part of what makes synthesis sound mechanical — real
+        // speech has a beat at a full stop and a shorter one at a comma.
+        const gap = /[.!?…]$/.test(chunk) ? 240 : /[,;:]$/.test(chunk) ? 140 : 90;
+        setTimeout(() => sayPiece(i + 1), i + 1 < pieces.length ? gap : 0);
       };
 
-      u.onend = next;
+      u.onend = () => { synthMisses = 0; next(); };
       u.onerror = next;
 
       // Per-piece safety net: if Chrome goes quiet on us, move on anyway
       // rather than hanging the whole session.
       clearTimeout(guard);
-      guard = setTimeout(next, 4000 + chunk.length * 95);
+      guard = setTimeout(() => {
+        // onend never arrived: the engine has stopped talking to us, and
+        // usually stopped making sound too. Count it, and reset once it has
+        // happened twice rather than continuing in silence.
+        synthMisses++;
+        if (synthMisses >= 2) resetSynth();
+        next();
+      }, 4000 + chunk.length * 95);
 
       try { speechSynthesis.speak(u); }
       catch (_) { next(); }
@@ -1650,12 +2286,16 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // Keep the last few turns, but never start the history on an assistant
   // message and never leave two user messages in a row — the API rejects both.
   function trimHistory(list) {
-    let out = list.slice(-20);
+    // Longer working memory of the conversation itself, too.
+    let out = list.slice(-30);
     while (out.length && out[0].role !== "user") out = out.slice(1);
     return out;
   }
 
   async function askClaude(userText, alts) {
+    const thinking = needsThought(userText);
+    el.rThink.textContent = thinking ? "DEEP" : (thinkMode === "off" ? "OFF" : "FAST");
+    el.rThink.className = thinking ? "v good" : "v";
     // Only commit to history once the call succeeds. Previously a failed
     // request left an unanswered user turn behind, so the *next* question
     // sent two user messages in a row and the API rejected it.
@@ -1675,7 +2315,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: pending,
-          system: SYSTEM_PROMPT + contextBlock() + altBlock(alts),
+          system: SYSTEM_PROMPT + contextBlock() + timerBlock() + altBlock(alts),
+        think: thinking,
           search: el.searchOn.checked
         }),
         signal: ctrl.signal
@@ -1694,11 +2335,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
     const data = await res.json();
     const raw = (data.reply || "").replace(/[*_#`]/g, "").trim();
-    const reply = extractMemory(raw);
+    const out = extractDirectives(raw);
 
-    state.history = pending.concat([{ role: "assistant", content: reply || "…" }]);
+    state.history = pending.concat([{ role: "assistant", content: out.text || "…" }]);
     el.rSearch.textContent = data.searched ? "USED" : "IDLE";
-    return reply;
+    if (data.thought) { el.rThink.textContent = "DEEP"; el.rThink.className = "v good"; }
+    return out;
   }
 
   let inFlight = false;
@@ -1717,13 +2359,23 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const t0 = performance.now();
 
     try {
-      const reply = await askClaude(text, alts);
+      const out = await askClaude(text, alts);
       el.rLat.textContent = Math.round(performance.now() - t0) + " ms";
       state.turns++;
       el.rTurns.textContent = state.turns;
-      addEntry("arc", "ARC", reply);
-      el.live.textContent = reply;
-      speak(reply);
+
+      // ARC can decide it wasn't being spoken to. It stays quiet, but the
+      // transcript still shows it heard — silence you can't distinguish from
+      // a fault is worse than a needless reply.
+      if (out.silent || !out.text) {
+        addEntry("sys", "SYSTEM", "(not addressed to me — staying quiet)");
+        el.live.textContent = "";
+        setMode("standby");
+      } else {
+        addEntry("arc", "ARC", out.text);
+        el.live.textContent = out.text;
+        speak(out.text);
+      }
     } catch (err) {
       cue("error");
       addEntry("err", "SYSTEM", "Link failure — " + err.message);
@@ -1760,6 +2412,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       el.typed.focus();
       return;
     }
+    // A deliberate press is a clear signal to try right now. It resets the
+    // backoff whether ARC has given up or is still part-way through its
+    // waiting — otherwise you'd sit through a thirty-second cooldown while
+    // pressing a ring that appears to do nothing.
+    if (!state.recogRunning && (gaveUp || rebuilds > 0)) {
+      gaveUp = false;
+      rebuilds = 0;
+      lastRebuildAt = 0;
+      startPending = false;
+      clearTimeout(startStuckTimer);
+      addEntry("sys", "SYSTEM", "Trying the microphone again.");
+      rebuildRecognition();
+      return;
+    }
     state.holding = true;
     // A press whose release never arrives (lost mouseup, tab switch, a touch
     // that ends off-screen) would otherwise hold the mic open forever.
@@ -1773,6 +2439,19 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
 
   let holdGuard = null;
+
+  // Cancel a press without sending anything. Used when a press turns out to
+  // be a drag — otherwise spinning the ball would fire off whatever the
+  // microphone happened to catch.
+  function abortHold() {
+    if (!state.holding) return;
+    clearTimeout(holdGuard);
+    state.holding = false;
+    el.core.classList.remove("armed");
+    stopRecognition();
+    el.live.textContent = "";
+    setMode("standby");
+  }
 
   function endHold(timedOut) {
     if (!state.holding) return;
@@ -1790,13 +2469,45 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }, 700);
   }
 
-  el.core.addEventListener("mousedown", beginHold);
+  function pressStart(clientX, clientY) {
+    drag = { x: clientX, y: clientY, moved: false };
+    const p = toSvg(clientX, clientY);
+    ptr.x = p.x; ptr.y = p.y; ptr.on = true;
+    spinVel = 0;                 // grabbing it stops the drift
+    beginHold();
+  }
+
+  function pressEnd() {
+    const wasDrag = drag && drag.moved;
+    drag = null;
+    if (wasDrag) return;         // a drag was already aborted, nothing to send
+    if (state.holding) endHold();
+  }
+
+  el.core.addEventListener("mousedown", e => pressStart(e.clientX, e.clientY));
   // Listen on the window, not the circle: if the pointer drifts off the ring
   // mid-sentence, the old code cut you off. Now only letting go stops it.
-  window.addEventListener("mouseup", () => { if (state.holding) endHold(); });
-  window.addEventListener("blur", () => { if (state.holding) endHold(); });
-  el.core.addEventListener("touchstart", e => { e.preventDefault(); beginHold(); }, { passive: false });
-  el.core.addEventListener("touchend", e => { e.preventDefault(); endHold(); }, { passive: false });
+  window.addEventListener("mousemove", e => pointerMoved(e.clientX, e.clientY));
+  window.addEventListener("mouseup", pressEnd);
+  window.addEventListener("blur", () => { drag = null; if (state.holding) endHold(); });
+  el.core.addEventListener("mouseleave", () => { if (!drag) ptr.on = false; });
+
+  el.core.addEventListener("touchstart", e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (t) pressStart(t.clientX, t.clientY);
+  }, { passive: false });
+  el.core.addEventListener("touchmove", e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (t) pointerMoved(t.clientX, t.clientY);
+  }, { passive: false });
+  el.core.addEventListener("touchend", e => {
+    e.preventDefault();
+    ptr.on = false;
+    pressEnd();
+  }, { passive: false });
+  el.core.addEventListener("touchcancel", () => { ptr.on = false; drag = null; abortHold(); });
   el.core.addEventListener("keydown", e => {
     if ((e.code === "Space" || e.code === "Enter") && !e.repeat) { e.preventDefault(); beginHold(); }
   });
@@ -1900,8 +2611,108 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.swatches.appendChild(b);
   });
 
+  /* A few great circles so the eye reads a surface instead of floating
+     points. Rebuilt as flat point lists once, then reprojected each frame. */
+  let wireRings = [];
+  let wireStyles = [];
+  function buildWire() {
+    wireRings = [];
+    const SEG = 48;
+
+    // The outer scenery belongs in the same space as the ball — otherwise
+    // flat rings sit in front of a tilted sphere and the illusion collapses.
+    // These are the 3D counterparts of the flat decoration.
+    const orbit = (radius, tiltX, tiltZ, style) => {
+      const pts = [];
+      for (let i = 0; i <= SEG * 2; i++) {
+        const a = (i / (SEG * 2)) * Math.PI * 2;
+        let px = Math.cos(a) * radius, py = 0, pz = Math.sin(a) * radius;
+        // lean the orbit out of the equatorial plane
+        const c1 = Math.cos(tiltX), s1 = Math.sin(tiltX);
+        let y1 = py * c1 - pz * s1, z1 = py * s1 + pz * c1;
+        const c2 = Math.cos(tiltZ), s2 = Math.sin(tiltZ);
+        let x2 = px * c2 - y1 * s2, y2 = px * s2 + y1 * c2;
+        pts.push([x2, y2, z1]);
+      }
+      wireRings.push(pts);
+      wireStyles.push(style);
+    };
+
+    wireStyles = [];
+    orbit(178, 0, 0, 'stroke-width="1" opacity=".5" stroke-dasharray="26 9 13 9"');
+    orbit(150, 0.30, 0.22, 'stroke-width="1" opacity=".38" stroke-dasharray="3 10"');
+    orbit(150, -0.34, -0.26, 'stroke-width="1" opacity=".38" stroke-dasharray="3 10"');
+    orbit(112, 1.35, 0, 'stroke-width=".9" opacity=".3"');
+    // the sphere's own wireframe: three latitudes
+    for (const lat of [-0.55, 0, 0.55]) {
+      const y = Math.sin(lat) * SPHERE_R;
+      const r = Math.cos(lat) * SPHERE_R;
+      const pts = [];
+      for (let i = 0; i <= SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        pts.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+      }
+      wireRings.push(pts);
+      wireStyles.push('stroke-width=".7" opacity=".26"');
+    }
+    // three longitudes
+    for (let k = 0; k < 3; k++) {
+      const rot = (k / 3) * Math.PI;
+      const pts = [];
+      for (let i = 0; i <= SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        const cx = Math.cos(a) * SPHERE_R, cy = Math.sin(a) * SPHERE_R;
+        pts.push([cx * Math.cos(rot), cy, cx * Math.sin(rot)]);
+      }
+      wireRings.push(pts);
+      wireStyles.push('stroke-width=".7" opacity=".26"');
+    }
+    el.wire.innerHTML = wireRings.map((_, i) =>
+      '<polyline fill="none" stroke="var(--accent)" ' + wireStyles[i] + '/>'
+    ).join("");
+  }
+
+  function drawWire() {
+    const lines = el.wire.children;
+    if (!lines || lines.length !== wireRings.length) return;
+    for (let k = 0; k < wireRings.length; k++) {
+      let d = "";
+      const pts = wireRings[k];
+      for (let i = 0; i < pts.length; i++) {
+        const p = project(pts[i][0], pts[i][1], pts[i][2]);
+        d += p.x.toFixed(1) + "," + p.y.toFixed(1) + " ";
+      }
+      lines[k].setAttribute("points", d.trim());
+    }
+  }
+
+  function applyDepth(mode) {
+    depthMode = (mode === "3d") ? "3d" : "2d";
+
+    // The geometry itself changes: flat modes trace a ring, hex or waveform;
+    // 3D scatters points over a sphere instead.
+    buildGeometry(coreShape);
+
+    if (depthMode === "3d") { buildWire(); drawWire(); }
+    else { el.wire.innerHTML = ""; wireRings = []; wireStyles = []; }
+
+    // In 3D the flat scenery is replaced outright rather than faded — a flat
+    // ring drawn in front of a tilted sphere is what breaks the illusion.
+    const showFlat = depthMode === "3d" ? "none" : "";
+    [el.tickRing, el.hudLayer, el.flatDeco, el.flatInner].forEach(g => {
+      if (g) g.style.display = showFlat;
+    });
+
+    Array.from(el.depths.children).forEach(b => {
+      if (b.dataset.depth === depthMode) b.classList.add("on");
+      else b.classList.remove("on");
+    });
+    try { localStorage.setItem("arc.depth", depthMode); } catch (_) {}
+  }
+
   function applyShape(name) {
-    buildGeometry(name);
+    coreShape = name;
+    applyDepth(depthMode);
     Array.from(el.shapes.children).forEach(b => {
       if (b.dataset.shape === name) b.classList.add("on"); else b.classList.remove("on");
     });
@@ -1909,6 +2720,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
   Array.from(el.shapes.children).forEach(b => {
     b.addEventListener("click", () => applyShape(b.dataset.shape));
+  });
+
+  Array.from(el.depths.children).forEach(b => {
+    b.addEventListener("click", () => applyDepth(b.dataset.depth));
   });
 
   function boost() { return parseFloat(el.boost.value) || 1; }
@@ -1923,11 +2738,29 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const found = PALETTES.find(p => p.id === savedPal);
     applyPalette(found || PALETTES[0]);
     const savedShape = localStorage.getItem("arc.shape");
-    applyShape(["rings", "hex", "wave"].includes(savedShape) ? savedShape : "rings");
+    applyShape(["hud", "rings", "hex", "wave"].includes(savedShape) ? savedShape : "hud");
+    applyDepth(localStorage.getItem("arc.depth") === "3d" ? "3d" : "2d");
     const savedBoost = parseFloat(localStorage.getItem("arc.boost"));
     if (savedBoost >= 0.4 && savedBoost <= 4) el.boost.value = savedBoost;
   } catch (_) { applyPalette(PALETTES[0]); applyShape("rings"); }
   el.boostV.textContent = boost().toFixed(1) + "\u00d7";
+
+  function applyThink(mode) {
+    thinkMode = mode;
+    Array.from(el.thinkSeg.children).forEach(b => {
+      if (b.dataset.think === mode) b.classList.add("on"); else b.classList.remove("on");
+    });
+    el.rThink.textContent = mode === "off" ? "OFF" : mode.toUpperCase();
+    el.rThink.className = "v";
+    try { localStorage.setItem("arc.think", mode); } catch (_) {}
+  }
+  Array.from(el.thinkSeg.children).forEach(b => {
+    b.addEventListener("click", () => applyThink(b.dataset.think));
+  });
+  try {
+    const saved = localStorage.getItem("arc.think");
+    applyThink(["off", "auto", "always"].includes(saved) ? saved : "auto");
+  } catch (_) { applyThink("auto"); }
 
   el.roomMode.addEventListener("change", () => {
     // Switching this on mid-conversation must not leave an open window behind.
@@ -2032,6 +2865,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     initRecognition();
     state.booted = true;
     el.rMem.textContent = memory.length;
+    restoreTimers();
     setMode("standby");
 
     await new Promise(r => setTimeout(r, 420));

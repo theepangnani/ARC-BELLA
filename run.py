@@ -12,14 +12,11 @@ not send CORS headers to browser origins by design).
 
 import os
 import sys
-import json
 import time
 import hmac
-import base64
 import socket
 import secrets
 import hashlib
-import asyncio
 import threading
 import webbrowser
 from pathlib import Path
@@ -91,7 +88,12 @@ async def lifespan(app: FastAPI):
     await app.state.http.aclose()
 
 
-app = FastAPI(title="ARC", lifespan=lifespan)
+# With a password set we're deployed, and the auto-generated API docs would
+# hand a stranger the full shape of the service. Keep them for local work.
+_docs = None if os.getenv("ARC_PASSWORD", "").strip() else "/docs"
+app = FastAPI(title="ARC", lifespan=lifespan,
+              docs_url=_docs, redoc_url=None,
+              openapi_url=None if _docs is None else "/openapi.json")
 
 
 # --------------------------------------------------------------------------
@@ -138,6 +140,28 @@ def require_auth(request: Request):
 _hits = defaultdict(deque)
 _day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0}
 _logins = defaultdict(deque)
+_last_sweep = 0.0
+
+# Every address that ever touches the server would otherwise be remembered
+# forever. On a public URL that is bots scanning around the clock, and the
+# tables grow without limit until the process runs out of memory.
+SWEEP_EVERY = 300      # seconds
+MAX_TRACKED = 20_000   # emergency ceiling
+
+
+def sweep(now: float):
+    global _last_sweep
+    if now - _last_sweep < SWEEP_EVERY:
+        return
+    _last_sweep = now
+
+    for table, window in ((_hits, 3600), (_logins, 600)):
+        for ip in [k for k, q in table.items()
+                   if not q or now - q[-1] > window]:
+            del table[ip]
+        # if something pathological is happening, start over rather than grow
+        if len(table) > MAX_TRACKED:
+            table.clear()
 
 
 def client_ip(request: Request) -> str:
@@ -157,6 +181,7 @@ def check_rate(request: Request):
 
     ip = client_ip(request)
     now = time.time()
+    sweep(now)
     q = _hits[ip]
     while q and now - q[0] > 3600:
         q.popleft()
@@ -177,6 +202,7 @@ def check_login_rate(request: Request):
     """
     ip = client_ip(request)
     now = time.time()
+    sweep(now)
     q = _logins[ip]
     while q and now - q[0] > 600:
         q.popleft()
@@ -260,8 +286,28 @@ async def chat(request: Request, _=Depends(require_auth)):
     system = payload.get("system") or ""
     use_search = bool(payload.get("search"))
 
-    if not messages:
+    if not isinstance(messages, list) or not messages:
         raise HTTPException(400, "No messages supplied.")
+
+    # Check the shape here rather than paying Anthropic to reject it. Also
+    # stops a malformed client turning into a stream of billed 400s.
+    if len(messages) > 60:
+        raise HTTPException(400, "Too many messages in one request.")
+    total = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            raise HTTPException(400, "Malformed message.")
+        if msg.get("role") not in ("user", "assistant"):
+            raise HTTPException(400, "Each message needs a role of user or assistant.")
+        content = msg.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise HTTPException(400, "Each message needs text content.")
+        total += len(content)
+    if total > 60_000:
+        raise HTTPException(400, "Conversation is too long. Clear the log and start again.")
+
+    if not isinstance(system, str) or len(system) > 40_000:
+        raise HTTPException(400, "System prompt is missing or too long.")
 
     body = {
         "model": MODEL,
@@ -330,6 +376,8 @@ async def tts(request: Request, _=Depends(require_auth)):
     text = (payload.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "No text supplied.")
+    if len(text) > 5000:
+        raise HTTPException(400, "Too much text for one utterance.")
 
     try:
         r = await request.app.state.http.post(
