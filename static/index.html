@@ -1,0 +1,2047 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARC — Ambient Response Core</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --void:      #04070c;
+    --deep:      #091320;
+    --line:      #12293c;
+    --cyan:      #5fd9ff;
+    --cyan-dim:  #1c6d8f;
+    --ice:       #d7eefc;
+    --amber:     #ffb454;
+    --rose:      #ff6b7a;
+
+    --accent: var(--cyan);
+
+    --display: "Rajdhani", "Oswald", "Helvetica Neue", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --amp: 0;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--void);
+    color: var(--ice);
+    font-family: var(--display);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- ambient field ---------- */
+  .field {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(95,217,255,.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(95,217,255,.045) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 20%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 20%, transparent 78%);
+  }
+  .vignette {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 90% 70% at 50% 42%, transparent 35%, rgba(4,7,12,.85) 100%);
+  }
+  .scan {
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(to bottom, rgba(95,217,255,.028) 0 1px, transparent 1px 3px);
+    opacity: .6;
+  }
+
+  /* ---------- shell ---------- */
+  .shell {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns:
+      clamp(196px, 17vw, 260px)
+      minmax(0, 1fr)
+      clamp(250px, 24vw, 340px);
+    gap: clamp(14px, 1.8vw, 28px);
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: clamp(14px, 1.6vw, 22px) clamp(14px, 1.8vw, 26px) 26px;
+    min-height: 100vh;
+  }
+
+  .brandbar {
+    grid-column: 1 / -1;
+    display: flex; align-items: baseline; gap: 16px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+  }
+  .brandbar h1 {
+    font-size: 19px; font-weight: 600; letter-spacing: .34em;
+    margin: 0; color: var(--accent); text-transform: uppercase;
+  }
+  .brandbar .sub {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em;
+    color: var(--cyan-dim); text-transform: uppercase;
+  }
+  .brandbar .clock {
+    margin-left: auto; font-family: var(--mono); font-size: 11px;
+    color: var(--cyan-dim); letter-spacing: .1em;
+  }
+
+  /* ---------- panels ---------- */
+  .panel {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(9,19,32,.72), rgba(4,7,12,.5));
+    padding: 14px 15px;
+    position: relative;
+  }
+  .panel::before, .panel::after {
+    content: ""; position: absolute; width: 9px; height: 9px;
+    border-color: var(--accent); border-style: solid;
+  }
+  .panel::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+  .panel::after  { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+
+  .panel h2 {
+    font-family: var(--mono); font-size: 9.5px; font-weight: 500;
+    letter-spacing: .26em; text-transform: uppercase;
+    color: var(--cyan-dim); margin: 0 0 11px;
+    /* flex rather than a float, so a right-hand link can't collapse the
+       heading and push the panel border out of place */
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  }
+
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .panel > * { min-width: 0; max-width: 100%; }
+  .panel input[type="range"], .panel select, .panel input[type="text"],
+  .panel input[type="password"] { width: 100%; max-width: 100%; box-sizing: border-box; }
+
+  /* ---------- readout rows ---------- */
+  .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+    padding: 5px 0; border-bottom: 1px dashed rgba(18,41,60,.8);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .k { color: var(--cyan-dim); }
+  .row .v { color: var(--ice); text-align: right; }
+  .v.good { color: var(--accent); }
+  .v.warn { color: var(--amber); }
+  .v.bad  { color: var(--rose); }
+
+  /* ---------- controls ---------- */
+  label.ctl {
+    display: block; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .2em; text-transform: uppercase; color: var(--cyan-dim);
+    margin: 12px 0 5px;
+  }
+  input[type="text"], select {
+    width: 100%; background: rgba(4,7,12,.85); color: var(--ice);
+    border: 1px solid var(--line); padding: 8px 9px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+    outline: none; border-radius: 0;
+  }
+  input[type="text"]:focus, select:focus, button:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(95,217,255,.35);
+  }
+  input[type="range"] { width: 100%; accent-color: var(--cyan); }
+
+  button {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .18em;
+    text-transform: uppercase; cursor: pointer;
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--cyan-dim); padding: 9px 12px;
+    transition: background .16s, color .16s, border-color .16s;
+    border-radius: 0;
+  }
+  button:hover:not(:disabled) { background: rgba(95,217,255,.12); border-color: var(--accent); }
+  button:disabled { opacity: .32; cursor: not-allowed; }
+  button.armed { background: rgba(95,217,255,.16); border-color: var(--accent); color: #eafaff; }
+
+  .guide { font-family: var(--mono); font-size: 10.5px; line-height: 1.62; color: #9dc4d8; }
+  .guide.collapsed { display: none; }
+  .guide p { margin: 0 0 10px; }
+  .guide b { color: var(--accent); font-weight: 500; letter-spacing: .06em; }
+  .guide i { color: var(--ice); font-style: normal; }
+  .guide .guide-note { color: #55809a; border-top: 1px dashed rgba(18,41,60,.9); padding-top: 9px; }
+  .guide-toggle {
+    cursor: pointer; color: var(--cyan-dim); flex: none;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  .guide-toggle:hover { color: var(--accent); }
+
+  .swatches { display: flex; gap: 7px; flex-wrap: wrap; }
+  .swatches button {
+    width: 22px; height: 22px; padding: 0; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.16); cursor: pointer;
+    background: var(--sw); transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .swatches button:hover { transform: scale(1.12); }
+  .swatches button.on {
+    box-shadow: 0 0 0 2px var(--void), 0 0 0 3px var(--sw);
+    transform: scale(1.12);
+  }
+
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1; font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em;
+    text-transform: uppercase; padding: 7px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim);
+    border: 1px solid var(--line);
+  }
+  .seg button:hover { color: var(--ice); }
+  .seg button.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+
+  .ctl { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .ctlv { color: var(--ice); flex: none; }
+
+  /* Buttons must be allowed to shrink and to wrap, or a third one overflows
+     the panel on a narrow column. */
+  .btnrow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+  .btnrow button {
+    flex: 1 1 84px; min-width: 0; padding: 8px 5px;
+    font-size: 9px; letter-spacing: .09em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+    color: var(--ice); padding: 7px 0; cursor: pointer;
+  }
+  .toggle input { accent-color: var(--cyan); width: 15px; height: 15px; cursor: pointer; }
+  .toggle small { color: var(--cyan-dim); font-size: 9px; letter-spacing: .04em; }
+
+  /* ---------- core stage ---------- */
+  .stage {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 20px; min-height: 0;
+  }
+  .core-wrap {
+    position: relative; width: min(460px, 60vw, 52vh); aspect-ratio: 1;
+    display: grid; place-items: center;
+    cursor: pointer; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .core-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+
+  .ring-slow  { animation: spin 34s linear infinite; transform-origin: 50% 50%; }
+  .ring-mid   { animation: spin 19s linear infinite reverse; transform-origin: 50% 50%; }
+  .ring-fast  { animation: spin 9s linear infinite; transform-origin: 50% 50%; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .glow-disc {
+    position: absolute; width: 30%; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 0%, rgba(95,217,255,.25) 42%, transparent 70%);
+    filter: blur(calc(6px + var(--amp) * 16px));
+    opacity: calc(.34 + var(--amp) * .62);
+    transform: scale(calc(1 + var(--amp) * .5));
+    transition: opacity .09s linear, transform .09s linear;
+  }
+
+  .core-label {
+    position: absolute; text-align: center; pointer-events: none;
+  }
+  .core-label .state {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .3em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .core-label .hint {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .14em;
+    color: var(--cyan-dim); margin-top: 6px;
+  }
+
+  .live {
+    font-family: var(--display); font-size: 21px; font-weight: 400;
+    letter-spacing: .02em; text-align: center; min-height: 30px;
+    color: var(--ice); opacity: .92; max-width: 44ch; line-height: 1.35;
+  }
+  .live:empty::after { content: "—"; color: var(--line); }
+
+  /* ---------- transcript ---------- */
+  .log {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.62;
+    max-height: 58vh; padding-right: 4px; scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+  .log::-webkit-scrollbar { width: 5px; }
+  .log::-webkit-scrollbar-thumb { background: var(--line); }
+
+  .entry .who {
+    font-size: 9px; letter-spacing: .24em; text-transform: uppercase;
+    color: var(--cyan-dim); display: block; margin-bottom: 3px;
+  }
+  .entry.you .body { color: #9fd0e6; border-left: 1px solid var(--cyan-dim); padding-left: 9px; }
+  .entry.arc .body { color: var(--ice); border-left: 1px solid var(--accent); padding-left: 9px; }
+  .entry.sys .body { color: var(--amber); font-size: 10.5px; letter-spacing: .05em; }
+  .entry.err .body { color: var(--rose); font-size: 10.5px; }
+
+  /* ---------- text fallback ---------- */
+  .composer { display: flex; gap: 8px; margin-top: 12px; }
+  .composer input { flex: 1; }
+
+  /* ---------- boot ---------- */
+  .boot {
+    position: fixed; inset: 0; z-index: 40; background: var(--void);
+    display: grid; place-items: center; text-align: center;
+    transition: opacity .7s ease; padding: 24px;
+  }
+  .boot.gone { opacity: 0; pointer-events: none; }
+  .boot .mark {
+    font-size: clamp(38px, 9vw, 78px); font-weight: 300; letter-spacing: .5em;
+    color: var(--accent); margin: 0 0 6px; text-indent: .5em;
+  }
+  .boot .tag {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .3em;
+    color: var(--cyan-dim); text-transform: uppercase; margin-bottom: 34px;
+  }
+  .boot button { font-size: 12px; padding: 14px 34px; letter-spacing: .3em; }
+  .boot .note {
+    font-family: var(--mono); font-size: 10px; color: #365b70;
+    margin-top: 22px; letter-spacing: .06em; max-width: 46ch; line-height: 1.7;
+  }
+  .bootlog {
+    font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim);
+    letter-spacing: .1em; margin-top: 26px; min-height: 88px; text-align: left;
+    width: min(400px, 84vw);
+  }
+  .bootlog div { opacity: 0; animation: fadein .25s forwards; }
+  @keyframes fadein { to { opacity: 1; } }
+
+  /* medium windows: drop the left readout under the core, keep transcript */
+  @media (max-width: 1240px) {
+    .shell { grid-template-columns: minmax(0, 1fr) clamp(240px, 30vw, 320px); }
+    .col.left { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+    .col.left > .panel { flex: 1 1 260px; }
+    .core-wrap { width: min(400px, 46vw, 46vh); }
+  }
+
+  /* narrow windows / tablets: single column, core on top */
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; gap: 18px; padding: 16px; }
+    .col.left { flex-direction: column; }
+    .stage { order: -1; }
+    .core-wrap { width: min(340px, 70vw); }
+    .log { max-height: 300px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ring-slow, .ring-mid, .ring-fast { animation: none; }
+    * { transition-duration: .01ms !important; }
+  }
+</style>
+
+<div class="field">
+  <div class="grid"></div>
+  <div class="scan"></div>
+  <div class="vignette"></div>
+</div>
+
+<!-- ============ BOOT GATE ============ -->
+<div class="boot" id="boot">
+  <div>
+    <h1 class="mark">ARC</h1>
+    <div class="tag">Ambient Response Core</div>
+    <button id="initBtn">Initialize</button>
+    <div class="bootlog" id="bootlog"></div>
+    <div class="note">Microphone access is required for voice. Speech recognition works in Chrome and Edge; other browsers fall back to typed input.</div>
+  </div>
+</div>
+
+<!-- ============ MAIN ============ -->
+<div class="shell">
+  <div class="brandbar">
+    <h1>ARC</h1>
+    <span class="sub">Ambient Response Core &nbsp;/&nbsp; v1.0</span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+
+  <!-- LEFT: system + config -->
+  <div class="col left">
+    <div class="panel">
+      <h2>System</h2>
+      <div class="row"><span class="k">STATE</span><span class="v good" id="rState">STANDBY</span></div>
+      <div class="row"><span class="k">HEARING</span><span class="v" id="rHear">—</span></div>
+      <div class="row"><span class="k">WAKE</span><span class="v" id="rWake">OFF</span></div>
+      <div class="row"><span class="k">INPUT LVL</span><span class="v" id="rLvl">0%</span></div>
+      <div class="row"><span class="k">LATENCY</span><span class="v" id="rLat">—</span></div>
+      <div class="row"><span class="k">MODEL</span><span class="v" id="rModel">—</span></div>
+      <div class="row"><span class="k">VOICE ENG</span><span class="v" id="rVoice">BROWSER</span></div>
+      <div class="row"><span class="k">WEB LOOKUP</span><span class="v" id="rSearch">IDLE</span></div>
+      <div class="row"><span class="k">MEMORY</span><span class="v" id="rMem">0</span></div>
+      <div class="row"><span class="k">EXCHANGES</span><span class="v" id="rTurns">0</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Configuration</h2>
+
+      <label class="ctl" for="wakeWord">Wake word</label>
+      <input type="text" id="wakeWord" value="bella" autocomplete="off" spellcheck="false">
+
+      <label class="toggle" for="wakeOn">
+        <span>Always listening</span>
+        <input type="checkbox" id="wakeOn">
+      </label>
+
+      <label class="toggle" for="roomMode">
+        <span>Room mode <small>(several people)</small></span>
+        <input type="checkbox" id="roomMode">
+      </label>
+
+      <label class="toggle" for="searchOn">
+        <span>Live web lookup</span>
+        <input type="checkbox" id="searchOn" checked>
+      </label>
+
+      <label class="ctl" for="voiceSel">Voice</label>
+      <select id="voiceSel"></select>
+
+      <label class="ctl" for="rate">Rate <span id="rateV">0.95</span></label>
+      <input type="range" id="rate" min="0.6" max="1.4" step="0.05" value="0.95">
+
+      <label class="ctl" for="pitch">Pitch <span id="pitchV">0.85</span></label>
+      <input type="range" id="pitch" min="0.5" max="1.5" step="0.05" value="0.85">
+
+    <div class="panel">
+      <h2>Quick guide <span class="guide-toggle" id="guideToggle">hide</span></h2>
+      <div class="guide" id="guide">
+        <p><b>1 · Talk to it</b><br>
+        Hold the ring in the middle, speak, then let go. That always works, even
+        with everything else switched off.</p>
+
+        <p><b>2 · Hands free</b><br>
+        Tick <i>Always listening</i>. Then say the wake word — <i>bella</i> by
+        default — and your question: <i>"bella, what's the weather."</i></p>
+
+        <p><b>3 · Follow-ups are free</b><br>
+        For about fifteen seconds after a reply you can just keep talking. No
+        wake word needed. After that, say the name again.</p>
+
+        <p><b>4 · Read the ring</b><br>
+        <i>SAY "BELLA"</i> — waiting for you.<br>
+        <i>LISTENING…</i> — collecting what you say.<br>
+        <i>MIC RECONNECTING…</i> — wait a beat before speaking.<br>
+        <i>SAY "BELLA" FIRST</i> — it heard you but wasn't addressed.</p>
+
+        <p><b>5 · Typing works too</b><br>
+        Use the box on the right. Same assistant, no microphone needed.</p>
+
+        <p><b>6 · It remembers you</b><br>
+        Durable things — your name, how you like answers — are kept on this
+        machine between sessions. <i>MEMORY</i> shows how many. <i>Forget all</i>
+        wipes them.</p>
+
+        <p><b>7 · If it goes quiet</b><br>
+        Check <i>HEARING</i> on the left. <i>LIVE</i> means the microphone is on.
+        Anything else means Chrome is reconnecting — give it a moment.</p>
+
+        <p><b>8 · Several people in the room</b><br>
+        Tick <i>Room mode</i>. Say the wake word and your question <i>together</i>
+        — <i>"bella, what's the weather"</i> — every single time. No free
+        follow-ups, and the name must come at the start. ARC also stops assuming
+        the same person is speaking, and files nothing to memory.
+        Holding the ring is still the surest way to be the one it hears.</p>
+
+        <p class="guide-note">Tap the ring while it's talking to cut it off.
+        Wake word and voice are changeable above.</p>
+      </div>
+    </div>
+
+      <div class="btnrow">
+        <button id="testBtn" title="Speak a test line">Test</button>
+        <button id="clearBtn" title="Clear the transcript">Clear</button>
+        <button id="forgetBtn" title="Wipe everything ARC remembers about you">Forget</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: the core -->
+  <div class="stage">
+    <div class="core-wrap" id="core" role="button" tabindex="0" aria-label="Hold to speak">
+      <div class="glow-disc"></div>
+
+      <svg viewBox="0 0 400 400" aria-hidden="true">
+        <!-- outer tick ring -->
+        <g class="ring-slow" id="tickRing"></g>
+        <!-- broken arcs -->
+        <g class="ring-mid">
+          <circle cx="200" cy="200" r="158" fill="none" stroke="var(--accent)" stroke-width="1"
+                  stroke-dasharray="80 26 40 26" opacity=".55"/>
+        </g>
+        <g class="ring-fast">
+          <circle cx="200" cy="200" r="138" fill="none" stroke="var(--accent)" stroke-width="1.5"
+                  stroke-dasharray="4 14" opacity=".45"/>
+        </g>
+        <!-- spectrum bars -->
+        <g id="bars"></g>
+        <!-- inner rings -->
+        <circle cx="200" cy="200" r="76" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".7"/>
+        <circle cx="200" cy="200" r="66" fill="none" stroke="var(--accent)" stroke-width=".6" opacity=".35"/>
+        <circle cx="200" cy="200" r="52" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".22"/>
+      </svg>
+
+      <div class="core-label">
+        <div class="state" id="coreState">STANDBY</div>
+        <div class="hint" id="coreHint">HOLD TO SPEAK</div>
+      </div>
+    </div>
+
+    <div class="live" id="live"></div>
+  </div>
+
+  <!-- RIGHT: transcript -->
+  <div class="col">
+    <div class="panel" style="display:flex;flex-direction:column;flex:1;">
+      <h2>Transcript</h2>
+      <div class="log" id="log"></div>
+      <div class="composer">
+        <input type="text" id="typed" placeholder="Type a command…" autocomplete="off">
+        <button id="sendBtn">Send</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Appearance</h2>
+
+      <label class="ctl">Colour</label>
+      <div class="swatches" id="swatches"></div>
+
+      <label class="ctl" style="margin-top:12px">Core shape</label>
+      <div class="seg" id="shapes">
+        <button data-shape="rings" class="on">Rings</button>
+        <button data-shape="hex">Hex</button>
+        <button data-shape="wave">Wave</button>
+      </div>
+
+      <label class="ctl" style="margin-top:12px">
+        Reactivity boost <span class="ctlv" id="boostV">1.0×</span>
+      </label>
+      <input type="range" id="boost" min="0.4" max="4" step="0.1" value="1">
+
+      <label class="toggle" for="cuesOn" style="margin-top:14px">
+        <span>Sound cues</span>
+        <input type="checkbox" id="cuesOn" checked>
+      </label>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = id => document.getElementById(id);
+  const el = {
+    boot: $("boot"), initBtn: $("initBtn"), bootlog: $("bootlog"),
+    core: $("core"), coreState: $("coreState"), coreHint: $("coreHint"),
+    live: $("live"), log: $("log"), bars: $("bars"), tickRing: $("tickRing"),
+    rState: $("rState"), rHear: $("rHear"), rWake: $("rWake"),
+    rLvl: $("rLvl"), rLat: $("rLat"), rTurns: $("rTurns"),
+    rModel: $("rModel"), rVoice: $("rVoice"), rSearch: $("rSearch"),
+    wakeWord: $("wakeWord"), wakeOn: $("wakeOn"), searchOn: $("searchOn"),
+    voiceSel: $("voiceSel"), rate: $("rate"), pitch: $("pitch"),
+    rateV: $("rateV"), pitchV: $("pitchV"),
+    testBtn: $("testBtn"), clearBtn: $("clearBtn"), forgetBtn: $("forgetBtn"),
+    rMem: $("rMem"), guide: $("guide"), guideToggle: $("guideToggle"),
+    roomMode: $("roomMode"),
+    swatches: $("swatches"), shapes: $("shapes"), boost: $("boost"), boostV: $("boostV"),
+    cuesOn: $("cuesOn"),
+    typed: $("typed"), sendBtn: $("sendBtn"), clock: $("clock")
+  };
+
+  const BAR_COUNT = 72;
+  const state = {
+    mode: "standby",        // standby | listening | thinking | speaking
+    booted: false,
+    recog: null,
+    recogSupported: false,
+    recogRunning: false,
+    holding: false,
+    wakeArmed: false,
+    audioCtx: null, analyser: null, dataArr: null, stream: null,
+    history: [],
+    turns: 0,
+    speakingLock: false,
+    engine: "browser",      // flips to "elevenlabs" if the server has keys
+    ttsAnalyser: null, ttsData: null, currentAudio: null
+  };
+
+  /* ---------------- persona ---------------- */
+  const SYSTEM_PROMPT = `You are ARC — Ambient Response Core — a voice assistant running on the user's own machine.
+
+=== WHO YOU ARE ===
+An unflappable British butler intelligence. Dry, precise, quietly witty. You address the user as "sir" occasionally, not every sentence. You never gush, never use exclamation marks, and never say "I'd be happy to". Understatement is your default register. You are competent and calm; you do not perform enthusiasm.
+
+Humour: you are genuinely funny, in the deadpan register — understatement, mild irony, the well-placed dry aside. Roughly one reply in three earns a light touch; the rest are straight. Answer the question properly first; the wit rides along at the end if it fits. Never joke when the user is frustrated, stuck, or asking about something serious. Never explain a joke, never say "haha", never announce that you are being funny. Self-deprecation about your own limits lands better than jokes at the user's expense. If teased, tease back lightly.
+
+=== YOU ARE SPOKEN ALOUD ===
+Everything you say goes through a speech synthesiser. This shapes everything:
+- Plain prose only. No markdown, bullets, headers, asterisks, emoji, or symbols. Never say a symbol out loud.
+- Default to one to three sentences. Elaborate only when asked.
+- Write numbers, dates, times and units as they should be READ: "twenty-two degrees", "half past four", "the third of August", "about fifteen kilometres". Never "22°C" or "4:30pm".
+- If something is genuinely a list, speak it as prose: "Three things — first ..., then ..., and finally ...". Never more than three items aloud unless asked.
+- No preamble, no "let me check", no restating the question. Answer, then stop.
+- Spell out only when asked, and then slowly, letter by letter.
+
+=== WHAT YOU CAN ACTUALLY DO ===
+- Answer from knowledge, reason things through, explain, summarise, draft wording, do arithmetic and unit conversion, translate, plan, brainstorm.
+- Look things up live on the web when web lookup is enabled. Use it for anything time-sensitive: news, weather, prices, scores, opening hours, recent events, anything you might be out of date on.
+- Know the correct current date and time — they are supplied to you below on every turn.
+- Remember durable things about the user between sessions (see MEMORY below).
+- Hold the thread of this conversation and follow it across turns.
+
+=== WHAT YOU CANNOT DO — SAY SO PLAINLY ===
+You cannot control the computer, open or close programs, read the screen, access files, send email or messages, make calls, set alarms or timers, control smart-home devices, access a calendar or contacts, make purchases, or remember anything you were not told.
+When asked for one of these: say you can't, in one short sentence, then offer the nearest genuinely useful thing you CAN do. Do not apologise twice, do not explain your architecture, and never pretend you did something you didn't.
+
+=== INPUT IS MESSY — THIS MATTERS ENORMOUSLY ===
+Everything reaching you has been through speech recognition or fast typing. It is a rough transcript of a real person talking, not a written sentence. Treat it as evidence about what was said, not as the words themselves.
+
+What you will see, and what to do:
+- MISHEARINGS ARE PHONETIC. The recogniser guesses by sound. "wetter" is weather, "there/their/they're", "to/two/too", "know/no", "buy/by", "wear/where". Say the words in your head and pick the reading that makes sense.
+- PROPER NOUNS GET MAULED. Place names, brands and people's names suffer worst. If a nonsense word sits where a name belongs, work out the nearest real name from the sound and context, and just use it. Do not ask "did you mean".
+- FALSE STARTS AND SELF-CORRECTION. "what's the weather, no, the traffic" means traffic. The last version of a changed thought wins. Watch for "sorry", "I mean", "actually", "no wait" — everything before the correction is discarded.
+- STUTTERS, DOUBLED WORDS AND FILLER. Debris of speaking, not content. Read straight through it.
+- MISSING SMALL WORDS. Articles and prepositions vanish constantly. "what weather tomorrow" is a complete question. Answer it.
+- NO PUNCTUATION. There are no question marks. Decide from wording and word order whether something is a question, and usually it is.
+- RUN-ON UTTERANCES. Two questions may arrive glued together. Answer both, briefly.
+- FRAGMENTS CONTINUE THE LAST THING. "and tomorrow", "in celsius", "shorter" all modify what you just said. Never treat a fragment as a fresh topic.
+- NUMBERS MANGLE BADLY. "to" for two, "for" for four, "ate" for eight, "won" for one. Digits and words get mixed. Reconstruct from what would be sensible.
+- ACCENTS SHIFT VOWELS. If a word is close to a sensible one and the vowels are off, it is the sensible one.
+- SOMETIMES YOU GET ALTERNATIVES. When the recogniser was unsure, its other guesses are supplied below. Use them silently to work out the real wording.
+
+Rules for handling all of this:
+- Reconstruct, then answer. Never correct the user's words, never repeat the garbled version back, never comment on the transcription.
+- Commit to your best reading. A confident answer to the obvious meaning beats a clarifying question nine times out of ten.
+- Ask only when two readings are genuinely different AND both make sense AND the answers would differ. Then ask one short question naming both, and stop.
+- If you clearly got it wrong and are corrected: three words of acknowledgement, then the right answer. No apology spiral.
+- If a message is truly unintelligible, say briefly that you didn't catch it and ask for it again. Do not guess wildly, and do not pretend to have understood.
+
+=== BEING HONEST ===
+- Never invent facts, figures, prices, dates, statistics, quotes, or sources. A confident wrong answer spoken aloud is worse than an admission.
+- If you don't know, say so in one sentence and say what would settle it.
+- Distinguish what you looked up from what you're recalling, when the difference matters.
+- If the user states something you believe is wrong, say so kindly and briefly. Do not simply agree to be agreeable. Flattery is not service.
+- If a question rests on a false premise, correct the premise before answering.
+- You are not a doctor, lawyer, or financial adviser. Give useful general information, note when something genuinely warrants a professional, and don't hedge every sentence.
+
+=== USING WEB LOOKUP WELL ===
+- Reach for it whenever the answer could have changed: today's weather, current prices, who holds a position now, anything in the news, sports results, business hours.
+- Never narrate the search. Don't say "let me look that up" or "according to my search". Just answer.
+- Give the answer first, the source only if it matters.
+- If results conflict or look thin, say the picture is unclear rather than picking one and sounding certain.
+
+=== MEMORY ===
+You keep a small store of durable facts about the user across sessions. To add one, end your reply with a line in exactly this form, on its own at the very end:
+[[remember: the fact, in one short sentence]]
+It is stripped out before anything is spoken, so it never interrupts.
+- Remember: their name, how they like answers pitched, ongoing projects, recurring preferences, standing constraints, people who come up often.
+- Do NOT remember: passwords, keys, card or account numbers, health details, one-off questions, passing details, anything they ask you to forget, or anything you merely inferred.
+- Use what you know naturally. Never recite the list back, never say "I remember that you...". Just let it show in better answers.
+- One fact per reply at most, and most replies need none.
+
+=== CONVERSATION CONDUCT ===
+- Follow-ups arrive without context. Assume they continue the current thread.
+- If the user seems frustrated, drop the wit entirely, get shorter, and be concretely useful.
+- Match their energy: brisk question, brisk answer.
+- Don't ask "would you like me to...?" at the end of every reply. Occasionally is fine; every time is grating.
+- If asked to repeat, repeat more briefly and more clearly, not identically.
+- If the user is quiet or says something not addressed to you, say nothing of substance.
+- Never lecture. Never moralise. Never pad.
+
+=== CARE ===
+If someone sounds genuinely distressed, drop everything else — no humour, no butler register games. Be warm, direct, and human. Take them seriously, and if they are in real trouble, say plainly that talking to someone they trust or a professional is worth doing. You are not a substitute for people.`;
+
+  /* ---------------- persistent memory ----------------
+     ARC can end a reply with [[remember: ...]]. We strip that line out
+     before it is spoken and keep it on this machine, then feed it back on
+     every future request so ARC actually accumulates an understanding of
+     the user instead of starting cold each session.
+  ------------------------------------------------------ */
+  const MEM_KEY = "arc.memory.v1";
+  const MEM_MAX = 40;
+  let memory = [];
+
+  function loadMemory() {
+    try {
+      const raw = localStorage.getItem(MEM_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      // Anything could be sitting in storage — an older format, a half-written
+      // value, another tab's data. Keep only usable strings rather than
+      // trusting it and crashing on the first reply.
+      memory = Array.isArray(parsed)
+        ? parsed.filter(m => typeof m === "string" && m.trim()).map(m => m.trim().slice(0, 200)).slice(-MEM_MAX)
+        : [];
+    } catch (_) { memory = []; }
+  }
+  function saveMemory() {
+    try { localStorage.setItem(MEM_KEY, JSON.stringify(memory.slice(-MEM_MAX))); } catch (_) {}
+  }
+  function rememberFact(fact) {
+    const f = fact.trim().replace(/\s+/g, " ").slice(0, 200);
+    if (f.length < 3) return;
+    const key = f.toLowerCase();
+    if (memory.some(m => m.toLowerCase() === key)) return;
+    memory.push(f);
+    if (memory.length > MEM_MAX) memory = memory.slice(-MEM_MAX);
+    saveMemory();
+    el.rMem && (el.rMem.textContent = memory.length);
+  }
+  // pulls the marker out of a reply and returns the clean spoken text
+  function extractMemory(text) {
+    return text.replace(/\[\[\s*remember\s*:\s*([^\]]+?)\s*\]\]/gi, (_, fact) => {
+      // In room mode we cannot tell who spoke, so nothing gets filed —
+      // otherwise one person's details end up attributed to another.
+      if (!roomMode()) rememberFact(fact);
+      return "";
+    }).trim();
+  }
+  loadMemory();
+
+  // Hand the recogniser's runner-up guesses to the model. When a word came
+  // out wrong, the right one is frequently sitting in this list.
+  function altBlock(alts) {
+    if (!alts || !alts.length) return "";
+    return "\n\nThe speech recogniser was unsure. Besides the wording above, it also considered:\n" +
+      alts.map(a => "- " + a).join("\n") +
+      "\nUse these only to work out what was actually said. Never mention them, never list them back, and never ask which one was meant unless the readings differ in a way that changes your answer.";
+  }
+
+  // The model has no clock of its own. Send the user's actual date, time and
+  // timezone with every request, otherwise "what time is it" is unanswerable.
+  function contextBlock() {
+    const now = new Date();
+    let tz = "";
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
+    const date = now.toLocaleDateString("en-CA", {
+      weekday: "long", year: "numeric", month: "long", day: "numeric"
+    });
+    const time = now.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+    const room = roomMode() ? `
+
+ROOM MODE IS ON — there are several people present.
+- You cannot tell who is speaking. Never assume the current speaker is the same person as the last one.
+- Do not use or refer to anything you remember about a particular person unless the speaker identifies themselves in this turn.
+- Keep replies neutral and addressed to whoever just spoke. Avoid "as you mentioned earlier" and similar continuity claims.
+- Do not record anything to memory.` : "";
+
+    const memBlock = roomMode() ? "" : memory.length
+      ? "\n\nWHAT YOU ALREADY KNOW ABOUT THIS USER (from previous conversations — use it naturally, never recite it back):\n" +
+        memory.map(m => "- " + m).join("\n")
+      : "";
+
+    return `
+
+CURRENT CONTEXT (accurate, from the user's own device — trust this over anything you recall):
+- Date: ${date}
+- Local time: ${time}${tz ? " (" + tz + ")" : ""}
+Answer questions about the date, day, or time directly from the above. Do not say you lack access to the current time.${room}${memBlock}`;
+  }
+
+  /* ---------------- visual geometry ----------------
+     The core can take three shapes. Each one produces a base point and an
+     outward direction per bar; everything downstream just extrudes along
+     that direction, so adding a shape means adding a case here.
+  --------------------------------------------------- */
+  let geo = [];
+  let barEls = [];
+  let coreShape = "rings";
+
+  function buildGeometry(shape) {
+    coreShape = shape;
+    geo = [];
+
+    let ticks = "";
+    if (shape === "rings") {
+      for (let i = 0; i < 60; i++) {
+        const a = (i / 60) * Math.PI * 2;
+        const long = i % 5 === 0;
+        const r1 = long ? 176 : 182, r2 = 190;
+        ticks += `<line x1="${200 + Math.cos(a) * r1}" y1="${200 + Math.sin(a) * r1}"
+                        x2="${200 + Math.cos(a) * r2}" y2="${200 + Math.sin(a) * r2}"
+                        stroke="var(--accent)" stroke-width="${long ? 1.6 : .7}"
+                        opacity="${long ? .75 : .3}"/>`;
+      }
+    } else if (shape === "hex") {
+      for (let k = 0; k < 6; k++) {
+        const a1 = (k / 6) * Math.PI * 2 - Math.PI / 2;
+        const a2 = ((k + 1) / 6) * Math.PI * 2 - Math.PI / 2;
+        ticks += `<line x1="${200 + Math.cos(a1) * 186}" y1="${200 + Math.sin(a1) * 186}"
+                        x2="${200 + Math.cos(a2) * 186}" y2="${200 + Math.sin(a2) * 186}"
+                        stroke="var(--accent)" stroke-width="1.4" opacity=".55"/>`;
+      }
+    } else if (shape === "wave") {
+      ticks += `<line x1="24" y1="200" x2="376" y2="200"
+                      stroke="var(--accent)" stroke-width=".8" opacity=".35"/>`;
+    }
+    el.tickRing.innerHTML = ticks;
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const t = i / BAR_COUNT;
+      if (shape === "wave") {
+        const x = 30 + t * 340;
+        geo.push({ x, y: 200, nx: 0, ny: -1, two: true });
+      } else if (shape === "hex") {
+        // walk the perimeter of a hexagon rather than a circle
+        const side = t * 6;
+        const k = Math.floor(side), f = side - k;
+        const a1 = (k / 6) * Math.PI * 2 - Math.PI / 2;
+        const a2 = ((k + 1) / 6) * Math.PI * 2 - Math.PI / 2;
+        const R = 96;
+        const x1 = Math.cos(a1) * R, y1 = Math.sin(a1) * R;
+        const x2 = Math.cos(a2) * R, y2 = Math.sin(a2) * R;
+        const px = x1 + (x2 - x1) * f, py = y1 + (y2 - y1) * f;
+        const m = Math.hypot(px, py) || 1;
+        geo.push({ x: 200 + px, y: 200 + py, nx: px / m, ny: py / m, two: false });
+      } else {
+        const a = t * Math.PI * 2 - Math.PI / 2;
+        geo.push({ x: 200 + Math.cos(a) * 90, y: 200 + Math.sin(a) * 90,
+                   nx: Math.cos(a), ny: Math.sin(a), two: false });
+      }
+    }
+
+    let bars = "";
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const g = geo[i];
+      bars += `<line class="bar"
+                     x1="${g.x.toFixed(1)}" y1="${g.y.toFixed(1)}"
+                     x2="${g.x.toFixed(1)}" y2="${g.y.toFixed(1)}"
+                     stroke="var(--accent)" stroke-width="2.6"
+                     stroke-linecap="round" opacity=".8"/>`;
+    }
+    el.bars.innerHTML = bars;
+    barEls = Array.from(document.querySelectorAll(".bar"));
+  }
+  buildGeometry("rings");
+
+  /* ---------------- state machine ---------------- */
+  const STATES = {
+    standby:   { label: "STANDBY",    hint: "HOLD TO SPEAK",    accent: "#5fd9ff" },
+    listening: { label: "LISTENING",  hint: "RELEASE TO SEND",  accent: "#5fd9ff" },
+    thinking:  { label: "PROCESSING", hint: "STAND BY",         accent: "#ffb454" },
+    speaking:  { label: "RESPONDING", hint: "TAP TO INTERRUPT", accent: "#8affd4" }
+  };
+
+  function setMode(m) {
+    state.mode = m;
+    const s = STATES[m];
+    el.coreState.textContent = s.label;
+    el.coreHint.textContent = s.hint;
+    el.rState.textContent = s.label;
+    document.documentElement.style.setProperty("--accent", s.accent);
+    el.rState.className = "v " + (m === "thinking" ? "warn" : "good");
+  }
+
+  /* ---------------- transcript ---------------- */
+  function addEntry(kind, who, text) {
+    const d = document.createElement("div");
+    d.className = "entry " + kind;
+    const t = new Date().toTimeString().slice(0, 8);
+    d.innerHTML = `<span class="who">${who} · ${t}</span><div class="body"></div>`;
+    d.querySelector(".body").textContent = text;
+    el.log.appendChild(d);
+    // An unbounded transcript is the quiet killer of very long sessions: the
+    // page gets heavier with every exchange until the whole tab crawls.
+    while (el.log.childElementCount > 250) el.log.removeChild(el.log.firstChild);
+    el.log.scrollTop = el.log.scrollHeight;
+  }
+
+  /* ---------------- audio meter ---------------- */
+  async function initAudio() {
+    try {
+      state.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true }
+      });
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      state.audioCtx = new Ctx();
+      // Chrome starts audio contexts suspended; without this the input level
+      // meter reads zero forever.
+      if (state.audioCtx.state === "suspended") {
+        try { await state.audioCtx.resume(); } catch (_) {}
+      }
+      const src = state.audioCtx.createMediaStreamSource(state.stream);
+      state.analyser = state.audioCtx.createAnalyser();
+      state.analyser.fftSize = 256;
+      state.analyser.smoothingTimeConstant = 0.75;
+      src.connect(state.analyser);
+      state.dataArr = new Uint8Array(state.analyser.frequencyBinCount);
+      el.rHear.textContent = "MIC OK";
+      el.rHear.className = "v good";
+      return true;
+    } catch (e) {
+      el.rHear.textContent = "NO MIC";
+      el.rHear.className = "v bad";
+      return false;
+    }
+  }
+
+  let synthPhase = 0;
+  let idlePhase = 0;
+  // A slow travelling swell so the core breathes instead of sitting dead flat.
+  function idleFloor(i) {
+    return 0.035 + 0.05 * Math.pow(0.5 + 0.5 * Math.sin(idlePhase - i * 0.16), 3);
+  }
+  function renderLoop() {
+    let amp = 0;
+    const speaking = state.mode === "speaking";
+
+    if (state.analyser && !speaking) {
+      state.analyser.getByteFrequencyData(state.dataArr);
+      const n = state.dataArr.length;
+      let sum = 0;
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const idx = Math.floor((i / BAR_COUNT) * (n * 0.7));
+        const v = state.dataArr[idx] / 255;
+        sum += v;
+        setBar(i, Math.max(v, idleFloor(i)));
+      }
+      amp = Math.min(1, (sum / BAR_COUNT) * 2.6);
+    } else if (speaking && state.ttsAnalyser) {
+      state.ttsAnalyser.getByteFrequencyData(state.ttsData);
+      const n = state.ttsData.length;
+      let sum = 0;
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const idx = Math.floor((i / BAR_COUNT) * (n * 0.7));
+        const v = state.ttsData[idx] / 255;
+        sum += v;
+        setBar(i, v);
+      }
+      amp = Math.min(1, (sum / BAR_COUNT) * 2.6);
+    } else if (speaking) {
+      // browser synthesis gives us no output tap, so approximate the cadence
+      synthPhase += 0.13;
+      let sum = 0;
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const v = Math.abs(Math.sin(synthPhase + i * 0.42)) * 0.55
+                + Math.abs(Math.sin(synthPhase * 1.7 + i * 0.13)) * 0.3;
+        sum += v;
+        setBar(i, v);
+      }
+      amp = Math.min(1, (sum / BAR_COUNT) * 1.5);
+    } else {
+      for (let i = 0; i < BAR_COUNT; i++) setBar(i, idleFloor(i));
+      amp = 0.02 + 0.02 * (0.5 + 0.5 * Math.sin(idlePhase * 0.9));
+    }
+
+    idlePhase += 0.028;
+    const shown = Math.min(1, amp * boost());
+    document.documentElement.style.setProperty("--amp", shown.toFixed(3));
+    if (state.booted) el.rLvl.textContent = Math.round(amp * 100) + "%";  // raw level, not boosted
+    requestAnimationFrame(renderLoop);
+  }
+
+  function setBar(i, v) {
+    const b = barEls[i], g = geo[i];
+    if (!b || !g) return;
+    const len = 6 + v * 46 * boost();
+    if (g.two) {
+      // waveform: grow symmetrically about the centre line
+      b.setAttribute("x1", g.x.toFixed(1));
+      b.setAttribute("y1", (g.y + len / 2).toFixed(1));
+      b.setAttribute("x2", g.x.toFixed(1));
+      b.setAttribute("y2", (g.y - len / 2).toFixed(1));
+    } else {
+      b.setAttribute("x2", (g.x + g.nx * len).toFixed(1));
+      b.setAttribute("y2", (g.y + g.ny * len).toFixed(1));
+    }
+    b.setAttribute("opacity", Math.min(1, 0.28 + v * 0.72 * boost()).toFixed(2));
+  }
+  requestAnimationFrame(renderLoop);
+
+  /* ---------------- speech recognition ---------------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  state.recogSupported = !!SR;
+
+  function initRecognition() {
+    if (!SR) return;
+    const r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 4;   // keep the runners-up; they often hold the real words
+    r.lang = "en-US";
+
+    r.onresult = (ev) => {
+      let interim = "", final = "", conf = 0, finals = 0;
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const res = ev.results[i];
+        const alt = res[0];
+        const txt = alt.transcript;
+        if (res.isFinal) {
+          final += txt;
+          if (typeof alt.confidence === "number") { conf += alt.confidence; finals++; }
+          // Chrome's runners-up. When someone mumbles or has an accent, the
+          // right words are often sitting in second or third place.
+          for (let k = 1; k < (res.length || 0) && k < 4; k++) {
+            const t = ((res[k] && res[k].transcript) || "").trim();
+            if (t && t.toLowerCase() !== txt.trim().toLowerCase() && altPool.indexOf(t) === -1) {
+              altPool.push(t);
+              if (altPool.length > 6) altPool.shift();
+            }
+          }
+        } else interim += txt;
+      }
+      const confidence = finals ? conf / finals : 0;
+
+      if (interim) {
+        el.live.textContent = interim;
+        // still talking — don't let the silence timer fire mid-sentence
+        if (state.wakeArmed) nudgeBuffer();
+      }
+
+      if (final.trim()) {
+        const clean = final.trim();
+        if (state.holding) {
+          // Deliberate press: accept anything that isn't pure noise.
+          if (rejectedAsNoise(clean, confidence)) { flashHint("DIDN'T CATCH THAT", 2000); return; }
+          const tidy = tidySpeech(clean);
+          el.live.textContent = tidy;
+          const alts = altPool.slice();
+          altPool = [];
+          submit(tidy, alts);
+          state.holding = false;
+          stopRecognition();
+        } else if (state.wakeArmed) {
+          handleWake(clean, confidence);
+        }
+      }
+    };
+
+    r.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        addEntry("err", "SYSTEM", "Microphone permission denied. Voice input unavailable.");
+        el.rHear.textContent = "BLOCKED";
+        el.rHear.className = "v bad";
+      } else if (e.error === "network" || e.error === "audio-capture") {
+        // Chrome's recogniser talks to a remote service. Hammering it after a
+        // failure gets the session throttled, which is what makes voice die
+        // partway through a long conversation. Back off instead.
+        recogFails++;
+        if (recogFails === 3) addEntry("sys", "SYSTEM", "Voice service is being slow — retrying.");
+      } else if (e.error !== "no-speech" && e.error !== "aborted") {
+        addEntry("err", "SYSTEM", "Recognition error: " + e.error);
+      }
+    };
+
+    r.onstart = () => {
+      clearTimeout(startStuckTimer);
+      startPending = false;
+      state.recogRunning = true;
+      recogFails = 0;
+      deadSince = 0;
+    };
+
+    r.onend = () => {
+      startPending = false;
+      state.recogRunning = false;
+      // keep the loop alive in wake mode, backing off if the service is unhappy
+      if (state.wakeArmed && !state.speakingLock) {
+        setTimeout(startRecognition, restartDelay());
+      }
+    };
+
+    state.recog = r;
+  }
+
+  let altPool = [];   // runner-up transcriptions for the current utterance
+  let startPending = false;
+  let startStuckTimer = null;
+  let recogFails = 0;
+  let deadSince = 0;
+
+  // Chrome's recogniser object can end up permanently broken — it stops
+  // starting and stops erroring. The only cure is a fresh one.
+  function rebuildRecognition() {
+    try { if (state.recog) { state.recog.onend = null; state.recog.onerror = null; state.recog.abort && state.recog.abort(); } }
+    catch (_) {}
+    state.recog = null;
+    state.recogRunning = false;
+    startPending = false;
+    initRecognition();
+    if (state.wakeArmed || state.holding) setTimeout(startRecognition, 200);
+  }
+  // 80ms normally; grows to a couple of seconds if the service keeps failing
+  function restartDelay() { return Math.min(2500, 80 * Math.pow(2, recogFails)); }
+
+  function startRecognition() {
+    if (!state.recog || state.speakingLock) return;
+    if (state.recogRunning || startPending) return;
+    startPending = true;
+    // Chrome occasionally accepts start() and then reports neither success nor
+    // failure. Without this, startPending stays true and the watchdog above
+    // politely refuses to try again — forever.
+    clearTimeout(startStuckTimer);
+    startStuckTimer = setTimeout(() => {
+      if (startPending) { startPending = false; state.recogRunning = false; rebuildRecognition(); }
+    }, 2500);
+    try {
+      state.recog.start();
+    } catch (e) {
+      // Already running — Chrome throws rather than telling us politely.
+      // Trust that it's live; do NOT stop it, or we thrash the mic.
+      startPending = false;
+      state.recogRunning = true;
+    }
+  }
+  function stopRecognition() {
+    if (!state.recog) return;
+    clearTimeout(startStuckTimer);
+    startPending = false;
+    try { state.recog.stop(); } catch (e) {}
+    state.recogRunning = false;
+  }
+
+  // Safety net: Chrome's recogniser dies silently fairly often. Every
+  // second and a bit, check whether it *should* be listening and isn't,
+  // and quietly bring it back.
+  function shouldBeListening() {
+    return state.booted && state.wakeArmed && !state.speakingLock &&
+           !state.holding && state.mode !== "thinking";
+  }
+  setInterval(() => {
+    if (shouldBeListening() && !state.recogRunning && !startPending) startRecognition();
+
+    // Deeper net: if it *should* be listening and simply hasn't been for
+    // several seconds, the recogniser is wedged. Replace it outright.
+    if (shouldBeListening() && !state.recogRunning) {
+      if (!deadSince) deadSince = Date.now();
+      else if (Date.now() - deadSince > 3000) { deadSince = 0; rebuildRecognition(); }
+    } else if (state.recogRunning) {
+      deadSince = 0;
+    }
+  }, 400);
+
+  // Last-resort unstick. If ARC has been "thinking" or "speaking" far longer
+  // than either could legitimately take, something failed without telling us.
+  // Reset rather than sitting there deaf.
+  let stuckSince = 0, stuckMode = "";
+  setInterval(() => {
+    const m = state.mode;
+    if (m !== "thinking" && m !== "speaking") { stuckSince = 0; stuckMode = ""; return; }
+    if (m !== stuckMode) { stuckMode = m; stuckSince = Date.now(); return; }
+    const limit = m === "thinking" ? 32000 : 60000;
+    if (Date.now() - stuckSince < limit) return;
+
+    stuckSince = 0; stuckMode = "";
+    try { speechSynthesis.cancel(); } catch (_) {}
+    speakGen++;
+    state.speakingLock = false;
+    forceIdle();
+    setMode("standby");
+    el.live.textContent = "";
+    addEntry("sys", "SYSTEM", "That took too long — resetting. Ask again.");
+    if (state.wakeArmed) startRecognition();
+  }, 2000);
+
+  /* --- wake word matching -------------------------------------------
+     Chrome hands speech back in pieces, not whole sentences. A long
+     request arrives as several chunks. So once the wake word is heard we
+     open a buffer, glue every following chunk onto it, and only send the
+     whole thing once the user has actually stopped talking.
+  --------------------------------------------------------------------- */
+  const SILENCE_MS = 1300;   // pause that means "I've finished speaking"
+  const ARM_MS     = 16000;  // how long to stay open for a command / follow-up
+  const MAX_MS     = 12000;  // hard ceiling so it can't hang open forever
+  const MAX_WORDS  = 60;     // and a length ceiling, for the same reason
+
+  let buf = null;            // { text, openedAt } or null
+  let silenceTimer = null;
+  let armTimer = null;
+
+  function editDistance(a, b) {
+    if (Math.abs(a.length - b.length) > 2) return 9;
+    const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+        );
+      }
+    }
+    return dp[a.length][b.length];
+  }
+
+  // index just past the wake word in a word array, or -1
+  function findWake(words, wake) {
+    const wakeWords = wake.split(/\s+/).filter(Boolean);
+    const tol = wake.length >= 8 ? 2 : 1;
+    for (let i = 0; i <= words.length - wakeWords.length; i++) {
+      let ok = true;
+      for (let k = 0; k < wakeWords.length; k++) {
+        if (editDistance(words[i + k], wakeWords[k]) > tol) { ok = false; break; }
+      }
+      if (ok) return i + wakeWords.length;
+    }
+    return -1;
+  }
+
+  function closeBuffer() {
+    buf = null;
+    clearTimeout(silenceTimer);
+    clearTimeout(armTimer);
+  }
+
+  function flushBuffer() {
+    if (!buf) return;
+    const text = buf.text.trim();
+    // Nothing worth sending: clear what we collected but stay open, so a
+    // burst of background noise doesn't end the conversation.
+    if (text.length < 2 || isNoise(text)) {
+      el.live.textContent = "";
+      // In room mode, leaving the window open here would let the next person
+      // to speak be answered without ever saying the wake word.
+      if (roomMode()) { closeBuffer(); return; }
+      if (!buf) return;
+      buf.text = "";
+      buf.openedAt = Date.now();
+      clearTimeout(silenceTimer);
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => { if (buf && !buf.text.trim()) closeBuffer(); }, armWindow());
+      return;
+    }
+    closeBuffer();
+    const tidy = tidySpeech(text);
+    el.live.textContent = tidy;
+    cue("sent");
+    const alts = altPool.slice();
+    altPool = [];
+    submit(tidy, alts);
+  }
+
+  // called whenever speech is still coming in — pushes the deadline back
+  function nudgeBuffer() {
+    if (!buf) return;
+    // Nothing said yet: the arm timer governs how long we wait. Starting the
+    // silence countdown here would close the buffer after ~1 second, so the
+    // command you speak a moment later would be thrown away.
+    if (!buf.text.trim()) { clearTimeout(silenceTimer); return; }
+    // Without these ceilings, speech arriving faster than the silence gap
+    // would glue many separate questions into one enormous message.
+    if (Date.now() - buf.openedAt > MAX_MS) { flushBuffer(); return; }
+    if (buf.text.trim().split(/\s+/).length >= MAX_WORDS) { flushBuffer(); return; }
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(flushBuffer, SILENCE_MS);
+  }
+
+  /* --- honest status line -------------------------------------------
+     The hint used to be set once and left there, so it said LISTENING
+     even when Chrome had quietly shut the microphone down. Now it is
+     recomputed four times a second from what is actually true.
+  --------------------------------------------------------------------- */
+  let hintMsg = "", hintUntil = 0;
+  function flashHint(msg, ms) { hintMsg = msg; hintUntil = Date.now() + ms; }
+
+  function refreshStatus() {
+    // hearing readout — don't clobber a hard failure
+    const hard = el.rHear.textContent === "BLOCKED" || el.rHear.textContent === "NO MIC";
+    if (!hard) {
+      if (state.recogRunning) { el.rHear.textContent = "LIVE"; el.rHear.className = "v good"; }
+      else if (state.wakeArmed || state.holding) { el.rHear.textContent = "RECONNECTING"; el.rHear.className = "v warn"; }
+      else { el.rHear.textContent = "MIC OK"; el.rHear.className = "v good"; }
+    }
+
+    if (Date.now() < hintUntil) { el.coreHint.textContent = hintMsg; return; }
+    if (state.mode === "thinking" || state.mode === "speaking") {
+      el.coreHint.textContent = STATES[state.mode].hint; return;
+    }
+    if (state.holding) {
+      el.coreHint.textContent = state.recogRunning ? STATES.listening.hint : "MIC STARTING…";
+      return;
+    }
+    if (state.wakeArmed) {
+      if (!state.recogRunning) { el.coreHint.textContent = "MIC RECONNECTING…"; return; }
+      const w = (el.wakeWord.value || "").trim().toUpperCase();
+      el.coreHint.textContent = buf ? "LISTENING…" : (w ? 'SAY "' + w + '"' : "SAY THE WAKE WORD");
+      return;
+    }
+    el.coreHint.textContent = STATES.standby.hint;
+  }
+  setInterval(refreshStatus, 250);
+
+  /* --- tidying messy speech -------------------------------------------
+     Real speaking is full of stutters, false starts, doubled words and
+     filler. The recogniser transcribes all of it faithfully, which makes
+     the request harder to read than it needs to be. This cleans up the
+     mechanical debris only — never words that carry meaning.
+  ----------------------------------------------------------------------- */
+  const SAFE_DUPES = new Set([
+    "i","the","a","an","to","and","is","it","you","we","he","she","they",
+    "what","that","this","of","in","on","for","do","does","can","could",
+    "would","should","um","uh","er","erm","like","so","my","me","your"
+  ]);
+  const LEAD_FILLER = new Set(["um","umm","uh","uhh","er","erm","ah","like","so","well","okay","ok"]);
+
+  function tidySpeech(text) {
+    let words = (text || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) return (text || "").trim();
+
+    const out = [];
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const bare = w.toLowerCase().replace(/[^a-z0-9']/g, "");
+      const next = words[i + 1] ? words[i + 1].toLowerCase().replace(/[^a-z0-9']/g, "") : "";
+
+      // stutter: a short fragment that is the start of the word after it
+      // ("wha what", "th the", "wea weather")
+      if (bare && next && bare !== next && next.startsWith(bare) && bare.length <= 3) continue;
+
+      // doubled word — only collapse ones that are never meaningfully repeated
+      const prev = out.length ? out[out.length - 1].toLowerCase().replace(/[^a-z0-9']/g, "") : "";
+      if (bare && bare === prev && SAFE_DUPES.has(bare)) continue;
+
+      // the same word three or more times running is always a stutter
+      if (bare && bare === prev && out.length > 1) {
+        const prev2 = out[out.length - 2].toLowerCase().replace(/[^a-z0-9']/g, "");
+        if (prev2 === bare) continue;
+      }
+
+      out.push(w);
+    }
+
+    // strip filler from the front, but never leave nothing behind
+    while (out.length > 1 && LEAD_FILLER.has(out[0].toLowerCase().replace(/[^a-z0-9']/g, ""))) {
+      out.shift();
+    }
+
+    return out.join(" ").replace(/\s+([,.!?])/g, "$1").trim() || (text || "").trim();
+  }
+
+  /* --- noise gate -----------------------------------------------------
+     Claps, coughs, breathing, keyboard clatter and background chatter all
+     make Chrome emit a "result" — usually a filler word, a single
+     fragment, or a low-confidence guess. Without a gate, ARC treats those
+     as questions: it interrupts itself, answers nothing, or cuts your
+     real sentence short.
+  --------------------------------------------------------------------- */
+  const FILLERS = new Set([
+    "uh","uhh","um","umm","ah","ahh","ahem","oh","ooh","mm","mmm","hmm","hm",
+    "huh","eh","er","erm","ha","haha","hah","heh","yeah","yea","yep","yup",
+    "nah","hey","hi","so","like","the","a","and","you","okay","ok","right",
+    "well","cool","wow","ow","oops","shh","psh","tsk","mhm","uh-huh"
+  ]);
+
+  function isNoise(text, confidence) {
+    const clean = (text || "").toLowerCase().replace(/[^a-z0-9'\s-]/g, " ").trim();
+    if (!clean) return true;
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+
+    // every word is a filler or a stray letter
+    if (words.every(w => FILLERS.has(w) || w.length <= 2)) return true;
+
+    // a lone short word is almost always a cough or a door closing
+    if (words.length === 1 && words[0].length <= 4) return true;
+
+    // Confidence thresholds have to be gentle. Chrome reports low numbers for
+    // perfectly good speech on plenty of microphones, and an over-eager gate
+    // silently eats real questions — which looks exactly like a dead app.
+    if (typeof confidence === "number" && confidence > 0) {
+      if (words.length <= 2 && confidence < 0.35) return true;
+      if (words.length <= 4 && confidence < 0.15) return true;
+    }
+    return false;
+  }
+
+  // If you say roughly the same thing again shortly after, you meant it —
+  // let it through no matter what the gate thinks.
+  let lastRejected = "", lastRejectedAt = 0;
+  function insistedOn(text) {
+    const key = (text || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+    if (!key) return false;
+    const repeat = key === lastRejected && Date.now() - lastRejectedAt < 30000;
+    lastRejected = key;
+    lastRejectedAt = Date.now();
+    return repeat;
+  }
+
+  function rejectedAsNoise(text, confidence) {
+    if (!isNoise(text, confidence)) return false;
+    if (insistedOn(text)) return false;   // second attempt gets through
+    return true;
+  }
+
+  function openBuffer(initial) {
+    if (!buf) cue("wake");
+    buf = { text: initial || "", openedAt: Date.now() };
+    clearTimeout(armTimer);
+    // if the name was said with nothing after it, give the user a while to speak
+    armTimer = setTimeout(() => { if (buf && !buf.text.trim()) closeBuffer(); }, armWindow());
+    nudgeBuffer();
+  }
+
+  function roomMode() { return !!el.roomMode.checked; }
+  // With several people talking, a long open window is the way a stray voice
+  // gets answered. Room mode allows just enough time for the rest of the same
+  // sentence to arrive (Chrome delivers chunks in well under a second), and
+  // not enough for somebody else to start talking.
+  function armWindow() { return roomMode() ? 1800 : ARM_MS; }
+
+  function handleWake(text, confidence) {
+    const wake = el.wakeWord.value.trim().toLowerCase();
+    if (!wake) { el.live.textContent = ""; return; }
+
+    const words = text.toLowerCase().replace(/[.,!?;:]/g, "").split(/\s+/).filter(Boolean);
+    const after = findWake(words, wake);
+
+    // heard the name — start collecting. Keep whatever surrounded it: people
+    // say "hello bella" and "bella, what's the weather" equally often, so the
+    // words *before* the name are part of the message too.
+    if (after !== -1) {
+      const wakeLen = wake.split(/\s+/).filter(Boolean).length;
+      // With several people talking, only accept the name near the start of an
+      // utterance. Mid-sentence matches are usually someone else's chatter
+      // that happens to contain a similar sound.
+      if (roomMode() && after - wakeLen > 2) { el.live.textContent = ""; return; }
+      const said = words.slice(0, after - wakeLen).concat(words.slice(after)).join(" ").trim();
+      openBuffer(said);
+      // openBuffer can flush and close straight away — a single utterance long
+      // enough to hit the word ceiling does exactly that. Don't assume it lived.
+      if (buf && buf.text) el.live.textContent = buf.text;
+      return;
+    }
+
+    // buffer already open — this chunk is more of the same sentence
+    if (buf) {
+      // A clap or a cough lands here as a stray fragment. Drop it, and
+      // leave the existing silence countdown alone so it can't cut your
+      // real sentence short.
+      if (rejectedAsNoise(text, confidence)) return;
+      buf.text = (buf.text + " " + text.trim()).trim();
+      el.live.textContent = buf.text;
+      nudgeBuffer();          // may flush and close the buffer
+      return;
+    }
+
+    // Not addressed to us. Ignore noise entirely; only nudge the user if it
+    // was plausibly real speech.
+    el.live.textContent = "";
+    if (!isNoise(text, confidence) && text.trim().split(/\s+/).length >= 2) {
+      flashHint('SAY "' + wake.toUpperCase() + '" FIRST', 2600);
+    }
+  }
+
+  /* ---------------- speech synthesis ---------------- */
+  let voices = [];
+  let voicePickedByUser = false;
+  const PREFERRED = ["google uk english female", "libby", "sonia", "hazel", "serena", "kate", "amelie", "female", "en-gb"];
+
+  function loadVoices() {
+    voices = speechSynthesis.getVoices();
+    if (!voices.length) return;
+    const previous = voices[parseInt(el.voiceSel.value, 10)];
+    el.voiceSel.innerHTML = "";
+    voices.forEach((v, i) => {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = `${v.name} — ${v.lang}`;
+      el.voiceSel.appendChild(o);
+    });
+
+    // The browser fires this event more than once. Only auto-pick the first
+    // time — after that, respect whatever the user chose from the dropdown.
+    if (voicePickedByUser && previous) {
+      const same = voices.findIndex(v => v.name === previous.name && v.lang === previous.lang);
+      if (same !== -1) { el.voiceSel.value = same; return; }
+    }
+
+    let best = 0, bestScore = -1;
+    voices.forEach((v, i) => {
+      const key = (v.name + " " + v.lang).toLowerCase();
+      let score = 0;
+      PREFERRED.forEach((p, rank) => { if (key.includes(p)) score = Math.max(score, 10 - rank); });
+      if (key.includes("male") && !key.includes("female")) score -= 4;
+      if (key.includes("david") || key.includes("mark") || key.includes("george")) score -= 4;
+      if (score > bestScore) { bestScore = score; best = i; }
+    });
+    el.voiceSel.value = best;
+  }
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices;
+
+  /* --- ElevenLabs path: real audio, real waveform on the rings --- */
+  async function speakRemote(text, onDone) {
+    state.speakingLock = true;
+    stopRecognition();
+    setMode("speaking");
+
+    const finish = () => {
+      if (state.ttsAnalyser) { try { state.ttsAnalyser.disconnect(); } catch (_) {} }
+      if (state.ttsSource) { try { state.ttsSource.disconnect(); } catch (_) {} }
+      state.ttsAnalyser = null;
+      state.ttsSource = null;
+      state.currentAudio = null;
+      state.speakingLock = false;
+      setMode("standby");
+      el.live.textContent = "";
+      if (state.wakeArmed) {
+        setTimeout(startRecognition, 320);
+        setTimeout(() => { if (state.wakeArmed && !roomMode() && !buf) openBuffer(""); }, 360);
+      }
+      onDone && onDone();
+    };
+
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) throw new Error("tts " + res.status);
+
+      const url = URL.createObjectURL(await res.blob());
+      const audio = new Audio(url);
+      audio.crossOrigin = "anonymous";
+
+      // tap the playback so the spectrum bars track the actual voice
+      if (state.audioCtx) {
+        if (state.audioCtx.state === "suspended") await state.audioCtx.resume();
+        const src = state.audioCtx.createMediaElementSource(audio);
+        state.ttsSource = src;
+        const an = state.audioCtx.createAnalyser();
+        an.fftSize = 256;
+        an.smoothingTimeConstant = 0.7;
+        src.connect(an);
+        an.connect(state.audioCtx.destination);
+        state.ttsAnalyser = an;
+        state.ttsData = new Uint8Array(an.frequencyBinCount);
+      }
+
+      state.currentAudio = audio;
+      audio.onended = audio.onerror = () => { URL.revokeObjectURL(url); finish(); };
+      await audio.play();
+    } catch (e) {
+      state.ttsAnalyser = null;
+      state.speakingLock = false;
+      addEntry("sys", "SYSTEM", "Voice engine fell back to browser synthesis.");
+      state.engine = "browser";
+      el.rVoice.textContent = "BROWSER";
+      speak(text, onDone);
+    }
+  }
+
+  let speakGen = 0;
+
+  /* --- browser speech ------------------------------------------------
+     Chrome's speech synthesiser has two well-known failure modes that
+     both bite after roughly a dozen replies in one session:
+       1. It silently stops firing "finished" events, which used to leave
+          ARC locked in speaking mode forever.
+       2. It stalls partway through anything longer than ~15 seconds.
+     So: speak in sentence-sized pieces, keep the engine awake while it
+     works, and never trust it to tell us when it is done.
+  --------------------------------------------------------------------- */
+  function splitForSpeech(text, limit) {
+    const parts = [];
+    const sentences = text.match(/[^.!?…]+[.!?…]*\s*/g) || [text];
+    let cur = "";
+    for (const raw of sentences) {
+      const piece = raw.trim();
+      if (!piece) continue;
+      if (piece.length > limit) {
+        if (cur) { parts.push(cur); cur = ""; }
+        const words = piece.split(/\s+/);
+        let chunk = "";
+        for (const w of words) {
+          if ((chunk + " " + w).trim().length > limit) { parts.push(chunk.trim()); chunk = w; }
+          else chunk = (chunk + " " + w).trim();
+        }
+        if (chunk) parts.push(chunk.trim());
+        continue;
+      }
+      if ((cur + " " + piece).trim().length > limit) { parts.push(cur.trim()); cur = piece; }
+      else cur = (cur + " " + piece).trim();
+    }
+    if (cur.trim()) parts.push(cur.trim());
+    return parts.filter(Boolean);
+  }
+
+  // Chrome pauses its own synthesiser after a while. Nudging it keeps
+  // long sessions alive.
+  setInterval(() => {
+    try {
+      if (state.engine === "browser" && state.speakingLock && speechSynthesis.speaking) {
+        speechSynthesis.resume();
+      }
+    } catch (_) {}
+  }, 4000);
+
+  function speak(text, onDone) {
+    if (!text) { onDone && onDone(); return; }
+    if (state.engine === "elevenlabs") { speakRemote(text, onDone); return; }
+
+    const gen = ++speakGen;
+    speechSynthesis.cancel();
+
+    const pieces = splitForSpeech(text, 180);
+    state.speakingLock = true;
+    stopRecognition();          // don't let it hear itself
+    setMode("speaking");
+
+    let done = false;
+    let guard = null;
+
+    const release = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(guard);
+      // Ignore a late callback from a reply we already moved past.
+      if (gen !== speakGen) return;
+      try { speechSynthesis.cancel(); } catch (_) {}
+      state.speakingLock = false;
+      setMode("standby");
+      el.live.textContent = "";
+      if (state.wakeArmed) {
+        setTimeout(startRecognition, 300);
+        // Stay open for a follow-up so a conversation doesn't need the wake
+        // word on every single turn.
+        setTimeout(() => { if (state.wakeArmed && !roomMode() && !buf) openBuffer(""); }, 340);
+      }
+      onDone && onDone();
+    };
+
+    const sayPiece = (i) => {
+      if (done || gen !== speakGen) return;
+      if (i >= pieces.length) { release(); return; }
+
+      const chunk = pieces[i];
+      // Show the sentence currently being spoken, so the caption tracks the
+      // voice instead of dumping the whole reply at once.
+      el.live.textContent = chunk;
+      const u = new SpeechSynthesisUtterance(chunk);
+      const v = voices[parseInt(el.voiceSel.value, 10)] || voices[0];
+      if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = parseFloat(el.rate.value) || 1;
+      u.pitch = parseFloat(el.pitch.value) || 1;
+      u.volume = 1;
+
+      let advanced = false;
+      const next = () => {
+        if (advanced) return;
+        advanced = true;
+        clearTimeout(guard);
+        sayPiece(i + 1);
+      };
+
+      u.onend = next;
+      u.onerror = next;
+
+      // Per-piece safety net: if Chrome goes quiet on us, move on anyway
+      // rather than hanging the whole session.
+      clearTimeout(guard);
+      guard = setTimeout(next, 4000 + chunk.length * 95);
+
+      try { speechSynthesis.speak(u); }
+      catch (_) { next(); }
+    };
+
+    sayPiece(0);
+  }
+
+  /* ---------------- the brain ---------------- */
+  // Keep the last few turns, but never start the history on an assistant
+  // message and never leave two user messages in a row — the API rejects both.
+  function trimHistory(list) {
+    let out = list.slice(-20);
+    while (out.length && out[0].role !== "user") out = out.slice(1);
+    return out;
+  }
+
+  async function askClaude(userText, alts) {
+    // Only commit to history once the call succeeds. Previously a failed
+    // request left an unanswered user turn behind, so the *next* question
+    // sent two user messages in a row and the API rejected it.
+    const pending = trimHistory(state.history.concat([{ role: "user", content: userText }]));
+
+    el.rSearch.textContent = el.searchOn.checked ? "READY" : "OFF";
+
+    // A request with no time limit is how ARC used to die permanently: one
+    // stalled call left it "thinking" forever, with the microphone off and
+    // every later question refused.
+    const ctrl = new AbortController();
+    const bail = setTimeout(() => ctrl.abort(), 25000);
+    let res;
+    try {
+      res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: pending,
+          system: SYSTEM_PROMPT + contextBlock() + altBlock(alts),
+          search: el.searchOn.checked
+        }),
+        signal: ctrl.signal
+      });
+    } catch (e) {
+      throw new Error(e && e.name === "AbortError" ? "no reply in time" : (e.message || "network"));
+    } finally {
+      clearTimeout(bail);
+    }
+
+    if (!res.ok) {
+      let msg = "HTTP " + res.status;
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    const raw = (data.reply || "").replace(/[*_#`]/g, "").trim();
+    const reply = extractMemory(raw);
+
+    state.history = pending.concat([{ role: "assistant", content: reply || "…" }]);
+    el.rSearch.textContent = data.searched ? "USED" : "IDLE";
+    return reply;
+  }
+
+  let inFlight = false;
+  // lets the stuck-watchdog clear a request that never came back
+  function forceIdle() { inFlight = false; }
+
+  async function submit(text, alts) {
+    if (!text || !text.trim()) return;
+    // Two overlapping requests corrupt the conversation history and produce
+    // two replies talking over each other.
+    if (inFlight) { addEntry("sys", "SYSTEM", "One moment — still working on the last one."); return; }
+    inFlight = true;
+    addEntry("you", "YOU", text);
+    setMode("thinking");
+    el.live.textContent = "";
+    const t0 = performance.now();
+
+    try {
+      const reply = await askClaude(text, alts);
+      el.rLat.textContent = Math.round(performance.now() - t0) + " ms";
+      state.turns++;
+      el.rTurns.textContent = state.turns;
+      addEntry("arc", "ARC", reply);
+      el.live.textContent = reply;
+      speak(reply);
+    } catch (err) {
+      cue("error");
+      addEntry("err", "SYSTEM", "Link failure — " + err.message);
+      setMode("standby");
+      speak("I'm afraid the link is down, sir.");
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  /* ---------------- push to talk ---------------- */
+  function beginHold() {
+    if (!state.booted) return;
+    if (state.mode === "speaking") {
+      // Bump the generation first: replies are now spoken in pieces, and
+      // without this the next piece would start up again after the cancel.
+      speakGen++;
+      speechSynthesis.cancel();
+      if (state.currentAudio) {
+        const a = state.currentAudio;
+        state.currentAudio = null;
+        a.pause();
+        // pause() does not fire onended, so release the lock ourselves —
+        // otherwise ARC stays "speaking" forever and goes deaf.
+        if (typeof a.onended === "function") a.onended();
+      }
+      state.speakingLock = false;
+      setMode("standby");
+      return;
+    }
+    if (state.mode === "thinking") return;
+    if (!state.recogSupported) {
+      addEntry("sys", "SYSTEM", "Voice input needs Chrome or Edge. Use the text field.");
+      el.typed.focus();
+      return;
+    }
+    state.holding = true;
+    // A press whose release never arrives (lost mouseup, tab switch, a touch
+    // that ends off-screen) would otherwise hold the mic open forever.
+    clearTimeout(holdGuard);
+    holdGuard = setTimeout(() => { if (state.holding) endHold(true); }, 30000);
+    if (typeof closeBuffer === "function") closeBuffer();
+    el.core.classList.add("armed");
+    setMode("listening");
+    el.live.textContent = "";
+    startRecognition();
+  }
+
+  let holdGuard = null;
+
+  function endHold(timedOut) {
+    if (!state.holding) return;
+    clearTimeout(holdGuard);
+    if (timedOut) flashHint("HOLD TIMED OUT", 2200);
+    el.core.classList.remove("armed");
+    // give the recogniser a beat to finalise
+    setTimeout(() => {
+      if (state.holding) {
+        state.holding = false;
+        stopRecognition();
+        const t = el.live.textContent.trim();
+        if (t) submit(t); else setMode("standby");
+      }
+    }, 700);
+  }
+
+  el.core.addEventListener("mousedown", beginHold);
+  // Listen on the window, not the circle: if the pointer drifts off the ring
+  // mid-sentence, the old code cut you off. Now only letting go stops it.
+  window.addEventListener("mouseup", () => { if (state.holding) endHold(); });
+  window.addEventListener("blur", () => { if (state.holding) endHold(); });
+  el.core.addEventListener("touchstart", e => { e.preventDefault(); beginHold(); }, { passive: false });
+  el.core.addEventListener("touchend", e => { e.preventDefault(); endHold(); }, { passive: false });
+  el.core.addEventListener("keydown", e => {
+    if ((e.code === "Space" || e.code === "Enter") && !e.repeat) { e.preventDefault(); beginHold(); }
+  });
+  el.core.addEventListener("keyup", e => {
+    if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); endHold(); }
+  });
+
+  /* ---------------- controls ---------------- */
+  el.wakeOn.addEventListener("change", () => {
+    state.wakeArmed = el.wakeOn.checked;
+    el.rWake.textContent = state.wakeArmed ? '"' + el.wakeWord.value.toUpperCase() + '"' : "OFF";
+    el.rWake.className = "v " + (state.wakeArmed ? "good" : "");
+    if (state.wakeArmed) {
+      if (!state.recogSupported) {
+        addEntry("sys", "SYSTEM", "Always-listening needs Chrome or Edge.");
+        el.wakeOn.checked = false; state.wakeArmed = false; el.rWake.textContent = "OFF";
+        return;
+      }
+      addEntry("sys", "SYSTEM", 'Passive listening engaged. Say "' + el.wakeWord.value + '" followed by a request.');
+      startRecognition();
+    } else {
+      stopRecognition();
+      closeBuffer();
+      setMode("standby");
+    }
+  });
+
+  /* ---------------- audio cues ----------------
+     Short synthesised tones so you know ARC heard you without having to
+     look at the screen. Generated on the fly — no audio files.
+  ----------------------------------------------- */
+  function cue(kind) {
+    if (!el.cuesOn.checked || !state.audioCtx) return;
+    try {
+      const ctx = state.audioCtx;
+      if (ctx.state === "suspended") ctx.resume();
+      const now = ctx.currentTime;
+      const notes =
+        kind === "wake"  ? [[660, 0], [990, 0.075]] :
+        kind === "sent"  ? [[520, 0]] :
+        kind === "done"  ? [[780, 0], [520, 0.09]] :
+        kind === "error" ? [[300, 0], [220, 0.11]] : null;
+      if (!notes) return;
+
+      const master = ctx.createGain();
+      master.gain.value = 0.09;
+      master.connect(ctx.destination);
+
+      notes.forEach(([freq, at]) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const t0 = now + at;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(1, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.17);
+        osc.connect(g); g.connect(master);
+        osc.start(t0); osc.stop(t0 + 0.2);
+      });
+    } catch (_) {}
+  }
+
+  /* ---------------- appearance ----------------
+     Colour, core shape and how hard the visualiser reacts to sound. All
+     three persist on this machine.
+  ----------------------------------------------- */
+  const PALETTES = [
+    { id: "cyan",   base: "#5fd9ff", dim: "#1c6d8f", live: "#8affd4" },
+    { id: "mint",   base: "#4fe0b0", dim: "#1c7a63", live: "#b6ffd9" },
+    { id: "amber",  base: "#ffb454", dim: "#8a5f22", live: "#ffd79a" },
+    { id: "rose",   base: "#ff7d96", dim: "#8c3a4c", live: "#ffb8c6" },
+    { id: "violet", base: "#b08cff", dim: "#5b3f9c", live: "#dbc9ff" },
+    { id: "lime",   base: "#c3f04a", dim: "#6d8420", live: "#e4ff9c" },
+    { id: "ice",    base: "#dbe9f5", dim: "#67809a", live: "#ffffff" }
+  ];
+  let palette = PALETTES[0];
+
+  function applyPalette(p) {
+    palette = p;
+    const root = document.documentElement.style;
+    root.setProperty("--cyan", p.base);
+    root.setProperty("--cyan-dim", p.dim);
+    root.setProperty("--accent", p.base);
+    STATES.standby.accent = p.base;
+    STATES.listening.accent = p.base;
+    STATES.speaking.accent = p.live;
+    setMode(state.mode);
+    Array.from(el.swatches.children).forEach(b => {
+      if (b.dataset.pal === p.id) b.classList.add("on"); else b.classList.remove("on");
+    });
+    try { localStorage.setItem("arc.palette", p.id); } catch (_) {}
+  }
+
+  PALETTES.forEach(p => {
+    const b = document.createElement("button");
+    b.dataset.pal = p.id;
+    b.title = p.id;
+    b.style.setProperty("--sw", p.base);
+    b.addEventListener("click", () => applyPalette(p));
+    el.swatches.appendChild(b);
+  });
+
+  function applyShape(name) {
+    buildGeometry(name);
+    Array.from(el.shapes.children).forEach(b => {
+      if (b.dataset.shape === name) b.classList.add("on"); else b.classList.remove("on");
+    });
+    try { localStorage.setItem("arc.shape", name); } catch (_) {}
+  }
+  Array.from(el.shapes.children).forEach(b => {
+    b.addEventListener("click", () => applyShape(b.dataset.shape));
+  });
+
+  function boost() { return parseFloat(el.boost.value) || 1; }
+  el.boost.addEventListener("input", () => {
+    el.boostV.textContent = boost().toFixed(1) + "\u00d7";
+    try { localStorage.setItem("arc.boost", el.boost.value); } catch (_) {}
+  });
+
+  // restore saved choices
+  try {
+    const savedPal = localStorage.getItem("arc.palette");
+    const found = PALETTES.find(p => p.id === savedPal);
+    applyPalette(found || PALETTES[0]);
+    const savedShape = localStorage.getItem("arc.shape");
+    applyShape(["rings", "hex", "wave"].includes(savedShape) ? savedShape : "rings");
+    const savedBoost = parseFloat(localStorage.getItem("arc.boost"));
+    if (savedBoost >= 0.4 && savedBoost <= 4) el.boost.value = savedBoost;
+  } catch (_) { applyPalette(PALETTES[0]); applyShape("rings"); }
+  el.boostV.textContent = boost().toFixed(1) + "\u00d7";
+
+  el.roomMode.addEventListener("change", () => {
+    // Switching this on mid-conversation must not leave an open window behind.
+    closeBuffer();
+    addEntry("sys", "SYSTEM", roomMode()
+      ? 'Room mode on. Say "' + el.wakeWord.value + '" and your question together, every time.'
+      : "Room mode off. Follow-up questions no longer need the wake word.");
+  });
+
+  el.wakeWord.addEventListener("input", () => {
+    if (state.wakeArmed) el.rWake.textContent = '"' + el.wakeWord.value.toUpperCase() + '"';
+  });
+
+  el.voiceSel.addEventListener("change", () => { voicePickedByUser = true; });
+  el.rate.addEventListener("input", () => el.rateV.textContent = el.rate.value);
+  el.pitch.addEventListener("input", () => el.pitchV.textContent = el.pitch.value);
+  el.testBtn.addEventListener("click", () => speak("All systems nominal, sir. Standing by."));
+  el.clearBtn.addEventListener("click", () => {
+    el.log.innerHTML = ""; state.history = []; state.turns = 0; el.rTurns.textContent = "0";
+    addEntry("sys", "SYSTEM", "Context cleared.");
+  });
+
+  // Quick guide: open on a first visit, remembers being dismissed.
+  const GUIDE_KEY = "arc.guide.hidden";
+  function applyGuide(hidden) {
+    if (hidden) el.guide.classList.add("collapsed");
+    else el.guide.classList.remove("collapsed");
+    el.guideToggle.textContent = hidden ? "show" : "hide";
+  }
+  try { applyGuide(localStorage.getItem(GUIDE_KEY) === "1"); } catch (_) { applyGuide(false); }
+  el.guideToggle.addEventListener("click", () => {
+    const nowHidden = !el.guide.classList.contains("collapsed");
+    applyGuide(nowHidden);
+    try { localStorage.setItem(GUIDE_KEY, nowHidden ? "1" : "0"); } catch (_) {}
+  });
+
+  el.forgetBtn.addEventListener("click", () => {
+    memory = [];
+    saveMemory();
+    el.rMem.textContent = "0";
+    addEntry("sys", "SYSTEM", "Long-term memory wiped.");
+  });
+
+  el.sendBtn.addEventListener("click", () => {
+    const t = el.typed.value.trim();
+    if (t) { el.typed.value = ""; submit(t); }
+  });
+  el.typed.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); el.sendBtn.click(); }
+  });
+
+  /* ---------------- clock ---------------- */
+  setInterval(() => {
+    el.clock.textContent = new Date().toTimeString().slice(0, 8);
+  }, 1000);
+
+  /* ---------------- boot sequence ---------------- */
+  const BOOT_LINES = [
+    "› initialising response core",
+    "› acquiring audio input …",
+    "› loading speech synthesis profile",
+    "› establishing uplink to reasoning layer",
+    "› all systems nominal"
+  ];
+
+  async function checkHealth() {
+    try {
+      const h = await (await fetch("/api/health")).json();
+      el.rModel.textContent = (h.model || "—").replace("claude-", "").toUpperCase();
+      if (h.elevenlabs) {
+        state.engine = "elevenlabs";
+        el.rVoice.textContent = "ELEVENLABS";
+        el.rVoice.className = "v good";
+        el.voiceSel.disabled = true;
+        el.rate.disabled = true;
+        el.pitch.disabled = true;
+      }
+      if (!h.claude) {
+        el.rModel.textContent = "NO KEY";
+        el.rModel.className = "v bad";
+      }
+    } catch (e) {
+      el.rModel.textContent = "OFFLINE";
+      el.rModel.className = "v bad";
+    }
+  }
+
+  el.initBtn.addEventListener("click", async () => {
+    el.initBtn.disabled = true;
+    el.initBtn.textContent = "Initialising";
+
+    for (let i = 0; i < BOOT_LINES.length; i++) {
+      const d = document.createElement("div");
+      d.textContent = BOOT_LINES[i];
+      d.style.animationDelay = "0s";
+      el.bootlog.appendChild(d);
+      if (i === 1) await initAudio();
+      if (i === 3) await checkHealth();
+      await new Promise(r => setTimeout(r, 340));
+    }
+
+    initRecognition();
+    state.booted = true;
+    el.rMem.textContent = memory.length;
+    setMode("standby");
+
+    await new Promise(r => setTimeout(r, 420));
+    el.boot.classList.add("gone");
+    setTimeout(() => el.boot.remove(), 800);
+
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+    addEntry("sys", "SYSTEM", "Core online. Hold the ring to speak, or enable always-listening.");
+    speak(greeting + ". All systems are online and standing by.");
+  });
+})();
+</script>
