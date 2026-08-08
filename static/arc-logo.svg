@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <radialGradient id="arcCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#eaf7ff"/>
+      <stop offset="42%" stop-color="#5fd9ff"/>
+      <stop offset="100%" stop-color="#1c6d8f"/>
+    </radialGradient>
+  </defs>
+  <!-- dark reactor coin so it reads on any tab colour -->
+  <circle cx="32" cy="32" r="31.5" fill="#04070c"/>
+  <circle cx="32" cy="32" r="31" stroke="#123049" stroke-width="1"/>
+  <!-- outer broken ring: the "arc" -->
+  <circle cx="32" cy="32" r="25" stroke="#5fd9ff" stroke-width="3" stroke-linecap="round"
+          stroke-dasharray="34 13 50 13 34 120" opacity="0.92"/>
+  <!-- mid ring, offset gaps -->
+  <circle cx="32" cy="32" r="18.5" stroke="#5fd9ff" stroke-width="2" stroke-linecap="round"
+          stroke-dasharray="56 20 26 120" opacity="0.7"/>
+  <!-- inner hairline ring -->
+  <circle cx="32" cy="32" r="12" stroke="#5fd9ff" stroke-width="1" opacity="0.34"/>
+  <!-- glowing core -->
+  <circle cx="32" cy="32" r="9" fill="#5fd9ff" opacity="0.18"/>
+  <circle cx="32" cy="32" r="6" fill="url(#arcCore)"/>
+  <!-- cardinal ticks -->
+  <g fill="#5fd9ff">
+    <rect x="31" y="2.5" width="2" height="6" rx="1"/>
+    <rect x="31" y="55.5" width="2" height="6" rx="1"/>
+    <rect x="2.5" y="31" width="6" height="2" rx="1"/>
+    <rect x="55.5" y="31" width="6" height="2" rx="1"/>
+  </g>
+</svg>

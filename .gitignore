@@ -1,2 +1,29 @@
+# secrets — never commit these
 .env
-.env
+.env.*
+!.env.example
+credentials.json
+token.json
+
+# telegram session = full account access
+*.session
+*.session-journal
+
+# audit logs
+sent-by-arc*.log
+ran-by-arc.log
+
+# personal data
+todos.json
+
+# Bella's dedicated browser-window profile
+.arc-window/
+
+__pycache__/
+*.pyc
+
+# tunnel binary (large; download per-machine)
+cloudflared.exe
+
+# generated per-tunnel QR (URL changes every start)
+phone-qr.png
