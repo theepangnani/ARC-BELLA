@@ -294,6 +294,46 @@ def stock(symbol: str = "") -> str:
     return f"{q['symbol']} is at {price} {cur}.".replace("  ", " ")
 
 
+# --- news ------------------------------------------------------------------
+
+def news(topic: str = "", count: int = 5) -> str:
+    """Top headlines, via Google News RSS (free, no key). With a topic it
+    searches for it; without, it's the general top stories."""
+    topic = (topic or "").strip()
+    try:
+        n = max(1, min(int(count or 5), 8))
+    except (TypeError, ValueError):
+        n = 5
+    if topic:
+        url = "https://news.google.com/rss/search"
+        params = {"q": topic, "hl": "en-US", "gl": "US", "ceid": "US:en"}
+    else:
+        url = "https://news.google.com/rss"
+        params = {"hl": "en-US", "gl": "US", "ceid": "US:en"}
+    try:
+        with httpx.Client(timeout=12, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True) as c:
+            xml = c.get(url, params=params).text
+    except Exception as e:
+        return f"Couldn't reach the news service: {e}"
+    import re as _re
+    import html as _html
+    titles = _re.findall(r"<item>.*?<title>(.*?)</title>", xml, _re.S)
+    heads = []
+    for t in titles:
+        t = _re.sub(r"<!\[CDATA\[|\]\]>", "", t)
+        t = _html.unescape(t).strip()
+        # Google appends " - Source"; keep the headline, drop the trailing source.
+        t = _re.sub(r"\s+-\s+[^-]+$", "", t)
+        if t:
+            heads.append(t)
+        if len(heads) >= n:
+            break
+    if not heads:
+        return f"I couldn't find any headlines{' for ' + topic if topic else ''} just now."
+    label = f"Top headlines on {topic}" if topic else "Top headlines"
+    return label + ":\n" + "\n".join(f"- {h}" for h in heads)
+
+
 # --- wire format -----------------------------------------------------------
 
 TOOLS = [
@@ -332,12 +372,17 @@ TOOLS = [
      "description": ("Live stock/crypto/index quote — current price and today's move. Pass a ticker symbol (AAPL, "
                      "TSLA, NVDA, BTC-USD, ^GSPC for the S&P 500). Convert company names to their ticker yourself."),
      "input_schema": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}},
+    {"name": "news",
+     "description": ("Top news headlines. With a 'topic' it searches for that subject; without, it's the general "
+                     "top stories. Use for 'what's the news', 'any news on X', and in a morning briefing."),
+     "input_schema": {"type": "object", "properties": {
+         "topic": {"type": "string"}, "count": {"type": "integer"}}}},
 ]
 
 _DISPATCH = {"weather": weather, "add_todo": add_todo,
              "list_todos": list_todos, "complete_todo": complete_todo,
              "set_reminder": set_reminder, "list_reminders": list_reminders,
-             "cancel_reminder": cancel_reminder, "stock": stock}
+             "cancel_reminder": cancel_reminder, "stock": stock, "news": news}
 
 
 def run_tool(name: str, args: dict) -> tuple[str, bool]:

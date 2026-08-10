@@ -636,9 +636,18 @@ async def _eleven_tts(http, text: str):
     return r.content
 
 
-async def _edge_tts(text: str):
+# Voices the picker offers. Whitelisted so a client can't pass arbitrary values.
+EDGE_VOICES = {
+    "en-GB-SoniaNeural", "en-GB-LibbyNeural", "en-GB-RyanNeural",
+    "en-US-AriaNeural", "en-US-JennyNeural", "en-US-GuyNeural",
+    "en-AU-NatashaNeural", "en-IE-EmilyNeural",
+}
+
+
+async def _edge_tts(text: str, voice: str = ""):
     """Microsoft Edge neural voice. Free, no key, no quota — the default."""
-    comm = edge_tts.Communicate(text, TTS_VOICE)
+    v = voice if voice in EDGE_VOICES else TTS_VOICE
+    comm = edge_tts.Communicate(text, v)
     audio = bytearray()
     async for chunk in comm.stream():
         if chunk.get("type") == "audio" and chunk.get("data"):
@@ -653,6 +662,7 @@ async def tts(request: Request, _=Depends(require_auth)):
     neural voice. Always available — no key required."""
     payload = await read_json(request)
     text = (payload.get("text") or "").strip()
+    voice = (payload.get("voice") or "").strip()
     if not text:
         raise HTTPException(400, "No text supplied.")
     if len(text) > 5000:
@@ -661,13 +671,13 @@ async def tts(request: Request, _=Depends(require_auth)):
     # Edge is the default: free, and ~0.5s vs a failed ElevenLabs round-trip
     # that adds 2-3s of pure latency once its quota is spent. Only try
     # ElevenLabs first if explicitly preferred (ARC_PREFER_ELEVEN) and it still
-    # has credit; otherwise go straight to Edge.
+    # has credit; otherwise go straight to Edge (honouring the picked voice).
     audio = None
     if PREFER_ELEVEN:
         audio = await _eleven_tts(request.app.state.http, text)
     if audio is None:
         try:
-            audio = await _edge_tts(text)
+            audio = await _edge_tts(text, voice)
         except Exception as e:
             raise HTTPException(502, f"Text-to-speech failed: {str(e)[:200]}")
     if not audio:
