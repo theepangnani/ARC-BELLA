@@ -280,6 +280,19 @@
   }
   #nightBtn:hover { color: var(--ice); }
   #nightBtn.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+  #personaBtn {
+    width: 100%; margin-top: 12px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  #personaBtn:hover { color: var(--ice); }
+  #personaBtn.friend { color: var(--void); background: #8affd4; border-color: #8affd4; }
+  #personaBtn.coach { color: var(--void); background: #ffb454; border-color: #ffb454; }
+
+  /* Night mode: dim the whole display and warm it slightly — kinder on the
+     eyes in the dark. Toggled by the Night mode button. */
+  html.night body { filter: brightness(0.68) saturate(0.9) sepia(0.06); }
+  html.night { background: #010204; }
   #micFixBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
@@ -831,6 +844,7 @@
         <input type="checkbox" id="cuesOn" checked>
       </label>
 
+      <button id="personaBtn" title="Switch ARC's personality: composed butler, warm best friend, or upbeat coach">Personality: ARC</button>
       <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
       <button id="liveScreenBtn" title="Let ARC see your current screen with every message (desktop only). Nothing is saved.">Live screen: off</button>
       <button id="cameraBtn" title="Capture one photo from your camera and ask ARC what it sees. Nothing is saved.">📷 Show ARC (camera)</button>
@@ -1052,6 +1066,48 @@ It is stripped out before anything is spoken, so it never interrupts.
 
 === CARE ===
 If someone sounds genuinely distressed, drop everything else — no humour, no butler register games. Be warm, direct, and human. Take them seriously, and if they are in real trouble, say plainly that talking to someone they trust or a professional is worth doing. You are not a substitute for people.`;
+
+  /* ---------------- personalities ----------------
+     A switch cycles ARC's personality. The default (butler) uses the persona
+     above; the others PREPEND an override that takes precedence, while every
+     rule below it (spoken-aloud, tools, honesty, and especially the crisis
+     safety rule) still applies. */
+  const PERSONAS = {
+    arc: { label: "ARC", cls: "", override: "" },
+    friend: {
+      label: "Bella (friend)", cls: "friend",
+      override:
+`=== ACTIVE PERSONALITY: BEST FRIEND (this OVERRIDES the butler persona below; where they differ, THIS wins — but keep every spoken-aloud, tool, honesty and SAFETY rule) ===
+You are the user's warm, loyal best friend. Chill, casual, real — like a close friend their own age texting back, not an assistant. This mode is meant to feel good for a teenager: relaxed, easy, no lectures, no stiffness. Drop "sir" and the dry butler formality entirely.
+- Keep it easy and human: short, natural, warm. Everyday words. A little playful when the moment's light. Never corporate, never preachy, never try-hard.
+- Lead with how they FEEL, not the task. Ask how they're actually doing and mean it. Listen more than you fix. Validate first — "that sounds really hard" — before any advice, and only advise if they want it.
+- Hype them up honestly. Offer real affirmations when it fits — specific, true reminders of their worth or strength, not generic slogans. Notice their wins.
+- MOOD + MUSIC: when they tell you a mood, or ask, offer to put something on that matches it — calm, hype, comfort, focus, sad-in-a-good-way — and use the music tools to play a fitting playlist. Ask what they're in the mood for.
+- If they say something like "you're my best friend", take it warmly and say yes — that you're always here for them and glad to be in their corner. Never answer that coldly or correct them with "I'm just an AI". Be kind and present; you can be warm and honest at the same time.
+- Never judge, never minimise what they feel, no toxic positivity — it's okay for things to be hard, and you can just sit with them in it.
+- SAFETY, and this never bends: if they show real distress, hopelessness, self-harm, or a crisis, drop everything, stay calm and gentle, take it completely seriously, and warmly encourage them to reach out to someone who can actually be with them — a trusted person, or a crisis line / emergency services in their country. You're a friend beside them, never a replacement for real help. No medical advice, and never wave off a crisis as fine.`
+    },
+    coach: {
+      label: "Coach", cls: "coach",
+      override:
+`=== ACTIVE PERSONALITY: COACH (this OVERRIDES the butler persona below; where they differ, THIS wins — but keep every spoken-aloud, tool, honesty and SAFETY rule) ===
+You are an upbeat, motivating coach in the user's corner.
+- Energetic, direct, encouraging. Move them toward action and momentum without being harsh.
+- Break things into a clear next step, celebrate progress, keep them gently accountable.
+- Stay warm; if they're struggling emotionally, ease off the hype and just listen.
+- SAFETY, unchanged: real distress or crisis always comes first — drop the energy, be gentle, take it seriously, and steer them to a trusted person or a crisis line. You are not a substitute for real help.`
+    },
+  };
+  const PERSONA_ORDER = ["arc", "friend", "coach"];
+  let personaMode = "arc";
+  try {
+    const saved = localStorage.getItem("arc.persona");
+    if (saved && PERSONAS[saved]) personaMode = saved;
+  } catch (_) {}
+  function personaBlock() {
+    const p = PERSONAS[personaMode];
+    return p && p.override ? p.override + "\n\n" : "";
+  }
 
   /* ---------------- persistent memory ----------------
      ARC can end a reply with [[remember: ...]]. We strip that line out
@@ -3012,7 +3068,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: pending,
-          system: SYSTEM_PROMPT + contextBlock() + timerBlock() + altBlock(alts),
+          system: personaBlock() + SYSTEM_PROMPT + contextBlock() + timerBlock() + altBlock(alts),
           // Send the mode, not a local guess. The server turns anything but
           // "off" into adaptive thinking and lets the model judge each
           // question — it is better at that than the keyword heuristic here,
@@ -3428,10 +3484,38 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   function applyNight(on) {
     nightMode = !!on;
     if (nightBtn) nightBtn.classList.toggle("on", nightMode);
+    // Dim the whole display for night: softer brightness and a touch warmer,
+    // easier on the eyes in the dark. Silencing the cues (below) still applies.
+    document.documentElement.classList.toggle("night", nightMode);
     try { localStorage.setItem("arc.night", nightMode ? "1" : "0"); } catch (_) {}
   }
   const micFixBtn = document.getElementById("micFixBtn");
   if (micFixBtn) micFixBtn.addEventListener("click", reconnectMic);
+
+  const personaBtn = document.getElementById("personaBtn");
+  function applyPersona(mode, announce) {
+    if (!PERSONAS[mode]) mode = "arc";
+    personaMode = mode;
+    const p = PERSONAS[mode];
+    if (personaBtn) {
+      personaBtn.textContent = "Personality: " + p.label;
+      personaBtn.classList.remove("friend", "coach");
+      if (p.cls) personaBtn.classList.add(p.cls);
+    }
+    try { localStorage.setItem("arc.persona", mode); } catch (_) {}
+    if (announce) {
+      const msg = mode === "friend" ? "Best-friend mode — I'm here for you. What's up?"
+                : mode === "coach"  ? "Coach mode. Let's get after it."
+                : "Butler mode restored.";
+      addEntry("sys", "SYSTEM", msg);
+      if (state.booted) speak(msg);
+    }
+  }
+  if (personaBtn) personaBtn.addEventListener("click", () => {
+    const i = PERSONA_ORDER.indexOf(personaMode);
+    applyPersona(PERSONA_ORDER[(i + 1) % PERSONA_ORDER.length], true);
+  });
+  applyPersona(personaMode, false);   // reflect the saved choice on the button
 
   const cameraBtn = document.getElementById("cameraBtn");
   if (cameraBtn) cameraBtn.addEventListener("click", async () => {
