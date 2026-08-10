@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 import httpx
 import uvicorn
 import anthropic
+import edge_tts
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import Response, FileResponse, JSONResponse, HTMLResponse
@@ -79,9 +80,20 @@ ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
 ELEVEN_VOICE = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
 
-# Low latency matters more than raw depth for a voice loop. Sonnet 5 is the
-# sweet spot; drop to claude-haiku-4-5 if you want it snappier and cheaper.
-MODEL = os.getenv("ARC_MODEL", "claude-sonnet-5")
+# Microsoft Edge's neural voices — free, no key, no quota. This is the default
+# spoken voice so ARC never sounds like a robot and never runs out of credit.
+# en-GB-SoniaNeural is a natural British female. Others: en-GB-LibbyNeural,
+# en-GB-RyanNeural (male), en-US-AriaNeural. Set ARC_TTS_VOICE to change.
+TTS_VOICE = os.getenv("ARC_TTS_VOICE", "en-GB-SoniaNeural").strip()
+# Whether to try ElevenLabs before the free Edge voice. Off by default: once its
+# free quota is spent, attempting it just adds a 2-3s failed round-trip to every
+# reply. Turn on only if the ElevenLabs account has credit.
+PREFER_ELEVEN = os.getenv("ARC_PREFER_ELEVEN", "").strip().lower() in ("1", "true", "yes")
+
+# Low latency matters more than raw depth for a voice loop, so the default is
+# Haiku 4.5 — it answers in ~1s where Sonnet takes several. Set ARC_MODEL to
+# claude-sonnet-5 if you want deeper answers and don't mind the extra wait.
+MODEL = os.getenv("ARC_MODEL", "claude-haiku-4-5-20251001")
 
 # This ceiling covers thinking AND the spoken reply together. On Sonnet 5
 # thinking is on unless you disable it, so the old 1000 was enough for the
@@ -91,10 +103,13 @@ MODEL = os.getenv("ARC_MODEL", "claude-sonnet-5")
 # so the extra headroom costs nothing on a normal turn.
 MAX_TOKENS = int(os.getenv("ARC_MAX_TOKENS", "8000"))
 
-# How hard to think. Adaptive lets the model decide per question, which is what
-# a voice loop wants: instant on "what time is it", considered on "should I
-# move the dentist to make room for this".
-EFFORT = os.getenv("ARC_EFFORT", "medium")
+# How hard to think. 'low' keeps the voice loop snappy; raise to medium/high
+# only if you want more considered answers at the cost of a slower reply.
+EFFORT = os.getenv("ARC_EFFORT", "low")
+
+# The 'effort' output control exists on Sonnet/Opus but NOT on Haiku, which
+# rejects the request outright if it's sent. Gate it on the model in use.
+SUPPORTS_EFFORT = "haiku" not in MODEL.lower()
 
 # Tool calls take extra round trips. This bounds a runaway loop without
 # clipping legitimate work â€” look at the calendar, then act on it, is two.
@@ -371,7 +386,6 @@ async def health(request: Request, _=Depends(require_auth)):
     """The UI calls this on boot so it can show what's actually wired up."""
     return {
         "claude": bool(ANTHROPIC_KEY),
-        "elevenlabs": bool(ELEVEN_KEY and ELEVEN_VOICE),
         "calendar": gcal.connected(),
         "email": gmail.connected(),
         "contacts_drive": gextra.connected(),
@@ -379,6 +393,10 @@ async def health(request: Request, _=Depends(require_auth)):
         # Computer control is real only for the local desktop; over the tunnel
         # the phone gets everything else but not shell/system control.
         "computer": pc.connected() and is_local_request(request),
+        # A natural server voice is always available now (free Edge neural TTS,
+        # ElevenLabs on top when it has credit). The UI keys off this flag to
+        # use server audio instead of the browser's robot voice.
+        "elevenlabs": True,
         "model": MODEL,
     }
 
@@ -394,6 +412,7 @@ async def chat(request: Request, _=Depends(require_auth)):
     messages = payload.get("messages") or []
     system = payload.get("system") or ""
     use_search = bool(payload.get("search"))
+    see_screen = bool(payload.get("see_screen"))
 
     if not isinstance(messages, list) or not messages:
         raise HTTPException(400, "No messages supplied.")
@@ -429,17 +448,35 @@ async def chat(request: Request, _=Depends(require_auth)):
             "type": "web_search_20260209",
             "name": "web_search",
             "max_uses": 3,
+            # Haiku (and any model without programmatic tool-calling) rejects a
+            # server tool unless we say it's called directly by the model.
+            "allowed_callers": ["direct"],
         })
 
     # The UI's OFF / AUTO / ALWAYS switch used to be sent and then ignored by
-    # this endpoint entirely. It is honoured now. Anything other than an
-    # explicit off gets adaptive thinking, which is also what makes the model
-    # reliable about picking the right tool.
+    # Thinking is the single biggest source of reply latency, so for a voice
+    # loop it is OFF by default and only turns on when the user explicitly asks
+    # (the THINKING switch set to ON/ALWAYS). Most spoken questions don't need
+    # it; the ones that do can opt in.
     want_think = payload.get("think")
-    thinking_off = want_think is False or str(want_think).lower() == "off"
-    thinking = {"type": "disabled"} if thinking_off else {"type": "adaptive"}
+    thinking_on = want_think is True or str(want_think).lower() in ("on", "always", "adaptive", "true")
+    thinking = {"type": "adaptive"} if thinking_on else {"type": "disabled"}
 
     convo = list(messages)
+
+    # Live-screen: attach the current desktop screenshot to the latest user
+    # message so ARC sees what's on screen right now, without a tool call.
+    # Desktop-only (the server grabs THIS machine's screen); the image lives
+    # only in this request and is never written to disk.
+    if see_screen and local and pc.connected():
+        shot = pc.screenshot()
+        if isinstance(shot, list):
+            for i in range(len(convo) - 1, -1, -1):
+                if convo[i].get("role") == "user":
+                    convo[i] = {"role": "user",
+                                "content": [{"type": "text", "text": convo[i]["content"]}] + shot}
+                    break
+
     searched = False
     used: list[str] = []
     tokens_in = tokens_out = 0
@@ -453,8 +490,11 @@ async def chat(request: Request, _=Depends(require_auth)):
             system=system,
             messages=convo,
             thinking=thinking,
-            output_config={"effort": EFFORT},
         )
+        # The effort control is a Sonnet/Opus feature; Haiku rejects it. Only
+        # send it on models that accept it.
+        if SUPPORTS_EFFORT:
+            kwargs["output_config"] = {"effort": EFFORT}
         if tools:
             kwargs["tools"] = tools
 
@@ -500,10 +540,14 @@ async def chat(request: Request, _=Depends(require_auth)):
             used.append(call.name)
             mark = f"{C_RED}âœ—{C_OFF}" if failed else f"{C_CYAN}âœ“{C_OFF}"
             print(f"{C_DIM}  {mark} {call.name}{C_OFF} {C_DIM}{str(call.input)[:90]}{C_OFF}")
+            # A tool can return rich content (a list of blocks, e.g. a
+            # screenshot image); pass that straight through. Plain text is
+            # capped so one tool can't blow the context window.
+            content = out if isinstance(out, list) else out[:8000]
             results.append({
                 "type": "tool_result",
                 "tool_use_id": call.id,
-                "content": out[:8000],
+                "content": content,
                 "is_error": failed,
             })
 
@@ -530,15 +574,49 @@ async def chat(request: Request, _=Depends(require_auth)):
     })
 
 
+async def _eleven_tts(http, text: str):
+    """ElevenLabs audio, or None if it's not configured / out of quota / errors.
+    Kept as a nicety: if the key has credit its voice is used; the moment it
+    doesn't, we fall through to the free Edge voice instead of going silent."""
+    if not (ELEVEN_KEY and ELEVEN_VOICE):
+        return None
+    try:
+        r = await http.post(
+            f"{ELEVEN_URL}/{ELEVEN_VOICE}",
+            params={"output_format": "mp3_44100_128"},
+            headers={"xi-api-key": ELEVEN_KEY, "content-type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_turbo_v2_5",
+                "voice_settings": {
+                    "stability": 0.45, "similarity_boost": 0.8,
+                    "style": 0.15, "use_speaker_boost": True,
+                },
+            },
+        )
+    except httpx.RequestError:
+        return None
+    # Quota exhausted (401/402) or any other failure → let Edge take over.
+    if r.status_code != 200 or not r.content:
+        return None
+    return r.content
+
+
+async def _edge_tts(text: str):
+    """Microsoft Edge neural voice. Free, no key, no quota — the default."""
+    comm = edge_tts.Communicate(text, TTS_VOICE)
+    audio = bytearray()
+    async for chunk in comm.stream():
+        if chunk.get("type") == "audio" and chunk.get("data"):
+            audio += chunk["data"]
+    return bytes(audio)
+
+
 @app.post("/api/tts")
 async def tts(request: Request, _=Depends(require_auth)):
-    """
-    Optional. Returns real audio from ElevenLabs so the assistant stops
-    sounding like a browser. Without keys the UI falls back to speechSynthesis.
-    """
-    if not (ELEVEN_KEY and ELEVEN_VOICE):
-        raise HTTPException(503, "ElevenLabs is not configured.")
-
+    """Return spoken audio so ARC has a natural voice instead of the browser's
+    robot one. Uses ElevenLabs when its key has credit, otherwise the free Edge
+    neural voice. Always available — no key required."""
     payload = await read_json(request)
     text = (payload.get("text") or "").strip()
     if not text:
@@ -546,31 +624,39 @@ async def tts(request: Request, _=Depends(require_auth)):
     if len(text) > 5000:
         raise HTTPException(400, "Too much text for one utterance.")
 
+    # Edge is the default: free, and ~0.5s vs a failed ElevenLabs round-trip
+    # that adds 2-3s of pure latency once its quota is spent. Only try
+    # ElevenLabs first if explicitly preferred (ARC_PREFER_ELEVEN) and it still
+    # has credit; otherwise go straight to Edge.
+    audio = None
+    if PREFER_ELEVEN:
+        audio = await _eleven_tts(request.app.state.http, text)
+    if audio is None:
+        try:
+            audio = await _edge_tts(text)
+        except Exception as e:
+            raise HTTPException(502, f"Text-to-speech failed: {str(e)[:200]}")
+    if not audio:
+        raise HTTPException(502, "Text-to-speech produced no audio.")
+    return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.post("/api/duck")
+async def duck(request: Request, _=Depends(require_auth)):
+    """Auto-ducking: the client calls this to lower system volume while ARC is
+    listening/replying (so the mic hears over media) and to restore it after.
+    Desktop-only — a remote/tunnel caller can't touch this machine's volume."""
+    if not is_local_request(request):
+        return JSONResponse({"ok": False, "reason": "remote"})
+    payload = await read_json(request)
+    on = bool(payload.get("on"))
     try:
-        r = await request.app.state.http.post(
-            f"{ELEVEN_URL}/{ELEVEN_VOICE}",
-            params={"output_format": "mp3_44100_128"},
-            headers={"xi-api-key": ELEVEN_KEY, "content-type": "application/json"},
-            json={
-                "text": text,
-                # turbo keeps round-trip under ~400ms, which is the difference
-                # between a conversation and a transaction
-                "model_id": "eleven_turbo_v2_5",
-                "voice_settings": {
-                    "stability": 0.45,       # lower = more expressive
-                    "similarity_boost": 0.8,
-                    "style": 0.15,
-                    "use_speaker_boost": True,
-                },
-            },
-        )
-    except httpx.RequestError as e:
-        raise HTTPException(502, f"Could not reach ElevenLabs: {e}")
-
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, r.text[:300])
-
-    return Response(content=r.content, media_type="audio/mpeg")
+        # pycaw is a blocking COM call; keep it off the event loop.
+        import anyio
+        state = await anyio.to_thread.run_sync(lambda: pc.duck(on))
+    except Exception as e:
+        state = f"error: {e}"
+    return JSONResponse({"ok": True, "state": state})
 
 
 @app.post("/api/login")
@@ -647,11 +733,18 @@ async def manifest():
                         media_type="application/manifest+json")
 
 
+# ARC changes often and is served from your own machine — a stale cached page
+# on a phone is worse than a fresh fetch every time. Force revalidation so a
+# reload always lands the newest code.
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache", "Expires": "0"}
+
+
 @app.get("/")
 async def index(request: Request):
     if not authed(request):
         return HTMLResponse(LOGIN_HTML, status_code=401)
-    return FileResponse(ROOT / "static" / "index.html")
+    return FileResponse(ROOT / "static" / "index.html", headers=_NO_CACHE)
 
 
 @app.get("/static/index.html")
@@ -659,7 +752,7 @@ async def index_direct(request: Request):
     """Same gate on the direct path, so it can't be walked around."""
     if not authed(request):
         return HTMLResponse(LOGIN_HTML, status_code=401)
-    return FileResponse(ROOT / "static" / "index.html")
+    return FileResponse(ROOT / "static" / "index.html", headers=_NO_CACHE)
 
 
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

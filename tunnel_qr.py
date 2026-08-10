@@ -57,8 +57,13 @@ def main() -> int:
         return 1
 
     print("Starting a public HTTPS tunnel to ARC (port %s) ...\n" % PORT)
+    # --protocol http2 forces the tunnel over TCP/443-style HTTP/2 instead of
+    # QUIC (UDP 7844). Many home/school/work networks block outbound UDP 7844,
+    # which makes the default QUIC transport fail its precheck; HTTP/2 gets
+    # through those. Slightly higher latency, but it connects.
     proc = subprocess.Popen(
-        [str(CLOUDFLARED), "tunnel", "--url", f"http://localhost:{PORT}"],
+        [str(CLOUDFLARED), "tunnel", "--protocol", "http2",
+         "--url", f"http://localhost:{PORT}"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )

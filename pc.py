@@ -325,6 +325,136 @@ def power_mode(mode: str) -> str:
     return f"{label} power mode is now active."
 
 
+# --- mouse control ---------------------------------------------------------
+
+# Windows mouse_event flags.
+_ME = {"ldown": 0x0002, "lup": 0x0004, "rdown": 0x0008, "rup": 0x0010,
+       "mdown": 0x0020, "mup": 0x0040, "wheel": 0x0800}
+
+
+def mouse_control(action: str, x=None, y=None, amount=None) -> str:
+    """Move and click the mouse. Coordinates are absolute screen pixels with
+    (0,0) at the top-left. NOTE: this drives the pointer blind — it can't see
+    what's on screen, so it clicks wherever it's told."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    a = (action or "").strip().lower()
+
+    def _to(px, py):
+        if px is not None and py is not None:
+            u.SetCursorPos(int(px), int(py))
+
+    if a in ("move", "goto", "moveto"):
+        if x is None or y is None:
+            return "Give x and y (screen pixels) to move to."
+        _to(x, y)
+        return f"Moved the pointer to {int(x)}, {int(y)}."
+    if a in ("click", "left", "left_click"):
+        _to(x, y)
+        u.mouse_event(_ME["ldown"], 0, 0, 0, 0); u.mouse_event(_ME["lup"], 0, 0, 0, 0)
+        return "Left-clicked."
+    if a in ("double", "double_click", "doubleclick"):
+        _to(x, y)
+        for _ in range(2):
+            u.mouse_event(_ME["ldown"], 0, 0, 0, 0); u.mouse_event(_ME["lup"], 0, 0, 0, 0)
+        return "Double-clicked."
+    if a in ("right", "right_click", "rightclick"):
+        _to(x, y)
+        u.mouse_event(_ME["rdown"], 0, 0, 0, 0); u.mouse_event(_ME["rup"], 0, 0, 0, 0)
+        return "Right-clicked."
+    if a in ("scroll",):
+        try:
+            n = int(amount)
+        except (TypeError, ValueError):
+            return "Give an amount to scroll (positive = up, negative = down)."
+        u.mouse_event(_ME["wheel"], 0, 0, n * 120, 0)
+        return f"Scrolled {'up' if n > 0 else 'down'}."
+    if a in ("position", "where", "pos"):
+        pt = wintypes.POINT()
+        u.GetCursorPos(ctypes.byref(pt))
+        return f"The pointer is at {pt.x}, {pt.y}."
+    if a in ("size", "screen", "resolution"):
+        return f"The screen is {u.GetSystemMetrics(0)} by {u.GetSystemMetrics(1)} pixels."
+    return (f"Unknown mouse action '{action}'. I can: move, click, double, right, "
+            f"scroll, position, size.")
+
+
+# --- media ducking ---------------------------------------------------------
+
+# Remembers the volume from before we ducked, so restore is exact. None means
+# "not currently ducked".
+_pre_duck_level = None
+
+
+def duck(on) -> str:
+    """Lower the system volume so the mic can hear over playing media, then put
+    it back. duck(True) drops the volume to a fixed 10% (remembering the level
+    it was at); duck(False) restores that exact original level. Idempotent and
+    self-healing: a second duck(True) won't overwrite the saved level, and
+    duck(False) is a no-op if we never ducked."""
+    global _pre_duck_level
+    try:
+        from pycaw.pycaw import AudioUtilities
+        vol = AudioUtilities.GetSpeakers().EndpointVolume
+    except Exception as e:
+        return f"volume control unavailable: {e}"
+    want_on = on if isinstance(on, bool) else str(on).strip().lower() in ("1", "true", "on", "yes")
+    try:
+        if want_on:
+            if _pre_duck_level is None:
+                _pre_duck_level = vol.GetMasterVolumeLevelScalar()
+            # Drop to a fixed 10%, then restore the exact original level later.
+            vol.SetMasterVolumeLevelScalar(0.10, None)
+            return "ducked"
+        else:
+            if _pre_duck_level is not None:
+                vol.SetMasterVolumeLevelScalar(_pre_duck_level, None)
+                _pre_duck_level = None
+            return "restored"
+    except Exception as e:
+        _pre_duck_level = None
+        return f"duck failed: {e}"
+
+
+# --- see the screen --------------------------------------------------------
+
+def screenshot() -> list:
+    """Capture the current screen and hand it back as an image the model can
+    see. Returns Anthropic content blocks (text + image), not a string."""
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        return "Screen capture needs the Pillow library. Install it with: pip install pillow"
+    import io
+    import base64
+    try:
+        img = ImageGrab.grab()
+    except Exception as e:
+        return f"Couldn't capture the screen: {e}"
+    w, h = img.size
+    # Downscale the long edge for a smaller payload; the model still reads it
+    # fine, and we report the TRUE pixel size so mouse_control coordinates line
+    # up with the real screen rather than the shrunk image.
+    MAXW = 1400
+    shown = img
+    if w > MAXW:
+        shown = img.resize((MAXW, max(1, int(h * MAXW / w))))
+    if shown.mode != "RGB":
+        shown = shown.convert("RGB")
+    buf = io.BytesIO()
+    shown.save(buf, "JPEG", quality=70)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return [
+        {"type": "text",
+         "text": (f"Screenshot of the user's screen. The REAL screen is {w} by {h} pixels — "
+                  f"use those coordinates with mouse_control (the image may be scaled down, so "
+                  f"scale any position you read off it back up to the real size).")},
+        {"type": "image",
+         "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+    ]
+
+
 # --- system control --------------------------------------------------------
 
 def system_control(action: str) -> str:
@@ -416,6 +546,20 @@ TOOLS = [
      "description": ("Switch the Windows power plan. mode: 'saver' (energy saver on), 'balanced' (normal / saver off), "
                      "or 'performance'. This is the supported stand-in for the Battery-saver toggle."),
      "input_schema": {"type": "object", "properties": {"mode": {"type": "string"}}, "required": ["mode"]}},
+    {"name": "screenshot",
+     "description": ("Capture and SEE the user's screen right now. Use this whenever you need to know what's on "
+                     "screen — to read something, check what app is open, or find where to click. Pair it with "
+                     "mouse_control: screenshot first, see where the target is, then click those coordinates."),
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "mouse_control",
+     "description": ("Move and click the mouse. action: 'move' (needs x,y), 'click'/'double'/'right' (optional x,y to "
+                     "move there first), 'scroll' (needs amount; + up, - down), 'position' (read cursor), 'size' (screen "
+                     "pixels). Coordinates are absolute screen pixels, (0,0) top-left. You cannot see the screen, so ask "
+                     "the user for positions or call 'size' first — never guess where something is."),
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string"},
+         "x": {"type": "integer"}, "y": {"type": "integer"},
+         "amount": {"type": "integer"}}, "required": ["action"]}},
     {"name": "prepare_command",
      "description": ("Prepare an arbitrary shell command to run on the user's PC. It does NOT run — returns a "
                      "[command:...] id. You MUST read the exact command back to the user and get a clear spoken "
@@ -432,7 +576,8 @@ _DISPATCH = {
     "open_app": open_app, "open_website": open_website,
     "find_files": find_files, "read_file": read_file, "open_file": open_file,
     "system_control": system_control, "brightness": brightness,
-    "wifi": wifi, "power_mode": power_mode,
+    "wifi": wifi, "power_mode": power_mode, "mouse_control": mouse_control,
+    "screenshot": screenshot,
     "prepare_command": prepare_command, "run_prepared": run_prepared,
 }
 
@@ -447,7 +592,12 @@ def run_tool(name: str, args: dict, local: bool = True) -> tuple[str, bool]:
     if not fn:
         return f"No such tool: {name}", True
     try:
-        return str(fn(**(args or {}))), False
+        result = fn(**(args or {}))
+        # A tool may return rich content (e.g. screenshot returns image blocks);
+        # pass that through untouched. Everything else is plain text.
+        if isinstance(result, list):
+            return result, False
+        return str(result), False
     except TypeError as e:
         return f"Wrong arguments for {name}: {e}", True
     except Exception as e:

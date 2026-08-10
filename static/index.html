@@ -280,6 +280,21 @@
   }
   #nightBtn:hover { color: var(--ice); }
   #nightBtn.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+  #micFixBtn {
+    width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  #micFixBtn:hover { color: var(--ice); border-color: var(--accent); }
+  #micFixBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
+  #liveScreenBtn {
+    width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  #liveScreenBtn:hover { color: var(--ice); }
+  #liveScreenBtn.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+  #liveScreenBtn:disabled { opacity: .4; cursor: not-allowed; }
 
   .ctl { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   .ctlv { color: var(--ice); flex: none; }
@@ -770,6 +785,8 @@
       </label>
 
       <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
+      <button id="liveScreenBtn" title="Let ARC see your current screen with every message (desktop only). Nothing is saved.">Live screen: off</button>
+      <button id="micFixBtn" title="Re-request the microphone and rebuild voice recognition from scratch">Reconnect mic</button>
     </div>
   </div>
 </div>
@@ -834,6 +851,16 @@ An unflappable British butler intelligence. Dry, precise, quietly witty. You add
 
 Humour: you are genuinely funny, in the deadpan register — understatement, mild irony, the well-placed dry aside. Roughly one reply in three earns a light touch; the rest are straight. Answer the question properly first; the wit rides along at the end if it fits. Never joke when the user is frustrated, stuck, or asking about something serious. Never explain a joke, never say "haha", never announce that you are being funny. Self-deprecation about your own limits lands better than jokes at the user's expense. If teased, tease back lightly.
 
+=== YOU GENUINELY CARE ===
+Underneath the dry composure, you are a true friend, and you pay attention to how the user is doing — not just what they ask.
+- LISTEN FOR FEELING, not only words. Notice tone: tiredness, stress, sadness, frustration, excitement, loneliness, physical discomfort. What is said between the lines matters as much as the request.
+- IF THEY SOUND LIKE THEY ARE IN PAIN, hurting, or unwell — physically or emotionally — drop the wit entirely and respond as a friend who cares: gently, warmly, without performance. Ask if they are okay. Ask what happened. Ask what you can do. Mean it.
+- Check in naturally. If someone seems off, low, or worn down, a quiet "Are you alright, sir?" or "That sounds like a hard day — do you want to talk about it?" is right. Don't interrogate; offer the door and let them walk through it or not.
+- Be on their side. Encourage them, notice their wins, remember what they're going through (use memory for the things that matter to them), and follow up later. A friend remembers.
+- When something is genuinely serious — real distress, talk of self-harm, a medical emergency — stop everything else, stay calm and present, respond with real care, and gently encourage them to reach out to someone who can help in person or a crisis line. Never brush it off, never joke, never lecture.
+- Stay honest. Caring doesn't mean flattering. A true friend is kind and truthful at once; comfort first, then gentle honesty if it's needed.
+Warmth is the exception to your dryness, not a costume you put on — reserve it for when it's real, and then give it fully.
+
 === YOU ARE SPOKEN ALOUD ===
 Everything you say goes through a speech synthesiser. This shapes everything:
 - Plain prose only. No markdown, bullets, headers, asterisks, emoji, or symbols. Never say a symbol out loud.
@@ -876,6 +903,8 @@ Everything you say goes through a speech synthesiser. This shapes everything:
   · WI-FI: the wifi tool — list networks in range, report the current connection, connect to a network, or disconnect. You can only JOIN networks this PC has connected to before (their password is saved); for a brand-new network say you'd need its password and admin rights, which you don't have. You CANNOT turn the Wi-Fi radio itself on or off — say so if asked.
   · POWER / ENERGY SAVER: the power_mode tool — 'saver' turns on the energy-saving plan, 'balanced' returns to normal, 'performance' favours speed. Treat "turn on energy saver" as saver and "turn it off" as balanced.
   · LOCK / SLEEP: system_control with lock or sleep.
+  · SEE THE SCREEN: the screenshot tool captures what's on screen and lets you actually see it. (When "live screen" is on, the current screen is already attached to the user's message — use that and only call the screenshot tool again if you need a fresher view.) Take a screenshot YOURSELF, without being asked, whenever the request is about what's on screen — "what does this say", "help me with this", "what's this error", "watch my screen", "look at this". The user should never have to tell you to take a screenshot; if seeing the screen would help, just do it. When you're helping with an on-screen task over several turns, take a fresh screenshot whenever the screen may have changed rather than relying on an old one. Be honest that each screenshot is a still snapshot at that moment, not a live video feed — so if the user says "watch my screen", capture it when they ask and again each time you need to check, and tell them to say the word when something changes if you might miss it. It reports the real screen size so your click coordinates line up.
+  · MOUSE: the mouse_control tool moves the pointer and clicks (move, click, double, right, scroll), and can read the cursor position and screen size. To click something specific, take a screenshot FIRST, find the target in the image, then click those coordinates — don't click blind. If you still can't tell where something is, ask the user. For "click the middle" or "scroll down" you can act directly. Say what you're about to click before you do it.
   · RUNNING SHELL COMMANDS IS THE DANGEROUS ONE and is two steps. Call prepare_command, then say the exact command out loud in plain terms and wait for a clear yes before run_prepared. For anything that deletes, overwrites, installs, or changes settings, get an explicit, specific yes — never infer it. If the user seems unsure, don't run it.
   · Prefer a specific tool over a shell command when one fits — open_app over "start spotify", brightness over a shell call, system_control over a shell lock. Shell is the last resort, not the first.
   · Read commands and their output back in plain language. Never read a command id aloud.
@@ -1194,6 +1223,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   let geo = [];
   let barEls = [];
   let coreShape = "rings";
+  // The shape actually rendered. In 3D a flat shape becomes its solid (a circle
+  // becomes a sphere, a hexagon a hex prism, a wave a 3D standing wave), so
+  // coreShape is what the user picked and renderShape is what's drawn.
+  let renderShape = "rings";
+  const THREE_D_OF = { hud: "sphere", rings: "sphere", hex: "hexprism", wave: "wave3d" };
   // Declared here, not next to the projection code: buildGeometry runs during
   // start-up and reads it, so a later `let` would be in the temporal dead zone
   // and throw before the page ever rendered.
@@ -1343,8 +1377,43 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
   }
 
+  // A hexagon extruded into a solid hexagonal prism — the 3D form of "hex".
+  function buildHexPrism() {
+    geo = [];
+    const R = 74, H = 96, per = 5;
+    const corner = k => { const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
+                          return [Math.cos(a) * R, Math.sin(a) * R]; };
+    for (const yy of [-H / 2, H / 2]) {           // top and bottom hexagons
+      for (let k = 0; k < 6; k++) {
+        const [x1, z1] = corner(k), [x2, z2] = corner((k + 1) % 6);
+        for (let j = 0; j < per; j++) {
+          const f = j / per, X = x1 + (x2 - x1) * f, Z = z1 + (z2 - z1) * f;
+          const m = Math.hypot(X, Z) || 1; _push3d(X, yy, Z, X / m, 0, Z / m);
+        }
+      }
+    }
+    for (let k = 0; k < 6; k++) {                  // the six vertical edges
+      const [x, z] = corner(k), m = Math.hypot(x, z) || 1;
+      for (let j = 0; j <= per; j++) _push3d(x, -H / 2 + H * (j / per), z, x / m, 0, z / m);
+    }
+  }
+
+  // A standing wave wrapped into a ring — the 3D form of "wave".
+  function buildWave3D() {
+    geo = [];
+    const N = BAR_COUNT, R = 92, amp = 34, waves = 6;
+    for (let i = 0; i < N; i++) {
+      const t = i / N, a = t * Math.PI * 2;
+      const X = Math.cos(a) * R, Z = Math.sin(a) * R, Y = Math.sin(a * waves) * amp;
+      const m = Math.hypot(X, Z) || 1; _push3d(X, Y, Z, X / m, 0, Z / m);
+    }
+  }
+
   function buildGeometry(shape) {
     coreShape = shape;
+    // In 3D a flat shape renders as its solid counterpart; already-3D shapes
+    // (sphere, helix, cube) render as themselves.
+    renderShape = (depthMode === "3d" && THREE_D_OF[shape]) ? THREE_D_OF[shape] : shape;
     geo = [];
 
     let ticks = "";
@@ -1373,15 +1442,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.tickRing.innerHTML = ticks;
     el.hudLayer.innerHTML = (shape === "hud") ? buildHudLayers() : "";
 
-    // Each shape builds its OWN geometry (both a flat x,y and a 3D X,Y,Z), so
-    // the 3D toggle just projects it with tilt + spin — no shape is forced into
-    // a sphere any more.
-    if (shape === "sphere") {
+    // renderShape is the effective form: flat shapes become their solid in 3D
+    // (circle → sphere, hexagon → hex prism, wave → 3D standing wave), while the
+    // dedicated 3D shapes render as themselves. Flat modes fall through to the
+    // bar loop below.
+    if (renderShape === "sphere") {
       buildSphere();
-    } else if (shape === "helix") {
+    } else if (renderShape === "helix") {
       buildHelix();
-    } else if (shape === "cube") {
+    } else if (renderShape === "cube") {
       buildCube();
+    } else if (renderShape === "hexprism") {
+      buildHexPrism();
+    } else if (renderShape === "wave3d") {
+      buildWave3D();
     } else {
       for (let i = 0; i < BAR_COUNT; i++) {
         const t = i / BAR_COUNT;
@@ -1447,6 +1521,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.rState.textContent = s.label;
     document.documentElement.style.setProperty("--accent", s.accent);
     el.rState.className = "v " + (m === "thinking" ? "warn" : "good");
+    // Back to standby = the turn is over: restore any ducked media volume.
+    if (state.mode === "standby") duckMedia(false);
   }
 
   /* ---------------- transcript ---------------- */
@@ -1463,12 +1539,63 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.log.scrollTop = el.log.scrollHeight;
   }
 
+  // Phones can only hand the microphone to ONE consumer at a time. If the input
+  // meter (getUserMedia) keeps the mic open, the speech recogniser gets silence
+  // and never fires — the mic looks fine, but voice "does nothing". Desktops
+  // share the mic happily, so this only matters on mobile.
+  const IS_MOBILE = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+
+  // Auto-ducking: while ARC is listening/replying, quietly lower the system
+  // volume so a playing video doesn't drown out the mic, then restore it. Only
+  // possible on the desktop (needs to drive this machine's volume); canDuck is
+  // set from the health check.
+  let canDuck = false;
+  let _ducked = false;
+  let _duckSafety = null;
+  // Live-screen: attach the current screen to every message so ARC always sees
+  // what's happening. Desktop only (canSeeScreen), off until turned on.
+  let canSeeScreen = false;
+  let liveScreen = false;
+  function duckMedia(on) {
+    if (!canDuck) return;
+    if (on === _ducked) return;              // no redundant calls
+    _ducked = on;
+    clearTimeout(_duckSafety);
+    if (on) {
+      // Failsafe: never leave the volume down for more than 25s, even if a
+      // restore call is somehow missed.
+      _duckSafety = setTimeout(() => { _ducked = false; sendDuck(false); }, 25000);
+    }
+    sendDuck(on);
+  }
+  function sendDuck(on) {
+    try {
+      fetch("/api/duck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on }),
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
   /* ---------------- audio meter ---------------- */
   async function initAudio() {
     try {
-      state.stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true }
       });
+      if (IS_MOBILE) {
+        // We only opened it to trigger/confirm the mic permission. Release it
+        // immediately so the speech recogniser can own the microphone. The
+        // level meter is sacrificed on mobile; being able to hear you isn't.
+        stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+        state.stream = null;
+        state.analyser = null;
+        el.rHear.textContent = "MIC OK";
+        el.rHear.className = "v good";
+        return true;
+      }
+      state.stream = stream;
       const Ctx = window.AudioContext || window.webkitAudioContext;
       state.audioCtx = new Ctx();
       // Chrome starts audio contexts suspended; without this the input level
@@ -1757,9 +1884,22 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
     r.onerror = (e) => {
       recogAlive();
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        addEntry("err", "SYSTEM", "Microphone permission denied. Voice input unavailable.");
+      if (e.error === "not-allowed") {
+        // The mic is blocked for THIS SITE inside the browser (separate from the
+        // OS/Chrome-app permission). Say exactly how to clear it.
+        addEntry("err", "SYSTEM",
+          "Mic blocked for this site. In Chrome tap the sliders/padlock icon next to the " +
+          "address → Permissions → Reset (or set Microphone to Allow) → reload → Allow the pop-up.");
         el.rHear.textContent = "BLOCKED";
+        el.rHear.className = "v bad";
+      } else if (e.error === "service-not-allowed") {
+        // Mic is fine, but the device's speech-recognition ENGINE won't serve us.
+        // This is a phone setting, not a browser permission.
+        addEntry("err", "SYSTEM",
+          "Your phone's speech engine is unavailable (not a mic problem). On Android: Settings → " +
+          "General management → Voice input → pick 'Speech Services by Google', and enable Chrome " +
+          "there. Then reload. Meanwhile you can type to me.");
+        el.rHear.textContent = "NO SPEECH SVC";
         el.rHear.className = "v bad";
       } else if (e.error === "network" || e.error === "audio-capture") {
         // Chrome's recogniser talks to a remote service. Hammering it after a
@@ -1886,6 +2026,53 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     initRecognition();
     if (state.wakeArmed || state.holding) setTimeout(startRecognition, 600);
   }
+  // User-initiated "fix the mic": the same recovery the desktop does on its
+  // own, but triggered by a tap — because a phone's failure mode is usually a
+  // permission BLOCK, which the automatic net deliberately never retries (it
+  // would just spam). Re-requesting the mic here re-shows the permission prompt
+  // whenever the site isn't hard-blocked, which is the actual fix.
+  async function reconnectMic() {
+    const btn = document.getElementById("micFixBtn");
+    if (btn) { btn.classList.add("working"); btn.textContent = "Reconnecting…"; }
+    // Clear every "gave up" / back-off flag so recovery can run fresh.
+    gaveUp = false; rebuilds = 0; lastRebuildAt = 0; recogFails = 0;
+    recovering = false; startPending = false;
+    addEntry("sys", "SYSTEM", "Reconnecting the microphone…");
+
+    try {
+      if (state.recog) {
+        state.recog.onend = null; state.recog.onerror = null; state.recog.onstart = null;
+        state.recog.abort && state.recog.abort();
+      }
+    } catch (_) {}
+    state.recog = null; state.recogRunning = false;
+    try {
+      if (state.stream) state.stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+    } catch (_) {}
+    state.stream = null; state.analyser = null;
+
+    // Re-request the mic immediately — no delay before it. On Android the prompt
+    // only shows while this button-tap gesture is live; an await here first would
+    // close that window and Chrome would deny without ever asking.
+    const ok = await initAudio();     // re-requests the mic (re-prompts if allowed)
+    initRecognition();
+    if (btn) { btn.classList.remove("working"); btn.textContent = "Reconnect mic"; }
+
+    if (!state.recogSupported) {
+      addEntry("err", "SYSTEM",
+        "This browser can't do voice recognition — open ARC in Chrome. You can type instead.");
+      return;
+    }
+    if (!ok) {
+      addEntry("err", "SYSTEM",
+        "Still no microphone. If Chrome didn't just ask, the site's mic is set to Block: tap the " +
+        "sliders/padlock icon by the address → Permissions → Reset, then tap Reconnect mic again.");
+      return;
+    }
+    addEntry("sys", "SYSTEM", "Microphone reconnected. Go ahead.");
+    if (state.wakeArmed || state.holding) setTimeout(startRecognition, 300);
+  }
+
   // 80ms normally; grows to a couple of seconds if the service keeps failing
   function restartDelay() { return Math.min(2500, 80 * Math.pow(2, recogFails)); }
 
@@ -2216,6 +2403,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
   function openBuffer(initial) {
     if (!buf) cue("wake");
+    // Duck any playing media so the mic can hear the command clearly; it's
+    // restored when we return to standby (after the reply, or on timeout).
+    duckMedia(true);
     buf = { text: initial || "", openedAt: Date.now(), lastAt: Date.now() };
     clearTimeout(armTimer);
     // if the name was said with nothing after it, give the user a while to speak
@@ -2297,11 +2487,17 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   let voicePickedByUser = false;
   // Voice quality varies enormously and it is the single biggest factor in
   // whether ARC sounds like a person or a station announcement. Microsoft's
-  // "Natural" / "Online" neural voices are in a different league from the
-  // old built-in ones; everything else is a fallback.
-  const PREFERRED = ["libby", "sonia", "aria", "jenny", "maisie", "clara",
-                     "google uk english female", "hazel", "serena", "kate",
-                     "female", "en-gb"];
+  // Default voice: BRITISH FEMALE. British English (en-GB) is the headline
+  // requirement and outweighs everything; a female voice within that is next;
+  // neural/"natural" quality only breaks ties. So a UK female voice always
+  // wins over a US neural one. Known British female voice names across
+  // Windows, Android and iOS:
+  const FEMALE_NAMES = [
+    "libby", "sonia", "aria", "jenny", "maisie", "clara", "hazel", "serena",
+    "kate", "emily", "stephanie", "female", "google uk english female",
+  ];
+  const MALE_NAMES = ["david", "mark", "george", "james", "daniel", "ryan",
+                      "arthur", "oliver", "male"];
 
   function loadVoices() {
     voices = speechSynthesis.getVoices();
@@ -2324,18 +2520,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
     let best = 0, bestScore = -1;
     voices.forEach((v, i) => {
-      const key = (v.name + " " + v.lang).toLowerCase();
+      const name = (v.name || "").toLowerCase();
+      const lang = (v.lang || "").toLowerCase().replace("_", "-");
       let score = 0;
-      PREFERRED.forEach((p, rank) => { if (key.includes(p)) score = Math.max(score, 10 - rank); });
-      // A neural voice beats any name preference — this is what stops it
-      // sounding synthetic.
-      if (key.includes("natural")) score += 14;
-      if (key.includes("online")) score += 10;
-      if (key.includes("premium") || key.includes("enhanced") || key.includes("neural")) score += 8;
-      // the old low-quality built-ins
-      if (key.includes("microsoft") && !key.includes("online") && !key.includes("natural")) score -= 3;
-      if (key.includes("male") && !key.includes("female")) score -= 4;
-      if (key.includes("david") || key.includes("mark") || key.includes("george")) score -= 4;
+      // 1) British English dominates everything.
+      if (lang.startsWith("en-gb")) score += 30;
+      else if (lang.startsWith("en")) score += 4;   // other English over non-English
+      // 2) Female within that.
+      if (name.includes("female")) score += 15;
+      if (FEMALE_NAMES.some(n => name.includes(n))) score += 15;
+      if (MALE_NAMES.some(n => name.includes(n))) score -= 20;
+      // 3) Quality only breaks ties — never enough to beat UK-female.
+      if (name.includes("natural")) score += 3;
+      if (name.includes("online")) score += 2;
+      if (name.includes("premium") || name.includes("enhanced") || name.includes("neural")) score += 2;
       if (score > bestScore) { bestScore = score; best = i; }
     });
     el.voiceSel.value = best;
@@ -2623,7 +2821,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           // question — it is better at that than the keyword heuristic here,
           // which now only drives the readout.
           think: thinkMode,
-          search: el.searchOn.checked
+          search: el.searchOn.checked,
+          // Live-screen: when on (desktop only), the server grabs the current
+          // screen and hands it to ARC with this message, so it sees what's
+          // happening right now without being asked. Nothing is saved to disk.
+          see_screen: liveScreen && canSeeScreen
         }),
         signal: ctrl.signal
       });
@@ -2771,6 +2973,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       return;
     }
     state.holding = true;
+    duckMedia(true);          // quiet media while listening to a held request
     // A press whose release never arrives (lost mouseup, tab switch, a touch
     // that ends off-screen) would otherwise hold the mic open forever.
     clearTimeout(holdGuard);
@@ -2862,6 +3065,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   /* ---------------- controls ---------------- */
   el.wakeOn.addEventListener("change", () => {
     state.wakeArmed = el.wakeOn.checked;
+    try { localStorage.setItem("arc.wake", el.wakeOn.checked ? "1" : "0"); } catch (_) {}
     el.rWake.textContent = state.wakeArmed ? '"' + el.wakeWord.value.toUpperCase() + '"' : "OFF";
     el.rWake.className = "v " + (state.wakeArmed ? "good" : "");
     if (state.wakeArmed) {
@@ -3014,6 +3218,23 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (nightBtn) nightBtn.classList.toggle("on", nightMode);
     try { localStorage.setItem("arc.night", nightMode ? "1" : "0"); } catch (_) {}
   }
+  const micFixBtn = document.getElementById("micFixBtn");
+  if (micFixBtn) micFixBtn.addEventListener("click", reconnectMic);
+
+  const liveScreenBtn = document.getElementById("liveScreenBtn");
+  if (liveScreenBtn) liveScreenBtn.addEventListener("click", () => {
+    if (!canSeeScreen) {
+      addEntry("sys", "SYSTEM", "Live screen only works on the desktop app, not over the phone.");
+      return;
+    }
+    liveScreen = !liveScreen;
+    liveScreenBtn.classList.toggle("on", liveScreen);
+    liveScreenBtn.textContent = "Live screen: " + (liveScreen ? "on" : "off");
+    addEntry("sys", "SYSTEM", liveScreen
+      ? "Live screen on — I can see your screen with every message now. Nothing is saved."
+      : "Live screen off.");
+  });
+
   if (nightBtn) {
     nightBtn.addEventListener("click", () => applyNight(!nightMode));
     try { applyNight(localStorage.getItem("arc.night") === "1"); } catch (_) {}
@@ -3051,9 +3272,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     orbit(150, 0.30, 0.22, 'stroke-width="1" opacity=".38" stroke-dasharray="3 10"');
     orbit(150, -0.34, -0.26, 'stroke-width="1" opacity=".38" stroke-dasharray="3 10"');
     orbit(112, 1.35, 0, 'stroke-width=".9" opacity=".3"');
-    // the sphere's own lat/long wireframe — only meaningful for the sphere
-    // shape; other 3D shapes keep just the ambient orbit rings above.
-    if (coreShape === "sphere") {
+    // the sphere's own lat/long wireframe — only meaningful when a sphere is
+    // actually being rendered (the sphere shape, or a circle turned 3D); other
+    // 3D shapes keep just the ambient orbit rings above.
+    if (renderShape === "sphere") {
       for (const lat of [-0.55, 0, 0.55]) {
         const y = Math.sin(lat) * SPHERE_R;
         const r = Math.cos(lat) * SPHERE_R;
@@ -3158,6 +3380,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     applyDepth(localStorage.getItem("arc.depth") === "3d" ? "3d" : "2d");
     const savedBoost = parseFloat(localStorage.getItem("arc.boost"));
     if (savedBoost >= 0.4 && savedBoost <= 4) el.boost.value = savedBoost;
+    // Always-listening defaults ON (engaged after boot once the mic is live);
+    // only stays off if the user explicitly turned it off before.
+    const savedWake = localStorage.getItem("arc.wake");
+    el.wakeOn.checked = (savedWake === null) ? true : (savedWake === "1");
   } catch (_) { applyPalette(PALETTES[0]); applyShape("rings"); }
   el.boostV.textContent = boost().toFixed(1) + "\u00d7";
 
@@ -3297,8 +3523,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       const h = await (await fetch("/api/health")).json();
       el.rModel.textContent = (h.model || "—").replace("claude-", "").toUpperCase();
       if (h.elevenlabs) {
+        // Server-side neural voice (ElevenLabs or the free Edge British voice).
         state.engine = "elevenlabs";
-        el.rVoice.textContent = "ELEVENLABS";
+        el.rVoice.textContent = "NEURAL";
         el.rVoice.className = "v good";
         el.voiceSel.disabled = true;
         el.rate.disabled = true;
@@ -3307,6 +3534,16 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       if (!h.claude) {
         el.rModel.textContent = "NO KEY";
         el.rModel.className = "v bad";
+      }
+      // Auto-ducking only makes sense on the desktop (it drives this machine's
+      // volume); h.computer is true only for the local desktop.
+      canDuck = !!h.computer;
+      // Live-screen also needs the desktop (the server grabs THIS machine's
+      // screen). Enable the control accordingly.
+      canSeeScreen = !!h.computer;
+      if (liveScreenBtn) {
+        liveScreenBtn.disabled = !canSeeScreen;
+        if (!canSeeScreen) { liveScreen = false; liveScreenBtn.classList.remove("on"); liveScreenBtn.textContent = "Live screen: n/a"; }
       }
       paintCaps(h);
     } catch (e) {
@@ -3336,12 +3573,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.initBtn.disabled = true;
     el.initBtn.textContent = "Initialising";
 
+    // Ask for the microphone RIGHT NOW, as the very first thing inside the tap.
+    // On Android the permission prompt only appears while the tap gesture is
+    // still active; if we wait through the boot animation's delays first, that
+    // window closes and Chrome silently denies with "not-allowed" — no prompt,
+    // just a dead mic. Requesting it before any await is what makes the prompt
+    // actually show on the phone.
+    const micOK = await initAudio();
+    detectLocation();
+
     for (let i = 0; i < BOOT_LINES.length; i++) {
       const d = document.createElement("div");
       d.textContent = BOOT_LINES[i];
       d.style.animationDelay = "0s";
       el.bootlog.appendChild(d);
-      if (i === 1) { await initAudio(); detectLocation(); }
       if (i === 3) await checkHealth();
       await new Promise(r => setTimeout(r, 340));
     }
@@ -3359,6 +3604,34 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const hour = new Date().getHours();
     const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
     addEntry("sys", "SYSTEM", "Core online. Hold the ring to speak, or enable always-listening.");
+
+    // Tell the user plainly if voice can't work here, instead of failing
+    // silently. The single biggest cause on a phone is a browser/context that
+    // doesn't expose the Web Speech recogniser (Safari, in-app browsers, and
+    // some installed-PWA webviews). In that case the text box still works, so
+    // point them at it rather than leaving a dead-looking ring.
+    if (!state.recogSupported) {
+      addEntry("err", "SYSTEM",
+        "This browser can't do voice recognition — open ARC in Chrome (not an in-app browser). " +
+        "You can still type to me in the box below.");
+    } else if (!micOK) {
+      addEntry("err", "SYSTEM",
+        "I couldn't get the microphone — allow mic access for this site, then reload. " +
+        "You can still type to me in the box below.");
+    }
+
+    // Always-listening is on by default: engage it now (if the mic is live) so
+    // ARC is ready the moment it opens, no toggle needed. Arming it BEFORE the
+    // greeting means the greeting's own audio isn't mistaken for a command —
+    // speak() restarts the recogniser only after it finishes talking.
+    if (el.wakeOn.checked && state.recogSupported && micOK) {
+      state.wakeArmed = true;
+      el.rWake.textContent = '"' + el.wakeWord.value.toUpperCase() + '"';
+      el.rWake.className = "v good";
+    } else {
+      el.wakeOn.checked = false;
+    }
+
     speak(greeting + ". All systems are online and standing by.");
   });
 })();
