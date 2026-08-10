@@ -455,6 +455,99 @@ def screenshot() -> list:
     ]
 
 
+# --- media keys + clipboard ------------------------------------------------
+
+def media(action: str) -> str:
+    """Play/pause/skip whatever is playing (Spotify, YouTube, any media app) via
+    the keyboard media keys."""
+    import ctypes
+    u = ctypes.windll.user32
+    codes = {"play": 0xB3, "pause": 0xB3, "playpause": 0xB3, "play_pause": 0xB3,
+             "toggle": 0xB3, "next": 0xB0, "skip": 0xB0, "forward": 0xB0,
+             "previous": 0xB1, "prev": 0xB1, "back": 0xB1, "stop": 0xB2}
+    a = (action or "").strip().lower().replace(" ", "_")
+    vk = codes.get(a)
+    if vk is None:
+        return f"Unknown media action '{action}'. Use: play/pause, next, previous, stop."
+    u.keybd_event(vk, 0, 0, 0)
+    u.keybd_event(vk, 0, 0x0002, 0)
+    label = {0xB3: "play/pause", 0xB0: "next track", 0xB1: "previous track", 0xB2: "stop"}[vk]
+    return f"Sent {label}."
+
+
+def clipboard(action: str = "read", text: str = "") -> str:
+    """Read or write the Windows clipboard. action 'read' returns its text;
+    'write' puts the given text on it."""
+    a = (action or "read").strip().lower()
+    if a in ("read", "get", "paste", "what"):
+        r = _ps("Get-Clipboard -Raw")
+        out = (r.stdout or "").strip()
+        if not out:
+            return "The clipboard is empty (or holds something that isn't text)."
+        return f"The clipboard contains:\n{out[:2000]}"
+    if a in ("write", "set", "copy", "put"):
+        t = str(text or "")
+        if not t:
+            return "Give me text to put on the clipboard."
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "$input | Set-Clipboard"],
+                           input=t, capture_output=True, text=True, timeout=10)
+        except Exception as e:
+            return f"Couldn't write the clipboard: {e}"
+        return f"Copied to the clipboard: {t[:80]}" + ("…" if len(t) > 80 else "")
+    return f"Unknown clipboard action '{action}'. Use: read or write."
+
+
+# --- keyboard --------------------------------------------------------------
+
+# Named keys ARC can press, mapped to Windows virtual-key codes.
+_VK = {
+    "enter": 0x0D, "return": 0x0D, "tab": 0x09, "esc": 0x1B, "escape": 0x1B,
+    "backspace": 0x08, "delete": 0x2E, "space": 0x20, "up": 0x26, "down": 0x28,
+    "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23, "pageup": 0x21,
+    "pagedown": 0x22, "win": 0x5B,
+    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f11": 0x7A,
+}
+
+
+def keyboard(text: str = "", key: str = "") -> str:
+    """Type text, or press a named key, into whatever window is focused. Typing
+    goes wherever the cursor is — so to type into an app, that app (a text box,
+    the address bar…) must be focused first. It types blind; it does not move
+    focus itself."""
+    import ctypes
+    u = ctypes.windll.user32
+    KEYEVENTF_UNICODE, KEYEVENTF_KEYUP = 0x0004, 0x0002
+
+    def tap_unicode(ch):
+        code = ord(ch)
+        u.keybd_event(0, code, KEYEVENTF_UNICODE, 0)
+        u.keybd_event(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0)
+
+    def tap_vk(vk):
+        u.keybd_event(vk, 0, 0, 0)
+        u.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+
+    if key:
+        k = key.strip().lower()
+        if k not in _VK:
+            return f"I don't know the key '{key}'. Known: {', '.join(sorted(_VK))}."
+        tap_vk(_VK[k])
+        return f"Pressed {k}."
+
+    t = str(text or "")
+    if not t:
+        return "Give me text to type, or a key to press."
+    if len(t) > 2000:
+        return "That's too much text to type in one go."
+    for ch in t:
+        if ch == "\n":
+            tap_vk(0x0D)
+        else:
+            tap_unicode(ch)
+    return f"Typed {len(t)} character(s)."
+
+
 # --- system control --------------------------------------------------------
 
 def system_control(action: str) -> str:
@@ -551,6 +644,22 @@ TOOLS = [
                      "screen — to read something, check what app is open, or find where to click. Pair it with "
                      "mouse_control: screenshot first, see where the target is, then click those coordinates."),
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "media",
+     "description": ("Control media playback (Spotify, YouTube, any player) via the media keys. action: "
+                     "'play_pause', 'next', 'previous', or 'stop'."),
+     "input_schema": {"type": "object", "properties": {"action": {"type": "string"}}, "required": ["action"]}},
+    {"name": "clipboard",
+     "description": ("Read or write the clipboard. action 'read' returns what's on it; action 'write' with 'text' "
+                     "puts that text on it. Use for 'what did I just copy' or 'copy this'."),
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string"}, "text": {"type": "string"}}, "required": ["action"]}},
+    {"name": "keyboard",
+     "description": ("Type text or press a key on the user's computer. 'text' types a string wherever the cursor is; "
+                     "'key' presses one named key (enter, tab, esc, backspace, up, down, left, right, space, f5, etc.). "
+                     "Typing goes to the FOCUSED window, so click the target field first (screenshot + mouse_control) "
+                     "before typing into an app."),
+     "input_schema": {"type": "object", "properties": {
+         "text": {"type": "string"}, "key": {"type": "string"}}}},
     {"name": "mouse_control",
      "description": ("Move and click the mouse. action: 'move' (needs x,y), 'click'/'double'/'right' (optional x,y to "
                      "move there first), 'scroll' (needs amount; + up, - down), 'position' (read cursor), 'size' (screen "
@@ -577,7 +686,8 @@ _DISPATCH = {
     "find_files": find_files, "read_file": read_file, "open_file": open_file,
     "system_control": system_control, "brightness": brightness,
     "wifi": wifi, "power_mode": power_mode, "mouse_control": mouse_control,
-    "screenshot": screenshot,
+    "screenshot": screenshot, "keyboard": keyboard,
+    "media": media, "clipboard": clipboard,
     "prepare_command": prepare_command, "run_prepared": run_prepared,
 }
 

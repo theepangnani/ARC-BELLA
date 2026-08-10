@@ -15,6 +15,7 @@ ran-by-arc.log
 
 # personal data
 todos.json
+reminders.json
 
 # Bella's dedicated browser-window profile
 .arc-window/

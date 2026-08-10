@@ -12,6 +12,7 @@ Everything returns prose, since it is spoken aloud.
 """
 
 import json
+import time
 import datetime as dt
 from pathlib import Path
 
@@ -19,6 +20,7 @@ import httpx
 
 ROOT = Path(__file__).parent.resolve()
 TODO_FILE = ROOT / "todos.json"
+REMIND_FILE = ROOT / "reminders.json"
 
 GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
 WX_URL = "https://api.open-meteo.com/v1/forecast"
@@ -140,6 +142,158 @@ def complete_todo(which: str) -> str:
     return f"Ticked off: {done['text']}. {len(items)} left."
 
 
+# --- reminders (persistent; fire even after a reload) ----------------------
+
+def _load_rem():
+    try:
+        return json.loads(REMIND_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _save_rem(items):
+    REMIND_FILE.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+
+
+def _human_delay(s):
+    s = max(0, int(s))
+    if s < 60:
+        return f"in {s} second{'s' if s != 1 else ''}"
+    m = round(s / 60)
+    if m < 60:
+        return f"in {m} minute{'s' if m != 1 else ''}"
+    h = s / 3600
+    if h < 24:
+        return f"in about {round(h, 1)} hours"
+    return f"in about {round(h / 24, 1)} days"
+
+
+def set_reminder(label: str = "", seconds=None, at: str = "") -> str:
+    """Set a reminder. Give EITHER seconds (delay from now) OR at (an ISO local
+    datetime like 2026-08-09T18:00). It persists and fires even after a reload."""
+    text = (label or "").strip()
+    if not text:
+        return "What should I remind you about?"
+    now = time.time()
+    fire = None
+    if seconds is not None:
+        try:
+            fire = now + float(seconds)
+        except (TypeError, ValueError):
+            return "Tell me how many seconds from now, or a time."
+    elif at:
+        try:
+            fire = dt.datetime.fromisoformat(str(at).replace("Z", "")).timestamp()
+        except Exception:
+            return f"I couldn't understand the time '{at}'. Use an ISO time like 2026-08-09T18:00."
+    else:
+        return "Tell me when — in how many seconds, or at what time."
+    if fire < now - 1:
+        return "That time is already in the past."
+    items = _load_rem()
+    items.append({"id": str(int(now * 1000)), "fire_at": fire,
+                  "label": text[:200], "delivered": False})
+    _save_rem(items)
+    return f"I'll remind you {_human_delay(fire - now)}: {text}."
+
+
+def list_reminders() -> str:
+    now = time.time()
+    items = sorted([r for r in _load_rem() if not r.get("delivered")],
+                   key=lambda r: r["fire_at"])
+    if not items:
+        return "You have no reminders set."
+    lines = [f"{i+1}. {r['label']} ({_human_delay(r['fire_at'] - now)})"
+             for i, r in enumerate(items)]
+    return f"You have {len(items)} reminder{'s' if len(items) != 1 else ''}:\n" + "\n".join(lines)
+
+
+def cancel_reminder(which: str = "") -> str:
+    w = (which or "").strip().lower()
+    items = _load_rem()
+    pend = [r for r in items if not r.get("delivered")]
+    if not pend:
+        return "You have no reminders to cancel."
+    target = None
+    if w.isdigit() and 1 <= int(w) <= len(pend):
+        target = pend[int(w) - 1]
+    else:
+        for r in pend:
+            if w and w in r["label"].lower():
+                target = r
+                break
+    if not target:
+        return f"I couldn't find a reminder matching '{which}'."
+    _save_rem([r for r in items if r["id"] != target["id"]])
+    return f"Cancelled the reminder: {target['label']}."
+
+
+def due_reminders():
+    """For the poller: reminders whose time has come. Marks them delivered so
+    they fire once, and prunes ones delivered over a day ago."""
+    items = _load_rem()
+    now = time.time()
+    due, changed = [], False
+    for r in items:
+        if not r.get("delivered") and r["fire_at"] <= now:
+            r["delivered"] = True
+            changed = True
+            due.append({"id": r["id"], "label": r["label"]})
+    if changed:
+        items = [r for r in items
+                 if not (r.get("delivered") and r["fire_at"] < now - 86400)]
+        _save_rem(items)
+    return due
+
+
+# --- stocks ----------------------------------------------------------------
+
+def yahoo_quote(symbol):
+    """Live quote for a ticker via Yahoo Finance (free, no key). Returns a dict
+    or None. Symbols: AAPL, TSLA, ^GSPC (S&P 500), BTC-USD, etc."""
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+    try:
+        with httpx.Client(timeout=10, headers={"User-Agent": "Mozilla/5.0"}) as c:
+            d = c.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+                      params={"interval": "1d", "range": "1d"}).json()
+    except Exception:
+        return None
+    res = (d.get("chart", {}).get("result") or [None])[0]
+    if not res:
+        return None
+    m = res.get("meta", {})
+    price = m.get("regularMarketPrice")
+    prev = m.get("chartPreviousClose") or m.get("previousClose")
+    if price is None:
+        return None
+    change = pct = None
+    if prev:
+        change = price - prev
+        pct = change / prev * 100 if prev else None
+    return {"symbol": m.get("symbol", sym), "price": price, "prev": prev,
+            "change": change, "pct": pct, "currency": m.get("currency", "")}
+
+
+def stock(symbol: str = "") -> str:
+    """Spoken stock quote. Pass a ticker (AAPL, TSLA, BTC-USD). Convert company
+    names to tickers yourself before calling."""
+    sym = (symbol or "").strip()
+    if not sym:
+        return "Which stock? Give me a ticker like AAPL or TSLA."
+    q = yahoo_quote(sym)
+    if not q:
+        return f"I couldn't get a quote for {sym}. Check the ticker symbol."
+    price = round(q["price"], 2)
+    cur = q["currency"] or ""
+    if q["pct"] is not None:
+        dirn = "up" if q["change"] >= 0 else "down"
+        return (f"{q['symbol']} is at {price} {cur}, {dirn} "
+                f"{abs(round(q['pct'], 2))} percent today.").replace("  ", " ")
+    return f"{q['symbol']} is at {price} {cur}.".replace("  ", " ")
+
+
 # --- wire format -----------------------------------------------------------
 
 TOOLS = [
@@ -158,10 +312,32 @@ TOOLS = [
     {"name": "complete_todo",
      "description": "Tick an item off the list, by its number or by matching words in it.",
      "input_schema": {"type": "object", "properties": {"which": {"type": "string"}}, "required": ["which"]}},
+    {"name": "set_reminder",
+     "description": ("Set a reminder that persists and fires even after a page reload (better than the [[timer]] "
+                     "marker for anything the user should be reminded of). Give EITHER 'seconds' (delay from now — "
+                     "compute it from the current time you're given) OR 'at' (ISO local datetime, e.g. "
+                     "2026-08-09T18:00). Always include a clear 'label'."),
+     "input_schema": {"type": "object", "properties": {
+         "label": {"type": "string"},
+         "seconds": {"type": "integer", "description": "Delay from now, in seconds."},
+         "at": {"type": "string", "description": "ISO local datetime, e.g. 2026-08-09T18:00."}},
+         "required": ["label"]}},
+    {"name": "list_reminders",
+     "description": "Read back the user's pending reminders and when each will fire.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "cancel_reminder",
+     "description": "Cancel a pending reminder by its number (from list_reminders) or by matching words in its label.",
+     "input_schema": {"type": "object", "properties": {"which": {"type": "string"}}, "required": ["which"]}},
+    {"name": "stock",
+     "description": ("Live stock/crypto/index quote — current price and today's move. Pass a ticker symbol (AAPL, "
+                     "TSLA, NVDA, BTC-USD, ^GSPC for the S&P 500). Convert company names to their ticker yourself."),
+     "input_schema": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}},
 ]
 
 _DISPATCH = {"weather": weather, "add_todo": add_todo,
-             "list_todos": list_todos, "complete_todo": complete_todo}
+             "list_todos": list_todos, "complete_todo": complete_todo,
+             "set_reminder": set_reminder, "list_reminders": list_reminders,
+             "cancel_reminder": cancel_reminder, "stock": stock}
 
 
 def run_tool(name: str, args: dict) -> tuple[str, bool]:

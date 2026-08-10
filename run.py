@@ -142,6 +142,14 @@ RATE_PER_MIN = int(os.getenv("ARC_RATE_PER_MIN", "12"))
 RATE_PER_HOUR = int(os.getenv("ARC_RATE_PER_HOUR", "120"))
 DAILY_CAP = int(os.getenv("ARC_DAILY_CAP", "600"))
 
+# Rough per-million-token prices so we can show a running daily spend and stop a
+# runaway loop from quietly draining a paid key. Defaults are ~Haiku 4.5 rates;
+# override if you switch models. DAILY_COST_CAP is a generous safety ceiling —
+# normal use costs pennies a day, so hitting it means something's looping.
+PRICE_IN = float(os.getenv("ARC_PRICE_IN_PER_MTOK", "1.0"))
+PRICE_OUT = float(os.getenv("ARC_PRICE_OUT_PER_MTOK", "5.0"))
+DAILY_COST_CAP = float(os.getenv("ARC_DAILY_COST_CAP", "5.0"))    # dollars; 0 = no cap
+
 # The rate limiter keys off the client's address. X-Forwarded-For is set by a
 # real proxy â€” but anyone can send it, so trusting it unconditionally let a
 # single client rotate the header and defeat both the request cap AND the
@@ -234,7 +242,11 @@ async def read_json(request: Request):
 # --------------------------------------------------------------------------
 
 _hits = defaultdict(deque)
-_day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0}
+_day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0, "tok_in": 0, "tok_out": 0}
+
+
+def _day_cost() -> float:
+    return _day["tok_in"] / 1e6 * PRICE_IN + _day["tok_out"] / 1e6 * PRICE_OUT
 _logins = defaultdict(deque)
 _last_sweep = 0.0
 
@@ -292,9 +304,12 @@ def is_local_request(request: Request) -> bool:
 def check_rate(request: Request):
     today = time.strftime("%Y-%m-%d")
     if _day["stamp"] != today:
-        _day.update(stamp=today, count=0)
+        _day.update(stamp=today, count=0, tok_in=0, tok_out=0)
     if _day["count"] >= DAILY_CAP:
         raise HTTPException(429, "Daily limit reached for this deployment. Try again tomorrow.")
+    if DAILY_COST_CAP > 0 and _day_cost() >= DAILY_COST_CAP:
+        raise HTTPException(429, "I've hit today's spending safety cap. It resets tomorrow, "
+                                 "or raise ARC_DAILY_COST_CAP if this was on purpose.")
 
     ip = client_ip(request)
     now = time.time()
@@ -464,18 +479,33 @@ async def chat(request: Request, _=Depends(require_auth)):
 
     convo = list(messages)
 
-    # Live-screen: attach the current desktop screenshot to the latest user
-    # message so ARC sees what's on screen right now, without a tool call.
-    # Desktop-only (the server grabs THIS machine's screen); the image lives
-    # only in this request and is never written to disk.
+    def _attach_to_last_user(blocks):
+        """Append image/text blocks to the most recent user message, whether its
+        content is still a plain string or already a block list."""
+        for i in range(len(convo) - 1, -1, -1):
+            if convo[i].get("role") == "user":
+                c = convo[i]["content"]
+                base = [{"type": "text", "text": c}] if isinstance(c, str) else list(c)
+                convo[i] = {"role": "user", "content": base + blocks}
+                return
+
+    # Live-screen: attach the current desktop screenshot so ARC sees what's on
+    # screen right now, no tool call. Desktop-only; never written to disk.
     if see_screen and local and pc.connected():
         shot = pc.screenshot()
         if isinstance(shot, list):
-            for i in range(len(convo) - 1, -1, -1):
-                if convo[i].get("role") == "user":
-                    convo[i] = {"role": "user",
-                                "content": [{"type": "text", "text": convo[i]["content"]}] + shot}
-                    break
+            _attach_to_last_user(shot)
+
+    # Camera: the client (phone/webcam) captured a frame and sent it as a data
+    # URL. Attach it so ARC can see the real world. Works anywhere (it's the
+    # user's own camera), transient — never saved.
+    client_image = payload.get("image")
+    if isinstance(client_image, str) and client_image.startswith("data:image") and "," in client_image:
+        header, b64 = client_image.split(",", 1)
+        mt = "image/png" if "png" in header else "image/jpeg"
+        if 0 < len(b64) < 8_000_000:
+            _attach_to_last_user([{"type": "image",
+                                   "source": {"type": "base64", "media_type": mt, "data": b64}}])
 
     searched = False
     used: list[str] = []
@@ -566,11 +596,15 @@ async def chat(request: Request, _=Depends(require_auth)):
         f"{('  [' + ', '.join(used) + ']') if used else ''}{C_OFF}"
     )
 
+    _day["tok_in"] += tokens_in
+    _day["tok_out"] += tokens_out
+
     return JSONResponse({
         "reply": reply,
         "searched": searched,
         "thought": thinking["type"] == "adaptive",
         "tools": used,
+        "cost_today": round(_day_cost(), 4),
     })
 
 
@@ -639,6 +673,42 @@ async def tts(request: Request, _=Depends(require_auth)):
     if not audio:
         raise HTTPException(502, "Text-to-speech produced no audio.")
     return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.get("/api/stocks")
+async def stocks(request: Request, _=Depends(require_auth)):
+    """Proxy for the stock-watcher widget — the browser can't call Yahoo
+    directly (CORS), so the server fetches the quotes and hands them back."""
+    raw = (request.query_params.get("symbols") or "").split(",")
+    syms = [s.strip().upper() for s in raw if s.strip()][:12]
+
+    def _fetch():
+        out = []
+        for s in syms:
+            try:
+                q = extras.yahoo_quote(s)
+                if q:
+                    out.append(q)
+            except Exception:
+                pass
+        return out
+
+    try:
+        import anyio
+        quotes = await anyio.to_thread.run_sync(_fetch)
+    except Exception:
+        quotes = []
+    return JSONResponse({"quotes": quotes})
+
+
+@app.get("/api/reminders/due")
+async def reminders_due(request: Request, _=Depends(require_auth)):
+    """The client polls this; any reminder whose time has come is returned once
+    (then marked delivered) so ARC can announce it — even after a reload."""
+    try:
+        return JSONResponse({"due": extras.due_reminders()})
+    except Exception:
+        return JSONResponse({"due": []})
 
 
 @app.post("/api/duck")
