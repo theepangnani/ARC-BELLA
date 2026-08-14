@@ -1124,8 +1124,9 @@ Everything you say goes through a speech synthesiser. This shapes everything:
 - NEWS, via a news tool — top headlines, optionally on a topic. Use it for "what's the news", "any news on X". Read two or three headlines aloud, briefly, not the whole list.
 - A TO-DO LIST, via the list tools. When the user says to add something to their list, remind them of a task, or asks what's on their list, use these. Keep it separate from what you remember: the list is for tasks to tick off, memory is for durable facts about them. Tick items off when they say they're done.
 - REMINDERS, via set_reminder / list_reminders / cancel_reminder. When they say "remind me…", set one — compute the delay in seconds from the current time you're given, or pass an ISO time. These persist and fire on their own; prefer them over the timer marker for anything the user should be reminded about.
+- MARKET PRICE ALERTS, via set_price_alert / list_price_alerts / clear_price_alert. When they say "tell me when NVDA hits 200", "alert me if bitcoin drops below 60k", "let me know when Apple goes over 310", set one — pass the name/ticker and the price; direction (above/below) is optional and inferred from the current price if you omit it. The server watches the ticker on its own and fires the moment it crosses — announced here AND pushed to their phone if that's set up — so these keep working after the tab is closed. If the threshold is already met when they ask, I'll tell you so instead of setting a pointless alert; relay that. Use list_price_alerts for "what am I watching" and clear_price_alert (a ticker, or "all") to remove them.
 - A BRIEFING. When the user says "brief me", "good morning", "what's my day", "catch me up" or similar, give them a short spoken rundown of their day. Gather the pieces with your tools — today's calendar events, the weather where they are, any important or unread email, their to-do list and reminders, and optionally one top news headline — then WEAVE IT INTO A FEW NATURAL SENTENCES, not a list read aloud. Lead with what matters most (the next commitment, anything urgent). Keep it warm and brief, the way a good aide would over morning coffee. If a source is empty, just skip it rather than announcing the absence.
-- EXPLAIN YOURSELF. When asked "what can you do", "what are you", or how to use you, give a warm, brief spoken tour of your main powers in plain language — you manage their calendar and email, send Telegram messages, control this computer (see the screen, click and type, open things, volume, brightness, wifi), remember things, set reminders, give weather, stocks and news, and brief them on their day. Don't recite a manual; name the highlights in two or three sentences and invite them to just ask.
+- EXPLAIN YOURSELF. When asked "what can you do", "what are you", or how to use you, give a warm, brief spoken tour of your main powers in plain language — you manage their calendar and email, send Telegram messages, control this computer (see the screen, click and type, open things, volume, brightness, wifi), remember things, set reminders, watch a stock and alert them when it hits a price, give weather, stocks and news, and brief them on their day. Don't recite a manual; name the highlights in two or three sentences and invite them to just ask.
 - CAMERA / REAL WORLD. Sometimes a photo from the user's camera is attached to their message (they tapped the camera button). When it is, look at it and answer about the real-world thing in front of them — identify it, read the text on it, translate it, describe it. Treat it as "what I'm pointing at right now."
 - SET TIMERS. To start a countdown, end your reply with a line in exactly this form:
   [[timer: <seconds> | <short label>]]
@@ -1521,10 +1522,29 @@ You are an upbeat, motivating coach in the user's corner.
       speak("Reminder. " + msg);
     }
   }
+  // Market price alerts: the server watches the tickers and crosses; here we
+  // just surface the ones that fired, spoken like a reminder. Works even with
+  // no phone set up (phone push is a bonus layered on the same triggers).
+  async function pollAlerts() {
+    if (!state.booted) return;
+    if (state.mode === "thinking" || state.mode === "speaking" || state.holding) return;
+    let due = [];
+    try {
+      const d = await (await fetch("/api/alerts/due")).json();
+      due = (d && d.due) || [];
+    } catch (_) { return; }
+    if (due.length) {
+      const msg = due.join(" ");
+      addEntry("sys", "SYSTEM", "Market alert — " + msg);
+      cue("done");
+      speak(msg);
+    }
+  }
   function startReminderPoll() {
     clearInterval(reminderPoll);
     pollReminders();
-    reminderPoll = setInterval(pollReminders, 20000);
+    pollAlerts();
+    reminderPoll = setInterval(() => { pollReminders(); pollAlerts(); }, 20000);
   }
   // one clock for all of them
   setInterval(() => {

@@ -37,3 +37,6 @@ google_sessions/
 
 # quick notes (personal)
 notes.json
+
+# Market price alerts (personal watchlist)
+price_alerts.json

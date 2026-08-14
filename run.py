@@ -59,7 +59,8 @@ import push
 # One place that knows which module owns which tool, so adding a capability is
 # one import and one entry rather than a chain of if-statements in the loop.
 # pc (computer control) and media only report connected() when NOT deployed.
-TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push)
+import alerts
+TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push, alerts)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -98,6 +99,8 @@ PASSIVE_TOOLS = {
     "show_on_display", "clear_display",
     # capturing/reading notes is benign and user-requested; deleting stays gated.
     "add_note", "list_notes",
+    # listing price alerts just reads them back; setting/clearing stays gated.
+    "list_price_alerts",
 }
 # Master switch. On by default: ARC will not act without the user's say-so. Set
 # ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).
@@ -211,21 +214,33 @@ async def lifespan(app: FastAPI):
     # phone even with no browser open. Only runs when ntfy is configured; a single
     # owner topic means pushes never reach a signed-in visitor. Best-effort — any
     # error is swallowed so a flaky network can't take the server down.
-    async def _push_loop():
+    async def _monitor_loop():
         import anyio
         while True:
             try:
-                due = await anyio.to_thread.run_sync(extras.due_for_push)
-                for r in due:
-                    label = r.get("label", "").strip() or "Reminder"
-                    await anyio.to_thread.run_sync(
-                        lambda m=label: push.send(m, title="ARC reminder", tags="alarm_clock"))
+                # Price alerts: evaluate against live quotes every cycle. This runs
+                # even without ntfy, because triggered alerts are also spoken in the
+                # browser via /api/alerts/due — phone push is a bonus on top.
+                await anyio.to_thread.run_sync(alerts.evaluate)
+
+                if push.configured():
+                    # Reminders coming due → phone.
+                    due = await anyio.to_thread.run_sync(extras.due_for_push)
+                    for r in due:
+                        label = r.get("label", "").strip() or "Reminder"
+                        await anyio.to_thread.run_sync(
+                            lambda m=label: push.send(m, title="ARC reminder", tags="alarm_clock"))
+                    # Price alerts that just crossed → phone.
+                    for msg in await anyio.to_thread.run_sync(alerts.pending_push):
+                        await anyio.to_thread.run_sync(
+                            lambda m=msg: push.send(m, title="ARC market alert",
+                                                    tags="chart_with_upwards_trend"))
             except Exception:
                 pass
             await asyncio.sleep(30)
 
-    app.state.push_task = (asyncio.create_task(_push_loop())
-                           if push.configured() else None)
+    # Always run: even with ntfy off, alerts still need evaluating for the browser.
+    app.state.push_task = asyncio.create_task(_monitor_loop())
     yield
     if app.state.push_task:
         app.state.push_task.cancel()
@@ -1140,6 +1155,17 @@ async def reminders_due(request: Request, _=Depends(require_auth)):
     (then marked delivered) so ARC can announce it — even after a reload."""
     try:
         return JSONResponse({"due": extras.due_reminders()})
+    except Exception:
+        return JSONResponse({"due": []})
+
+
+@app.get("/api/alerts/due")
+async def alerts_due(request: Request, _=Depends(require_auth)):
+    """The client polls this; any price alert that has just crossed is returned
+    once (then marked delivered) so ARC can speak it — even with no phone set up.
+    Cheap: the network fetch happens on the server's monitor loop, not here."""
+    try:
+        return JSONResponse({"due": alerts.pending_browser()})
     except Exception:
         return JSONResponse({"due": []})
 
