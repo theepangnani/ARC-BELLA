@@ -20,9 +20,13 @@ from pathlib import Path
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 ROOT = Path(__file__).parent.resolve()
+# Shared CONFIG (the OAuth client secrets) stays in ROOT so every instance uses
+# the same Google app. The owner TOKEN is per-instance DATA, so a second Bella
+# (its own ARC_DATA_DIR) signs into its own Google account. Defaults to ROOT.
+DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
 CREDENTIALS = ROOT / "credentials.json"          # desktop client (owner CLI sign-in)
 WEB_CREDENTIALS = ROOT / "credentials_web.json"  # web client (per-user browser sign-in)
-TOKEN = ROOT / "token.json"                      # the owner's token (CLI fallback)
+TOKEN = DATA_DIR / "token.json"                  # the owner's token (CLI fallback)
 
 # Per-request override: when ARC is serving a signed-in user, run.py points this
 # at THAT user's own token file, so every gauth call below reads and refreshes

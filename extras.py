@@ -11,6 +11,7 @@ Small self-contained capabilities that need no accounts or keys:
 Everything returns prose, since it is spoken aloud.
 """
 
+import os
 import json
 import time
 import datetime as dt
@@ -19,8 +20,12 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).parent.resolve()
-TODO_FILE = ROOT / "todos.json"
-REMIND_FILE = ROOT / "reminders.json"
+# Per-instance data dir (see run.py). A second Bella with its own ARC_DATA_DIR
+# keeps its own to-do list and reminders. Defaults to ROOT — unchanged.
+DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+TODO_FILE = DATA_DIR / "todos.json"
+REMIND_FILE = DATA_DIR / "reminders.json"
 
 GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
 WX_URL = "https://api.open-meteo.com/v1/forecast"

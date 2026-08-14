@@ -7,13 +7,17 @@ Quick notes for ARC.
 and easy to back up.
 """
 
+import os
 import json
 import time
 import datetime as dt
 from pathlib import Path
 
 ROOT = Path(__file__).parent.resolve()
-NOTES = ROOT / "notes.json"
+# Per-instance data dir (see run.py); a second Bella keeps its own notes.
+DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+NOTES = DATA_DIR / "notes.json"
 MAX_NOTES = 500
 
 

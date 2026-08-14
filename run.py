@@ -41,6 +41,13 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).parent.resolve()
 load_dotenv(ROOT / ".env")
 
+# Per-instance DATA lives here; shared CONFIG (API keys, OAuth client) stays in
+# ROOT. Set ARC_DATA_DIR to run a second, fully separate Bella from the same
+# code — its own reminders, notes, alerts, Google sign-ins and app window,
+# isolated from the shared instance. Unset = ROOT, so nothing changes by default.
+DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 # Tool modules read their configuration (TG_API_ID, ARC_EMAIL_ALLOWLIST, ...)
 # from the environment at import time, so they MUST be imported after .env is
 # loaded â€” import them earlier and those settings silently read empty.
@@ -299,8 +306,8 @@ def require_auth(request: Request):
 # names a token file under google_sessions/. So two people signed into ARC link
 # their OWN Google accounts and never see each other's mail or calendar.
 # --------------------------------------------------------------------------
-GOOGLE_DIR = ROOT / "google_sessions"
-GOOGLE_DIR.mkdir(exist_ok=True)
+GOOGLE_DIR = DATA_DIR / "google_sessions"
+GOOGLE_DIR.mkdir(parents=True, exist_ok=True)
 SID_COOKIE = "arc_sid"
 
 
@@ -1487,7 +1494,7 @@ def port_free(port: int) -> bool:
 # it's a separate window from your everyday browsing, it remembers the
 # microphone permission between launches, and it carries its own taskbar entry
 # â€” so it reads as its own app, not a tab.
-WINDOW_PROFILE = ROOT / ".arc-window"
+WINDOW_PROFILE = DATA_DIR / ".arc-window"
 
 
 def _find_browser() -> str:

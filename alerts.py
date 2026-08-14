@@ -20,6 +20,7 @@ server (it has to be, to fire when the browser is closed). Pushes only ever reac
 the owner's ntfy topic, so a signed-in visitor can never be paged by it.
 """
 
+import os
 import json
 import time
 import itertools
@@ -28,7 +29,10 @@ from pathlib import Path
 import extras   # yahoo_quote / yahoo_search — the same quote source the widget uses
 
 ROOT = Path(__file__).parent.resolve()
-ALERTS_FILE = ROOT / "price_alerts.json"
+# Per-instance data dir (see run.py); a second Bella keeps its own watchlist.
+DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ALERTS_FILE = DATA_DIR / "price_alerts.json"
 
 _ids = itertools.count(1)
 
