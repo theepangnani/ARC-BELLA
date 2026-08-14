@@ -246,6 +246,24 @@ def due_reminders():
     return due
 
 
+def due_for_push():
+    """For the server-side phone-push loop: reminders whose time has come and
+    that haven't been pushed yet. Uses a SEPARATE 'pushed' flag from 'delivered'
+    so the phone push and the browser's spoken delivery are independent — a
+    reminder can be both spoken (if the tab is open) and pushed to the phone."""
+    items = _load_rem()
+    now = time.time()
+    due, changed = [], False
+    for r in items:
+        if not r.get("pushed") and r["fire_at"] <= now:
+            r["pushed"] = True
+            changed = True
+            due.append({"id": r["id"], "label": r["label"]})
+    if changed:
+        _save_rem(items)
+    return due
+
+
 # --- stocks ----------------------------------------------------------------
 
 def yahoo_quote(symbol):

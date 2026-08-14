@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import hmac
+import asyncio
 import socket
 import secrets
 import hashlib
@@ -53,11 +54,12 @@ import extras
 import media
 import display
 import notes
+import push
 
 # One place that knows which module owns which tool, so adding a capability is
 # one import and one entry rather than a chain of if-statements in the loop.
 # pc (computer control) and media only report connected() when NOT deployed.
-TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes)
+TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -205,7 +207,28 @@ async def lifespan(app: FastAPI):
         anthropic.AsyncAnthropic(api_key=ANTHROPIC_KEY, timeout=90.0)
         if ANTHROPIC_KEY else None
     )
+    # Phone-push loop: watch for reminders coming due and push them to the owner's
+    # phone even with no browser open. Only runs when ntfy is configured; a single
+    # owner topic means pushes never reach a signed-in visitor. Best-effort — any
+    # error is swallowed so a flaky network can't take the server down.
+    async def _push_loop():
+        import anyio
+        while True:
+            try:
+                due = await anyio.to_thread.run_sync(extras.due_for_push)
+                for r in due:
+                    label = r.get("label", "").strip() or "Reminder"
+                    await anyio.to_thread.run_sync(
+                        lambda m=label: push.send(m, title="ARC reminder", tags="alarm_clock"))
+            except Exception:
+                pass
+            await asyncio.sleep(30)
+
+    app.state.push_task = (asyncio.create_task(_push_loop())
+                           if push.configured() else None)
     yield
+    if app.state.push_task:
+        app.state.push_task.cancel()
     await app.state.http.aclose()
     if app.state.claude:
         await app.state.claude.close()
@@ -1108,6 +1131,27 @@ async def reminders_due(request: Request, _=Depends(require_auth)):
         return JSONResponse({"due": extras.due_reminders()})
     except Exception:
         return JSONResponse({"due": []})
+
+
+@app.get("/api/push/status")
+async def push_status(request: Request, _=Depends(require_auth)):
+    """Whether phone push (ntfy) is set up on this server, for the UI to reflect."""
+    return JSONResponse({"configured": push.configured()})
+
+
+@app.post("/api/push/test")
+async def push_test(request: Request, _=Depends(require_auth)):
+    """Send a test notification to the owner's phone."""
+    if not push.configured():
+        return JSONResponse({"ok": False, "reason": "not configured"})
+    try:
+        import anyio
+        ok = await anyio.to_thread.run_sync(
+            lambda: push.send("Phone alerts are working. I'll ping you here when a reminder fires.",
+                              title="ARC test", tags="white_check_mark"))
+    except Exception:
+        ok = False
+    return JSONResponse({"ok": bool(ok)})
 
 
 @app.get("/api/calendar/upcoming")

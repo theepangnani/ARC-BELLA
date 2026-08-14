@@ -979,6 +979,14 @@
         <textarea id="routines" class="atext" rows="4" spellcheck="false"
           placeholder="good morning = give me my briefing&#10;focus mode = turn on do not disturb and open my code editor&#10;i'm heading out = what's the weather and my next meeting"></textarea>
         <button id="routinesSave" class="abtn">Save routines</button>
+
+        <div class="ahead" style="margin-top:12px">Schedules <span class="ahint">when = what to do</span></div>
+        <textarea id="schedules" class="atext" rows="4" spellcheck="false"
+          placeholder="weekdays 08:00 = brief me&#10;daily 22:30 = remind me to wind down&#10;hourly = tell me to stand up and stretch&#10;mon,wed,fri 07:00 = what's my first meeting"></textarea>
+        <button id="schedulesSave" class="abtn">Save schedules</button>
+
+        <div class="ahead" style="margin-top:12px">Phone alerts <span class="ahint" id="pushHint">off</span></div>
+        <button id="pushTestBtn" class="abtn" title="Send a test notification to your phone (needs ntfy set up on the server)">Send test alert</button>
       </div>
     </div>
   </div>
@@ -1109,16 +1117,23 @@ Everything you say goes through a speech synthesiser. This shapes everything:
 - PLAY MUSIC AND VIDEOS, via the youtube and spotify tools. When the user says to play a song, artist, or video, or "put something on", use them — they open YouTube or the Spotify app to what was asked. Say what you're putting on. Be honest that you're opening it rather than claiming fine control you don't have: you cannot pause, skip, or change the volume of Spotify or YouTube (that would need those platforms' APIs). You CAN change the computer's own volume with the system control tool.
 - WEATHER, via a weather tool. Use it for any weather question rather than guessing or searching — it's current and exact. Say temperatures as whole numbers spoken naturally.
 - STOCKS, via a stock tool — a live price and today's move for a ticker. Convert company names to tickers yourself (Apple → AAPL, Bitcoin → BTC-USD). Use it for "what's Tesla at", "how's the market", "price of Nvidia".
+- THE MARKETS PANEL on their screen — you can add or remove the tickers shown there. To add one, end your reply with [[market: add <ticker or name>]]; to remove one, [[market: remove <ticker or name>]]. Use when they say "add Tesla to my markets/stocks", "watch Nvidia", "put Bitcoin on my markets", "take Apple off my markets", "remove Bitcoin". You may pass a company name or a ticker — the panel resolves it (Apple → AAPL). The marker is stripped before anything is spoken, so ALSO confirm in words — "Added Tesla to your markets, sir." This just curates their panel; it is not a change to their computer, so no permission is needed.
 - NEWS, via a news tool — top headlines, optionally on a topic. Use it for "what's the news", "any news on X". Read two or three headlines aloud, briefly, not the whole list.
 - A TO-DO LIST, via the list tools. When the user says to add something to their list, remind them of a task, or asks what's on their list, use these. Keep it separate from what you remember: the list is for tasks to tick off, memory is for durable facts about them. Tick items off when they say they're done.
 - REMINDERS, via set_reminder / list_reminders / cancel_reminder. When they say "remind me…", set one — compute the delay in seconds from the current time you're given, or pass an ISO time. These persist and fire on their own; prefer them over the timer marker for anything the user should be reminded about.
 - A BRIEFING. When the user says "brief me", "good morning", "what's my day", "catch me up" or similar, give them a short spoken rundown of their day. Gather the pieces with your tools — today's calendar events, the weather where they are, any important or unread email, their to-do list and reminders, and optionally one top news headline — then WEAVE IT INTO A FEW NATURAL SENTENCES, not a list read aloud. Lead with what matters most (the next commitment, anything urgent). Keep it warm and brief, the way a good aide would over morning coffee. If a source is empty, just skip it rather than announcing the absence.
 - EXPLAIN YOURSELF. When asked "what can you do", "what are you", or how to use you, give a warm, brief spoken tour of your main powers in plain language — you manage their calendar and email, send Telegram messages, control this computer (see the screen, click and type, open things, volume, brightness, wifi), remember things, set reminders, give weather, stocks and news, and brief them on their day. Don't recite a manual; name the highlights in two or three sentences and invite them to just ask.
 - CAMERA / REAL WORLD. Sometimes a photo from the user's camera is attached to their message (they tapped the camera button). When it is, look at it and answer about the real-world thing in front of them — identify it, read the text on it, translate it, describe it. Treat it as "what I'm pointing at right now."
-- SET TIMERS. To start one, end your reply with a line in exactly this form:
+- SET TIMERS. To start a countdown, end your reply with a line in exactly this form:
   [[timer: <seconds> | <short label>]]
   For example, a ten minute tea timer is: [[timer: 600 | tea]]
-  The marker is stripped before anything is spoken, so confirm it in words as well — "Ten minutes on the tea, sir." Running timers are listed for you below; you can report on them when asked. You cannot cancel one yourself, so if asked to cancel, say plainly that the user needs to reload the page.
+- SET ALARMS. For a specific clock time ("wake me at 7", "alarm for 6:30am", "buzz me at 3pm"), end your reply with:
+  [[alarm: <time> | <short label>]]
+  Give <time> as a full local ISO time you resolve from the current date/time you were given — e.g. [[alarm: 2026-08-13T07:00 | wake up]]. A bare clock time like [[alarm: 6:30am | gym]] also works and means the next time the clock reads it. Use an alarm (not a timer) whenever the user names a time of day rather than a duration.
+- CANCEL a timer or alarm you set with:
+  [[canceltimer: <label, or "all">]]
+  e.g. [[canceltimer: tea]] or [[canceltimer: all]]. Omitting the label cancels the most recent.
+  All these markers are stripped before anything is spoken, so ALSO confirm in words — "Ten minutes on the tea, sir.", "Alarm set for seven.", "Cancelled." Timers and alarms currently set are listed for you below; report on them when asked. (These live in this page — if the user closes it they stop, so for anything they truly must not miss, prefer set_reminder, which persists and fires on its own.)
 - Hold the thread of this conversation and follow it across turns.
 
 === STAYING QUIET ===
@@ -1129,7 +1144,7 @@ and nothing else. Use it for: half-sentences with no request in them, one side o
 Do NOT use it merely because a message is short, oddly worded, or badly transcribed — a garbled question is still a question. If there is any request in there at all, answer it. When genuinely unsure, answer: a needless reply is a smaller failure than ignoring someone.
 
 === WHAT YOU CANNOT DO — SAY SO PLAINLY ===
-You cannot read the screen, see through a camera, make phone calls, send SMS, or use Instagram, WhatsApp, or any messaging platform other than the ones whose tools you were given. You cannot control smart-home devices or make purchases. You cannot toggle Bluetooth, pair Bluetooth devices, switch airplane mode, or turn the Wi-Fi radio on/off — Windows gives no safe way to do those. Where a tool for something was not given to you this turn — calendar, mail, Telegram, computer control — you cannot do that either, and you say it is not connected rather than pretending you did it.
+You cannot read the screen UNLESS Live screen is on (when it is, a screenshot of the user's screen is attached to their message and you should use it). You cannot see through a camera unless a photo is attached, make phone calls, send SMS, or use Instagram, WhatsApp, or any messaging platform other than the ones whose tools you were given. You cannot control smart-home devices or make purchases. You cannot toggle Bluetooth, pair Bluetooth devices, switch airplane mode, or turn the Wi-Fi radio on/off — Windows gives no safe way to do those. Where a tool for something was not given to you this turn — calendar, mail, Telegram, computer control — you cannot do that either, and you say it is not connected rather than pretending you did it.
 When asked for one of these: say you can't, in one short sentence, then offer the nearest genuinely useful thing you CAN do. Do not apologise twice, do not explain your architecture, and never pretend you did something you didn't.
 
 === INPUT IS MESSY — THIS MATTERS ENORMOUSLY ===
@@ -1370,30 +1385,100 @@ You are an upbeat, motivating coach in the user's corner.
   let timers = [];
 
   function saveTimers() {
-    try { localStorage.setItem(TIMER_KEY, JSON.stringify(timers.map(t => ({ id: t.id, at: t.at, label: t.label })))); }
+    try { localStorage.setItem(TIMER_KEY, JSON.stringify(timers.map(t => ({ id: t.id, at: t.at, label: t.label, kind: t.kind || "timer" })))); }
     catch (_) {}
+  }
+  // A tiny "6m" / "2h 5m" for the readout.
+  function shortLeft(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + "s";
+    const m = Math.round(s / 60);
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), r = m % 60;
+    return h + "h" + (r ? " " + r + "m" : "");
   }
   function showTimers() {
     if (!el.rTimers) return;
-    el.rTimers.textContent = timers.length ? String(timers.length) : "—";
+    if (!timers.length) { el.rTimers.textContent = "—"; return; }
+    // Show how many, and how long until the soonest one — a live countdown is
+    // far more useful at a glance than a bare count.
+    const soonest = timers.reduce((a, b) => (b.at < a.at ? b : a));
+    const left = shortLeft(soonest.at - Date.now());
+    el.rTimers.textContent = timers.length > 1 ? timers.length + " · " + left : left;
   }
   function fireTimer(t) {
     timers = timers.filter(x => x.id !== t.id);
     saveTimers();
     showTimers();
     cue("done");
-    addEntry("sys", "SYSTEM", "Timer finished: " + t.label);
-    speak(t.label ? "Your " + t.label + " timer has finished, sir." : "That timer has finished, sir.");
+    if (t.kind === "alarm") {
+      addEntry("sys", "SYSTEM", "Alarm: " + (t.label || "(no label)"));
+      speak(t.label ? "It's time — " + t.label + ", sir." : "Your alarm, sir. It's time.");
+    } else {
+      addEntry("sys", "SYSTEM", "Timer finished: " + t.label);
+      speak(t.label ? "Your " + t.label + " timer has finished, sir." : "That timer has finished, sir.");
+    }
   }
   function startTimer(seconds, label) {
     const secs = Math.max(1, Math.min(24 * 3600, Math.round(seconds)));
     const t = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
                 at: Date.now() + secs * 1000,
-                label: (label || "").trim().slice(0, 60) };
+                label: (label || "").trim().slice(0, 60), kind: "timer" };
     timers.push(t);
     saveTimers();
     showTimers();
     return t;
+  }
+  // An alarm is just a timer whose fire moment is a wall-clock time. `when` is an
+  // ISO local time the model resolved (2026-08-13T07:00), or a bare clock time
+  // (7am, 7:30pm, 19:00) meaning the next time the clock reads it.
+  function parseAlarmTime(when) {
+    const s = (when || "").trim();
+    if (!s) return null;
+    // Full ISO / date-time the model computed from the current date it was given.
+    if (/^\d{4}-\d{2}-\d{2}[T ]/.test(s)) {
+      const ms = new Date(s.replace(" ", "T")).getTime();
+      return Number.isFinite(ms) ? ms : null;
+    }
+    // Bare clock time → the next occurrence of that time.
+    const m = s.toLowerCase().replace(/\./g, ":").match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+    if (!m) return null;
+    let hour = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ap = m[3];
+    if (ap === "pm" && hour < 12) hour += 12;
+    if (ap === "am" && hour === 12) hour = 0;
+    if (hour > 23 || min > 59) return null;
+    const d = new Date();
+    d.setHours(hour, min, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);   // already passed → tomorrow
+    return d.getTime();
+  }
+  function startAlarm(when, label) {
+    const at = parseAlarmTime(when);
+    if (!at) return null;
+    const t = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+                at, label: (label || "").trim().slice(0, 60), kind: "alarm" };
+    timers.push(t);
+    saveTimers();
+    showTimers();
+    return t;
+  }
+  // Cancel by label (substring) or "all"; with no match, drop the most recent.
+  // Returns how many were removed so ARC can confirm honestly.
+  function cancelTimers(which) {
+    const w = (which || "").trim().toLowerCase();
+    const before = timers.length;
+    if (!before) return 0;
+    if (!w || w === "all" || w === "everything") { timers = []; }
+    else {
+      const hit = timers.filter(t => (t.label || "").toLowerCase().includes(w));
+      if (hit.length) { const ids = new Set(hit.map(t => t.id)); timers = timers.filter(t => !ids.has(t.id)); }
+      else { timers = timers.slice(0, -1); }   // no label match → drop the most recent
+    }
+    saveTimers();
+    showTimers();
+    return before - timers.length;
   }
   function restoreTimers() {
     try {
@@ -1432,16 +1517,34 @@ You are an upbeat, motivating coach in the user's corner.
   // one clock for all of them
   setInterval(() => {
     const now = Date.now();
-    timers.filter(t => t.at <= now).forEach(fireTimer);
+    const due = timers.filter(t => t.at <= now);
+    due.forEach(fireTimer);
+    // Keep the readout's countdown live even when nothing fired this tick.
+    if (!due.length && timers.length) showTimers();
   }, 1000);
 
   function timerBlock() {
     if (!timers.length) return "";
     const lines = timers.map(t => {
-      const left = Math.max(0, Math.round((t.at - Date.now()) / 60));
-      return "- " + (t.label || "unlabelled") + ": about " + left + " minute" + (left === 1 ? "" : "s") + " left";
+      if (t.kind === "alarm") {
+        const at = new Date(t.at);
+        const clock = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        return "- ALARM at " + clock + (t.label ? " (" + t.label + ")" : "");
+      }
+      const left = Math.max(0, Math.round((t.at - Date.now()) / 60000));
+      return "- TIMER " + (t.label || "unlabelled") + ": about " + left + " minute" + (left === 1 ? "" : "s") + " left";
     });
-    return "\n\nTIMERS CURRENTLY RUNNING:\n" + lines.join("\n");
+    return "\n\nTIMERS & ALARMS CURRENTLY SET:\n" + lines.join("\n");
+  }
+
+  // When Live screen is on, the server attaches a screenshot to every message.
+  // Tell ARC plainly so it uses it and never claims it can't see the screen.
+  function screenBlock() {
+    if (!(liveScreen && canSeeScreen)) return "";
+    return "\n\nLIVE SCREEN IS ON: a current screenshot of the user's screen is attached to their message. " +
+      "You CAN see their screen right now. Use it to answer anything about what's on screen — read text, " +
+      "identify windows, describe what they're looking at, spot errors — as naturally as if you were looking over their shoulder. " +
+      "Don't mention screenshots or say you can't see; just answer about what's there.";
   }
 
   /* Directives ARC can put at the end of a reply. All are stripped before
@@ -1458,6 +1561,24 @@ You are an upbeat, motivating coach in the user's corner.
 
     out = out.replace(/\[\[\s*timer\s*:\s*(\d+)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi, (_, secs, label) => {
       startTimer(parseInt(secs, 10), label || "");
+      return "";
+    });
+
+    out = out.replace(/\[\[\s*alarm\s*:\s*([^\]|]+?)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi, (_, when, label) => {
+      startAlarm(when, label || "");
+      return "";
+    });
+
+    out = out.replace(/\[\[\s*canceltimer\s*(?::\s*([^\]]*?))?\s*\]\]/gi, (_, which) => {
+      cancelTimers(which || "");
+      return "";
+    });
+
+    out = out.replace(/\[\[\s*market\s*:\s*(add|remove|del|delete|drop)\s+([^\]]+?)\s*\]\]/gi, (_, op, name) => {
+      if (window.arcMarket) {
+        if (/^add$/i.test(op)) window.arcMarket.add(name);
+        else window.arcMarket.remove(name);
+      }
       return "";
     });
 
@@ -3287,7 +3408,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: pending,
-          system: personaBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + consentBlock() + altBlock(alts),
+          system: personaBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + altBlock(alts),
           // Only a genuine, user-approved turn may act. Background calls never set this.
           allow_actions: authorize,
           // Send the mode, not a local guess. The server turns anything but
@@ -3805,11 +3926,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     "You are ARC, quietly keeping an eye on the user's screen in the background. " +
     "You are shown the current screen. Speak up ONLY if there is something the user " +
     "would genuinely want flagged right now — an error or crash, a finished " +
-    "download/build/render/export, a notification or message that just arrived, " +
-    "something that looks risky or wrong, or a task that appears to have completed " +
-    "or gotten stuck. Ignore ordinary typing, scrolling, and normal use. If nothing " +
-    "is worth interrupting for, reply with exactly: (nothing). When you do speak, be " +
-    "brief — one short spoken sentence, no markdown, address the user as 'sir'.";
+    "download/build/render/export, a notification, message, or email that just arrived, " +
+    "a meeting or call link or a calendar reminder appearing, the user's name or a question " +
+    "clearly aimed at them showing up in a chat, something that looks risky or wrong, or a task " +
+    "that appears to have completed or gotten stuck. Ignore ordinary typing, scrolling, and " +
+    "normal use. If nothing is worth interrupting for, reply with exactly: (nothing). When you " +
+    "DO speak, be brief — one short spoken sentence, no markdown, address the user as 'sir' — and " +
+    "if there's an obvious next step you could take, offer it in a few words (e.g. 'want me to " +
+    "join it?'), but never act on your own; you're only watching.";
 
   const watchBtn = document.getElementById("watchBtn");
 
@@ -4018,6 +4142,101 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
   }
   setInterval(pollNudges, 60000);
+
+  /* ---------------- recurring schedules ----------------
+     Routines fire when you SAY a phrase; schedules fire when the CLOCK hits a
+     time, on the days you name — "weekdays 08:00 = brief me". Each line is
+     "<when> = <instruction>"; the instruction is submitted to ARC as if you'd
+     asked it. Client-side and per-browser, like everything else here. */
+  const DOW = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2,
+                wed: 3, weds: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4,
+                fri: 5, friday: 5, sat: 6, saturday: 6 };
+  let schedules = [];
+  function parseSchedules(text) {
+    const out = [];
+    (text || "").split("\n").forEach((raw, idx) => {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) return;
+      const eq = line.indexOf("=");
+      if (eq < 0) return;
+      const when = line.slice(0, eq).trim().toLowerCase();
+      const instr = line.slice(eq + 1).trim();
+      if (!instr) return;
+      if (/^hourly\b/.test(when)) { out.push({ id: idx, hourly: true, instr }); return; }
+      const tm = when.match(/(\d{1,2}):(\d{2})/);
+      if (!tm) return;
+      const hh = parseInt(tm[1], 10), mm = parseInt(tm[2], 10);
+      if (hh > 23 || mm > 59) return;
+      const dpart = when.slice(0, tm.index).trim();
+      let days = null;   // null = every day
+      if (/weekday/.test(dpart)) days = [1, 2, 3, 4, 5];
+      else if (/weekend/.test(dpart)) days = [0, 6];
+      else if (dpart && !/daily|every ?day/.test(dpart)) {
+        const ds = [];
+        dpart.split(/[ ,]+/).forEach(tok => { if (DOW[tok] !== undefined) ds.push(DOW[tok]); });
+        if (ds.length) days = ds;
+      }
+      out.push({ id: idx, hh, mm, days, instr });
+    });
+    return out;
+  }
+  function loadSchedules() {
+    let txt = "";
+    try { txt = localStorage.getItem("arc.schedules") || ""; } catch (_) {}
+    if (el.schedules && !el.schedules.value) el.schedules.value = txt;
+    schedules = parseSchedules(txt);
+  }
+  el.schedules = document.getElementById("schedules");
+  loadSchedules();
+  const schedulesSaveBtn = document.getElementById("schedulesSave");
+  if (schedulesSaveBtn) schedulesSaveBtn.addEventListener("click", () => {
+    try { localStorage.setItem("arc.schedules", el.schedules ? el.schedules.value : ""); } catch (_) {}
+    loadSchedules();
+    addEntry("sys", "SYSTEM", "Schedules saved (" + schedules.length + ").");
+  });
+
+  let schedFired = new Set();
+  let lastSchedDate = "";
+  setInterval(() => {
+    if (!schedules.length) return;
+    const now = new Date();
+    const date = now.toDateString();
+    if (date !== lastSchedDate) { schedFired = new Set(); lastSchedDate = date; }  // re-arm daily
+    // Don't cut across a live conversation; a missed minute just waits for tomorrow.
+    if (state.mode !== "standby" || inFlight || state.speakingLock || state.holding) return;
+    const day = now.getDay(), hh = now.getHours(), mm = now.getMinutes();
+    for (const s of schedules) {
+      let key = null;
+      if (s.hourly) { if (mm === 0) key = s.id + "@" + date + "H" + hh; }
+      else if (hh === s.hh && mm === s.mm && (s.days === null || s.days.includes(day))) {
+        key = s.id + "@" + date + "T" + s.hh + ":" + s.mm;
+      }
+      if (key && !schedFired.has(key)) { schedFired.add(key); submit(s.instr); break; }
+    }
+  }, 30000);
+
+  /* ---------------- phone alerts (ntfy) ----------------
+     The server can push a notification to the owner's phone when a reminder
+     fires, even with this page closed. Here we just reflect whether it's set up
+     and offer a test. Setup is server-side (ARC_NTFY_TOPIC + the ntfy app). */
+  async function refreshPushStatus() {
+    const hint = document.getElementById("pushHint");
+    const btn = document.getElementById("pushTestBtn");
+    let on = false;
+    try { const d = await (await fetch("/api/push/status")).json(); on = !!(d && d.configured); } catch (_) {}
+    if (hint) hint.textContent = on ? "on" : "not set up";
+    if (btn) btn.disabled = !on;
+  }
+  const pushTestBtn = document.getElementById("pushTestBtn");
+  if (pushTestBtn) pushTestBtn.addEventListener("click", async () => {
+    try {
+      const d = await (await fetch("/api/push/test", { method: "POST" })).json();
+      addEntry("sys", "SYSTEM", d && d.ok
+        ? "Test alert sent — check your phone."
+        : "Couldn't send it. Set ARC_NTFY_TOPIC in .env and install the ntfy app on your phone, subscribed to that topic.");
+    } catch (_) { addEntry("sys", "SYSTEM", "Couldn't reach the push service."); }
+  });
+  refreshPushStatus();
 
   /* Consent lock button — the switch behind "never act without my say-so". */
   const consentBtn = document.getElementById("consentBtn");
@@ -4488,6 +4707,47 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       } catch (_) { lastQuotes = []; }
       if (editIdx === null) render();        // don't clobber an open editor
     }
+
+    // Expose a tiny API so ARC can curate the markets panel by voice, via the
+    // [[market:]] directive. Client-side, like the panel itself — no server tool,
+    // so it just personalises this screen and never counts as "acting".
+    async function addTicker(text) {
+      const q = (text || "").trim();
+      if (!q) return null;
+      let sym = null;
+      try {
+        const r = await (await fetch("/api/stock-search?q=" + encodeURIComponent(q))).json();
+        sym = r && r.symbol;
+      } catch (_) {}
+      if (!sym) sym = q.toUpperCase();
+      if (!tickers.includes(sym)) { tickers.push(sym); save(); await load(); }
+      return sym;
+    }
+    async function removeTicker(text) {
+      const raw = (text || "").trim();
+      if (!raw) return null;
+      const bare = s => String(s).toUpperCase().replace("-USD", "");
+      const tryMatch = cand => {
+        const q = cand.toUpperCase().replace(/\s+/g, "");
+        let i = tickers.findIndex(t => t.toUpperCase() === q);
+        if (i < 0) i = tickers.findIndex(t => bare(t) === bare(q));
+        if (i < 0) i = tickers.findIndex(t => t.toUpperCase().startsWith(q) || bare(t).startsWith(bare(q)));
+        return i;
+      };
+      let i = tryMatch(raw);
+      if (i < 0) {                                   // "remove bitcoin" → resolve → BTC-USD
+        try {
+          const r = await (await fetch("/api/stock-search?q=" + encodeURIComponent(raw))).json();
+          if (r && r.symbol) i = tryMatch(r.symbol);
+        } catch (_) {}
+      }
+      if (i < 0) return null;
+      const gone = tickers[i];
+      removeAt(i);
+      return gone;
+    }
+    window.arcMarket = { add: addTicker, remove: removeTicker, list: () => tickers.slice() };
+
     render();
     load();
     setInterval(load, 60000);
