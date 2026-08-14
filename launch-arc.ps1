@@ -21,8 +21,11 @@ function Find-Python {
   # (the shim's real child gets orphaned and dies), so a double-click leaves
   # nothing running. The real pythoncore exe has no such indirection.
   $cands = @()
-  $cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\pythonw.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
-  $cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\python.exe"  -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
+  # Sort by PARSED version (newest first), not by string — a string sort puts
+  # pythoncore-3.9 ahead of pythoncore-3.13 because '9' > '1'.
+  $verKey = { $m=[regex]::Match($_.FullName,'pythoncore-(\d+)\.(\d+)'); if($m.Success){[int]$m.Groups[1].Value*1000+[int]$m.Groups[2].Value}else{0} }
+  $cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\pythonw.exe" -ErrorAction SilentlyContinue | Sort-Object $verKey -Descending | ForEach-Object FullName)
+  $cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\python.exe"  -ErrorAction SilentlyContinue | Sort-Object $verKey -Descending | ForEach-Object FullName)
   $cands += (Get-Command pythonw.exe -All -ErrorAction SilentlyContinue | ForEach-Object Source)
   $cands += (Get-Command python.exe  -All -ErrorAction SilentlyContinue | ForEach-Object Source)
   foreach ($c in $cands) {

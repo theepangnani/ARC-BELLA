@@ -23,6 +23,7 @@ the owner's ntfy topic, so a signed-in visitor can never be paged by it.
 import os
 import json
 import time
+import threading
 import itertools
 from pathlib import Path
 
@@ -35,6 +36,14 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 ALERTS_FILE = DATA_DIR / "price_alerts.json"
 
 _ids = itertools.count(1)
+
+# The monitor loop (evaluate/pending_push, on worker threads) and the browser
+# poll (pending_browser, on the event-loop thread) both read-modify-write this
+# file. Without a lock the last save wins and can clobber a just-set 'pushed' or
+# 'triggered' flag — leading to a duplicate phone push or a dropped browser
+# alert. Guard every load-mutate-save sequence with this. NEVER hold it during a
+# network fetch (that would freeze the event loop); fetch first, lock to apply.
+_LOCK = threading.RLock()
 
 
 def connected() -> bool:
@@ -53,7 +62,10 @@ def _load():
 
 
 def _save(items):
-    ALERTS_FILE.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    # Atomic replace so a concurrent reader never sees a half-written file.
+    tmp = ALERTS_FILE.with_name(ALERTS_FILE.name + ".tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, ALERTS_FILE)
 
 
 def _next_id() -> str:
@@ -130,14 +142,17 @@ def set_price_alert(symbol: str = "", direction: str = "", price=None, note: str
         return (f"{disp} is already {rel} {_fmt_price(target)} — it's at "
                 f"{_fmt_price(current)} right now, so there's nothing to wait for.")
 
-    item = {"id": _next_id(), "symbol": sym, "direction": d, "target": target,
-            "note": (note or "").strip(), "created": time.time(),
-            "created_price": current, "triggered": False,
-            "triggered_at": None, "triggered_price": None,
-            "pushed": False, "delivered": False}
-    items = _load()
-    items.append(item)
-    _save(items)
+    # The yahoo lookups above are done; only the load-append-save touches shared
+    # state, so that is all the lock needs to cover.
+    with _LOCK:
+        item = {"id": _next_id(), "symbol": sym, "direction": d, "target": target,
+                "note": (note or "").strip(), "created": time.time(),
+                "created_price": current, "triggered": False,
+                "triggered_at": None, "triggered_price": None,
+                "pushed": False, "delivered": False}
+        items = _load()
+        items.append(item)
+        _save(items)
     arrow = "rises to" if d == "above" else "drops to"
     return (f"Watching {disp} — I'll alert you when it {arrow} {_fmt_price(target)} "
             f"(it's at {_fmt_price(current)} now).")
@@ -145,7 +160,8 @@ def set_price_alert(symbol: str = "", direction: str = "", price=None, note: str
 
 def list_price_alerts() -> str:
     """Show the active (un-triggered) alerts."""
-    items = [a for a in _load() if not a.get("triggered")]
+    with _LOCK:
+        items = [a for a in _load() if not a.get("triggered")]
     if not items:
         return "No price alerts set."
     lines = "\n".join(f"  · {_describe(a)}  (now watching)" for a in items)
@@ -155,25 +171,29 @@ def list_price_alerts() -> str:
 def clear_price_alert(which: str = "") -> str:
     """Remove alerts by id, by ticker/name, or 'all'."""
     w = (which or "").strip().lower()
-    items = _load()
-    if not items:
-        return "There are no price alerts to clear."
-    if w in ("all", "everything", "*", ""):
-        _save([])
-        return "Cleared all price alerts."
-    resolved = (extras.yahoo_search(w) or "").upper()
-    kept, removed = [], []
-    for a in items:
-        sym = str(a["symbol"]).upper()
-        bare = sym.replace("-USD", "")
-        if (a.get("id", "").lower() == w or sym == w.upper() or bare == w.upper()
-                or (resolved and sym == resolved)):
-            removed.append(a)
-        else:
-            kept.append(a)
-    if not removed:
-        return f"I couldn't find a price alert matching '{which}'."
-    _save(kept)
+    is_all = w in ("all", "everything", "*", "")
+    # Resolve the name to a ticker OUTSIDE the lock (it hits the network); the
+    # "all" path needs no resolution.
+    resolved = "" if is_all else (extras.yahoo_search(w) or "").upper()
+    with _LOCK:
+        items = _load()
+        if not items:
+            return "There are no price alerts to clear."
+        if is_all:
+            _save([])
+            return "Cleared all price alerts."
+        kept, removed = [], []
+        for a in items:
+            sym = str(a["symbol"]).upper()
+            bare = sym.replace("-USD", "")
+            if (a.get("id", "").lower() == w or sym == w.upper() or bare == w.upper()
+                    or (resolved and sym == resolved)):
+                removed.append(a)
+            else:
+                kept.append(a)
+        if not removed:
+            return f"I couldn't find a price alert matching '{which}'."
+        _save(kept)
     return "Removed: " + "; ".join(_describe(a) for a in removed) + "."
 
 
@@ -182,22 +202,35 @@ def clear_price_alert(which: str = "") -> str:
 def evaluate():
     """Fetch a live quote for every un-triggered alert and mark the ones that
     have crossed. Network work happens here, on the server's 30s loop — the
-    readers below are cheap and do no fetching."""
-    items = _load()
-    changed = False
-    for a in items:
-        if a.get("triggered"):
-            continue
+    readers below are cheap and do no fetching.
+
+    The lock is held only to snapshot and, later, to apply — NEVER across the
+    quote fetches, or a browser poll (pending_browser on the event loop) would
+    block for the whole network round-trip."""
+    with _LOCK:
+        pending = [dict(a) for a in _load() if not a.get("triggered")]
+    if not pending:
+        return
+
+    crossed = {}   # id -> price at crossing
+    for a in pending:
         q = extras.yahoo_quote(a["symbol"])
-        if not q:
-            continue
-        if _met(a["direction"], q["price"], a["target"]):
-            a["triggered"] = True
-            a["triggered_at"] = time.time()
-            a["triggered_price"] = q["price"]
-            changed = True
-    if changed:
-        _save(items)
+        if q and _met(a["direction"], q["price"], a["target"]):
+            crossed[a["id"]] = q["price"]
+    if not crossed:
+        return
+
+    with _LOCK:
+        items = _load()
+        changed = False
+        for a in items:
+            if a.get("id") in crossed and not a.get("triggered"):
+                a["triggered"] = True
+                a["triggered_at"] = time.time()
+                a["triggered_price"] = crossed[a["id"]]
+                changed = True
+        if changed:
+            _save(items)
 
 
 def _message(a: dict) -> str:
@@ -212,30 +245,32 @@ def _message(a: dict) -> str:
 
 def pending_push():
     """Triggered alerts not yet sent to the phone. Marks them pushed."""
-    items = _load()
-    out, changed = [], False
-    for a in items:
-        if a.get("triggered") and not a.get("pushed"):
-            a["pushed"] = True
-            changed = True
-            out.append(_message(a))
-    if changed:
-        _save(items)
+    with _LOCK:
+        items = _load()
+        out, changed = [], False
+        for a in items:
+            if a.get("triggered") and not a.get("pushed"):
+                a["pushed"] = True
+                changed = True
+                out.append(_message(a))
+        if changed:
+            _save(items)
     return out
 
 
 def pending_browser():
     """Triggered alerts not yet spoken in the browser. Marks them delivered.
     Cheap — no network — so the client can poll it often."""
-    items = _load()
-    out, changed = [], False
-    for a in items:
-        if a.get("triggered") and not a.get("delivered"):
-            a["delivered"] = True
-            changed = True
-            out.append(_message(a))
-    if changed:
-        _save(items)
+    with _LOCK:
+        items = _load()
+        out, changed = [], False
+        for a in items:
+            if a.get("triggered") and not a.get("delivered"):
+                a["delivered"] = True
+                changed = True
+                out.append(_message(a))
+        if changed:
+            _save(items)
     return out
 
 
