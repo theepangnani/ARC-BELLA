@@ -21,8 +21,10 @@ instance anyone else can reach.
 
 import os
 import re
+import sys
 import time
 import shlex
+import shutil
 import subprocess
 import datetime as dt
 import itertools
@@ -31,6 +33,45 @@ from pathlib import Path
 ROOT = Path(__file__).parent.resolve()
 RAN_LOG = ROOT / "ran-by-arc.log"
 HOME = Path.home()
+
+# --- which computer are we on? --------------------------------------------
+# ARC was born on Windows, but nothing about the assistant is Windows-only —
+# only the device-control plumbing is. These flags let each control tool do the
+# native thing on Windows, macOS and Linux, and fall back to an honest "not
+# supported on this OS yet" instead of crashing where a feature has no portable
+# equivalent.
+IS_WIN = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
+OS_NAME = ("Windows" if IS_WIN else "macOS" if IS_MAC else
+           "Linux" if IS_LINUX else sys.platform)
+
+
+def _has(cmd: str) -> bool:
+    """Is this command-line tool available on PATH?"""
+    return shutil.which(cmd) is not None
+
+
+def _open_default(target: str):
+    """Open a file, folder, or URL with the OS's default handler. The one call
+    that differs on every platform: os.startfile (Windows), `open` (macOS),
+    `xdg-open` (Linux)."""
+    if IS_WIN:
+        os.startfile(target)                       # type: ignore[attr-defined]
+    elif IS_MAC:
+        subprocess.Popen(["open", target])
+    else:
+        opener = "xdg-open" if _has("xdg-open") else None
+        if not opener:
+            raise RuntimeError("no 'xdg-open' on this system (install xdg-utils)")
+        subprocess.Popen([opener, target])
+
+
+def _unsupported(feature: str) -> str:
+    """Uniform, honest message when a control has no portable path on this OS."""
+    return (f"I can't {feature} on {OS_NAME} yet — that control is only wired up "
+            f"for Windows so far. Everything else (voice, calendar, mail, markets, "
+            f"opening apps and files) works here the same.")
 
 CLOUD = bool(os.getenv("PORT"))
 # A deployed instance (a hosting platform handed us a PORT) never gets computer
@@ -70,8 +111,14 @@ def _within_roots(p: Path) -> bool:
 
 
 def _run(cmd, shell=False, timeout=None):
-    return subprocess.run(cmd, shell=shell, capture_output=True, text=True,
-                          timeout=timeout or CMD_TIMEOUT, cwd=str(HOME))
+    try:
+        return subprocess.run(cmd, shell=shell, capture_output=True, text=True,
+                              timeout=timeout or CMD_TIMEOUT, cwd=str(HOME))
+    except FileNotFoundError as e:
+        # The tool isn't installed on this OS. Return a non-zero result rather
+        # than raising, so every caller degrades to its own graceful message
+        # instead of crashing.
+        return subprocess.CompletedProcess(cmd, 127, "", str(e))
 
 
 # --- open apps / websites --------------------------------------------------
@@ -84,22 +131,47 @@ _SAFE_APP = re.compile(r"^[A-Za-z0-9 ._+\-]{1,80}$")
 
 
 def open_app(name: str) -> str:
-    """Launch an application by name. Uses the Windows 'start' resolver, which
-    finds Store apps, PATH executables and registered app names."""
+    """Launch an application by name, the native way on each OS: the Windows
+    'start' resolver, macOS `open -a`, or a Linux launcher / PATH binary."""
     name = (name or "").strip()
     if not name:
         return "No app name given."
     if not _SAFE_APP.match(name):
         return ("I won't open an app with that name — it contains characters I "
                 "don't pass to the system. If you meant a real app, say its plain name.")
-    # `start "" <name>` asks the shell to resolve it the way the Run box does.
-    r = _run(f'start "" "{name}"', shell=True, timeout=15)
-    if r.returncode == 0:
-        return f"Opened {name}."
-    # Fall back to launching by bare token (e.g. notepad, calc).
+
+    if IS_WIN:
+        # `start "" <name>` asks the shell to resolve it the way the Run box does.
+        r = _run(f'start "" "{name}"', shell=True, timeout=15)
+        if r.returncode == 0:
+            return f"Opened {name}."
+        try:                                   # fall back to a bare token (notepad, calc)
+            subprocess.Popen(name, shell=True)
+            return f"Asked Windows to open {name}."
+        except Exception as e:
+            return f"Couldn't open {name}: {e}"
+
+    if IS_MAC:
+        # `open -a` finds apps by their display name in /Applications.
+        r = _run(["open", "-a", name], timeout=15)
+        if r.returncode == 0:
+            return f"Opened {name}."
+        return (f"Couldn't open '{name}' — I don't see an app by that name. "
+                f"{(r.stderr or '').strip()[:160]}")
+
+    # Linux: prefer a real launcher, then a PATH binary, then a .desktop id.
     try:
-        subprocess.Popen(name, shell=True)
-        return f"Asked Windows to open {name}."
+        if _has("gtk-launch"):
+            r = _run(["gtk-launch", name], timeout=15)
+            if r.returncode == 0:
+                return f"Opened {name}."
+        if _has(name):
+            subprocess.Popen([name])
+            return f"Opened {name}."
+        if _has("xdg-open"):
+            subprocess.Popen(["xdg-open", name])
+            return f"Asked the system to open {name}."
+        return f"Couldn't find an app called '{name}' on this system."
     except Exception as e:
         return f"Couldn't open {name}: {e}"
 
@@ -192,7 +264,7 @@ def open_file(path: str) -> str:
         return f"No such file: {path}"
     if p.is_dir():
         try:
-            os.startfile(str(p))          # opens the folder in Explorer
+            _open_default(str(p))         # opens the folder in the file manager
             return f"Opened folder {p.name}."
         except Exception as e:
             return f"Couldn't open folder {path}: {e}"
@@ -201,7 +273,7 @@ def open_file(path: str) -> str:
                 f"means running it. If you truly want to run it, ask me to run it and I'll "
                 f"read the command back to you first.")
     try:
-        os.startfile(str(p))              # Windows default-handler launch
+        _open_default(str(p))             # default-handler launch on any OS
         return f"Opened {p.name}."
     except Exception as e:
         return f"Couldn't open {path}: {e}"
@@ -218,6 +290,25 @@ def _ps(script: str, timeout: int = 15):
 def brightness(level=None, direction: str = "") -> str:
     """Set screen brightness 0–100, or nudge it up/down. Works on laptops /
     displays that expose WMI brightness; many desktop monitors don't."""
+    if IS_MAC:
+        # macOS has no no-admin CLI for backlight; be honest rather than pretend.
+        return _unsupported("change the screen brightness")
+    if IS_LINUX:
+        d = (direction or "").strip().lower()
+        if not _has("brightnessctl"):
+            return ("I can't set brightness on this Linux box — install 'brightnessctl' "
+                    "and I'll be able to (e.g. `sudo apt install brightnessctl`).")
+        if d in ("up", "increase", "raise"):
+            arg = "10%+"
+        elif d in ("down", "decrease", "lower"):
+            arg = "10%-"
+        else:
+            try:
+                arg = f"{max(0, min(100, int(level)))}%"
+            except (TypeError, ValueError):
+                return "Give me a brightness from 0 to 100, or say up/down."
+        r = _run(["brightnessctl", "set", arg], timeout=10)
+        return "Brightness adjusted." if r.returncode == 0 else "I couldn't change the brightness."
     d = (direction or "").strip().lower()
     if d in ("up", "down", "increase", "decrease", "lower", "raise"):
         step = 20 if d in ("up", "increase", "raise") else -20
@@ -251,6 +342,59 @@ def wifi(action: str, name: str = "") -> str:
     Turning the Wi-Fi radio itself on/off has no supported command-line path and
     isn't something I can do."""
     a = (action or "").strip().lower()
+
+    # --- Linux: nmcli (NetworkManager) is the clean, scriptable path ---------
+    if IS_LINUX:
+        if not _has("nmcli"):
+            return "I need 'nmcli' (NetworkManager) to manage Wi-Fi on this Linux system."
+        if a in ("list", "networks", "scan", "available"):
+            r = _run(["nmcli", "-t", "-f", "SSID", "dev", "wifi"], timeout=15)
+            ssids = [s for s in dict.fromkeys(
+                x.strip() for x in (r.stdout or "").splitlines()) if s]
+            return ("Networks in range:\n" + "\n".join("  " + s for s in ssids)
+                    if ssids else "No Wi-Fi networks in range (or the radio is off).")
+        if a in ("status", "current", "which"):
+            r = _run(["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"], timeout=10)
+            for ln in (r.stdout or "").splitlines():
+                if ln.startswith("yes:"):
+                    return f"Connected to {ln.split(':', 1)[1]}."
+            return "Wi-Fi is on but not connected to any network."
+        if a in ("disconnect", "leave"):
+            _run(["nmcli", "radio", "wifi", "off"], timeout=10)
+            _run(["nmcli", "radio", "wifi", "on"], timeout=10)
+            return "Reset the Wi-Fi connection."
+        if a in ("connect", "join", "switch"):
+            n = (name or "").strip()
+            if not n:
+                return "Which network should I join?"
+            r = _run(["nmcli", "dev", "wifi", "connect", n], timeout=20)
+            return (f"Connecting to {n}." if r.returncode == 0
+                    else f"Couldn't connect to {n}: {(r.stderr or r.stdout or '').strip()[:200]}")
+        return f"Unknown Wi-Fi action '{action}'. I can: list, status, connect, disconnect."
+
+    # --- macOS: networksetup covers status + connect cleanly -----------------
+    if IS_MAC:
+        dev = "en0"
+        if a in ("status", "current", "which"):
+            r = _run(["networksetup", "-getairportnetwork", dev], timeout=10)
+            out = (r.stdout or "").strip()
+            return out or "I couldn't read the Wi-Fi status."
+        if a in ("connect", "join", "switch"):
+            n = (name or "").strip()
+            if not n:
+                return "Which network should I join?"
+            r = _run(["networksetup", "-setairportnetwork", dev, n], timeout=20)
+            out = (r.stdout or "").strip()
+            # networksetup prints nothing on success, an error line on failure.
+            return f"Couldn't join {n}: {out}" if out else f"Connecting to {n}."
+        if a in ("disconnect", "leave"):
+            _run(["networksetup", "-setairportpower", dev, "off"], timeout=10)
+            _run(["networksetup", "-setairportpower", dev, "on"], timeout=10)
+            return "Reset the Wi-Fi connection."
+        if a in ("list", "networks", "scan", "available"):
+            return ("Modern macOS blocks scanning nearby networks from scripts. "
+                    "I can tell you the current network (status) and join a named one.")
+        return f"Unknown Wi-Fi action '{action}'. I can: status, connect, disconnect."
 
     if a in ("list", "networks", "scan", "available"):
         r = _run('netsh wlan show networks', shell=True, timeout=15)
@@ -313,6 +457,8 @@ _POWER_ALIAS = {
 def power_mode(mode: str) -> str:
     """Switch the Windows power plan. 'saver' turns on the energy-saving plan,
     'balanced' returns to normal, 'performance' favours speed."""
+    if not IS_WIN:
+        return _unsupported("switch the power plan")
     m = (mode or "").strip().lower()
     m = _POWER_ALIAS.get(m, m)
     if m not in _POWER:
@@ -336,6 +482,8 @@ def mouse_control(action: str, x=None, y=None, amount=None) -> str:
     """Move and click the mouse. Coordinates are absolute screen pixels with
     (0,0) at the top-left. NOTE: this drives the pointer blind — it can't see
     what's on screen, so it clicks wherever it's told."""
+    if not IS_WIN:
+        return _unsupported("drive the mouse")
     import ctypes
     from ctypes import wintypes
     u = ctypes.windll.user32
@@ -473,6 +621,10 @@ def _list_monitors():
     """Every connected monitor's bounding box in virtual-desktop pixels,
     primary first (the primary always contains the origin 0,0), then left-to-
     right. Returns a list of (left, top, right, bottom)."""
+    if not IS_WIN:
+        # Per-monitor enumeration here is a Win32 API. Elsewhere we return [] and
+        # screenshot() falls back to a single full-desktop grab via Pillow.
+        return []
     import ctypes
     from ctypes import wintypes
     user32 = ctypes.windll.user32
@@ -506,6 +658,9 @@ def list_monitors() -> str:
     """How many screens are connected and how big each one is."""
     mons = _list_monitors()
     if not mons:
+        if not IS_WIN:
+            return ("I can capture the screen here, but per-monitor listing is only "
+                    "wired up on Windows — on " + OS_NAME + " I grab the main display.")
         return "No monitors detected (or running headless)."
     out = [f"{len(mons)} monitor(s) connected:"]
     for i, b in enumerate(mons):
@@ -628,29 +783,85 @@ def reset_watch():
 # --- media keys + clipboard ------------------------------------------------
 
 def media(action: str) -> str:
-    """Play/pause/skip whatever is playing (Spotify, YouTube, any media app) via
-    the keyboard media keys."""
-    import ctypes
-    u = ctypes.windll.user32
-    codes = {"play": 0xB3, "pause": 0xB3, "playpause": 0xB3, "play_pause": 0xB3,
-             "toggle": 0xB3, "next": 0xB0, "skip": 0xB0, "forward": 0xB0,
-             "previous": 0xB1, "prev": 0xB1, "back": 0xB1, "stop": 0xB2}
+    """Play/pause/skip whatever is playing (Spotify, YouTube, any media app).
+    Uses the media keys on Windows, `playerctl` on Linux, and AppleScript on
+    macOS."""
     a = (action or "").strip().lower().replace(" ", "_")
-    vk = codes.get(a)
-    if vk is None:
+    canon = {"play": "playpause", "pause": "playpause", "toggle": "playpause",
+             "play_pause": "playpause", "playpause": "playpause",
+             "next": "next", "skip": "next", "forward": "next",
+             "previous": "previous", "prev": "previous", "back": "previous",
+             "stop": "stop"}.get(a)
+    if canon is None:
         return f"Unknown media action '{action}'. Use: play/pause, next, previous, stop."
-    u.keybd_event(vk, 0, 0, 0)
-    u.keybd_event(vk, 0, 0x0002, 0)
-    label = {0xB3: "play/pause", 0xB0: "next track", 0xB1: "previous track", 0xB2: "stop"}[vk]
-    return f"Sent {label}."
+
+    if IS_WIN:
+        import ctypes
+        u = ctypes.windll.user32
+        vk = {"playpause": 0xB3, "next": 0xB0, "previous": 0xB1, "stop": 0xB2}[canon]
+        u.keybd_event(vk, 0, 0, 0)
+        u.keybd_event(vk, 0, 0x0002, 0)
+        return f"Sent {canon.replace('playpause', 'play/pause')}."
+
+    if IS_LINUX:
+        if not _has("playerctl"):
+            return ("I need 'playerctl' to control playback on this Linux system "
+                    "(e.g. `sudo apt install playerctl`).")
+        cmd = {"playpause": "play-pause", "next": "next",
+               "previous": "previous", "stop": "stop"}[canon]
+        r = _run(["playerctl", cmd], timeout=10)
+        return (f"Sent {canon.replace('playpause', 'play/pause')}."
+                if r.returncode == 0 else "No player is running to control.")
+
+    if IS_MAC:
+        # AppleScript against Spotify, then the Music app — whichever is running.
+        act = {"playpause": "playpause", "next": "next track",
+               "previous": "previous track", "stop": "pause"}[canon]
+        for app in ("Spotify", "Music"):
+            script = (f'tell application "System Events" to (name of processes) contains "{app}"')
+            chk = _run(["osascript", "-e", script], timeout=8)
+            if (chk.stdout or "").strip().lower() == "true":
+                _run(["osascript", "-e", f'tell application "{app}" to {act}'], timeout=8)
+                return f"Sent {canon.replace('playpause', 'play/pause')} to {app}."
+        return "Neither Spotify nor Music is running to control."
+
+    return _unsupported("control media playback")
+
+
+def _clip_tools():
+    """(read_cmd, write_cmd) for this OS's clipboard, or (None, None). read_cmd
+    is run and its stdout returned; write_cmd is fed the text on stdin."""
+    if IS_WIN:
+        ps = ["powershell", "-NoProfile", "-NonInteractive", "-Command"]
+        return (ps + ["Get-Clipboard -Raw"], ps + ["$input | Set-Clipboard"])
+    if IS_MAC:
+        return (["pbpaste"], ["pbcopy"])
+    # Linux: Wayland first (wl-clipboard), then X11 (xclip / xsel).
+    if _has("wl-paste") and _has("wl-copy"):
+        return (["wl-paste"], ["wl-copy"])
+    if _has("xclip"):
+        return (["xclip", "-selection", "clipboard", "-o"],
+                ["xclip", "-selection", "clipboard"])
+    if _has("xsel"):
+        return (["xsel", "--clipboard", "--output"], ["xsel", "--clipboard", "--input"])
+    return (None, None)
 
 
 def clipboard(action: str = "read", text: str = "") -> str:
-    """Read or write the Windows clipboard. action 'read' returns its text;
-    'write' puts the given text on it."""
+    """Read or write the system clipboard. action 'read' returns its text;
+    'write' puts the given text on it. Uses the native clipboard tool on each
+    OS (PowerShell on Windows, pbcopy/pbpaste on macOS, wl-clipboard/xclip/xsel
+    on Linux)."""
     a = (action or "read").strip().lower()
+    read_cmd, write_cmd = _clip_tools()
+    if not read_cmd:
+        return ("I don't have a clipboard tool on this Linux system — install one "
+                "(e.g. 'xclip', 'xsel', or 'wl-clipboard') and I'll be able to.")
     if a in ("read", "get", "paste", "what"):
-        r = _ps("Get-Clipboard -Raw")
+        try:
+            r = subprocess.run(read_cmd, capture_output=True, text=True, timeout=10)
+        except Exception as e:
+            return f"Couldn't read the clipboard: {e}"
         out = (r.stdout or "").strip()
         if not out:
             return "The clipboard is empty (or holds something that isn't text)."
@@ -660,8 +871,7 @@ def clipboard(action: str = "read", text: str = "") -> str:
         if not t:
             return "Give me text to put on the clipboard."
         try:
-            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "$input | Set-Clipboard"],
-                           input=t, capture_output=True, text=True, timeout=10)
+            subprocess.run(write_cmd, input=t, capture_output=True, text=True, timeout=10)
         except Exception as e:
             return f"Couldn't write the clipboard: {e}"
         return f"Copied to the clipboard: {t[:80]}" + ("…" if len(t) > 80 else "")
@@ -685,6 +895,8 @@ def keyboard(text: str = "", key: str = "") -> str:
     goes wherever the cursor is — so to type into an app, that app (a text box,
     the address bar…) must be focused first. It types blind; it does not move
     focus itself."""
+    if not IS_WIN:
+        return _unsupported("type or press keys")
     import ctypes
     u = ctypes.windll.user32
     KEYEVENTF_UNICODE, KEYEVENTF_KEYUP = 0x0004, 0x0002
@@ -720,18 +932,67 @@ def keyboard(text: str = "", key: str = "") -> str:
 
 # --- system control --------------------------------------------------------
 
+def _linux_sysctl(a: str):
+    """Best-effort lock/sleep/volume on Linux, picking whatever tool is present."""
+    if a == "lock":
+        if _has("loginctl"):
+            return ["loginctl", "lock-session"]
+        if _has("xdg-screensaver"):
+            return ["xdg-screensaver", "lock"]
+        return None
+    if a == "sleep":
+        return ["systemctl", "suspend"] if _has("systemctl") else None
+    # volume / mute — PulseAudio/PipeWire (pactl) first, then ALSA (amixer)
+    if _has("pactl"):
+        sink = "@DEFAULT_SINK@"
+        return {"volume_up":   ["pactl", "set-sink-volume", sink, "+10%"],
+                "volume_down": ["pactl", "set-sink-volume", sink, "-10%"],
+                "mute":        ["pactl", "set-sink-mute", sink, "toggle"]}[a]
+    if _has("amixer"):
+        return {"volume_up":   ["amixer", "set", "Master", "10%+"],
+                "volume_down": ["amixer", "set", "Master", "10%-"],
+                "mute":        ["amixer", "set", "Master", "toggle"]}[a]
+    return None
+
+
 def system_control(action: str) -> str:
     a = (action or "").strip().lower()
-    cmds = {
-        "lock":       'rundll32.exe user32.dll,LockWorkStation',
-        "sleep":      'rundll32.exe powrprof.dll,SetSuspendState 0,1,0',
-        "volume_up":  'powershell -c "(New-Object -ComObject WScript.Shell).SendKeys([char]175)"',
-        "volume_down":'powershell -c "(New-Object -ComObject WScript.Shell).SendKeys([char]174)"',
-        "mute":       'powershell -c "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"',
-    }
-    if a not in cmds:
-        return f"Unknown action '{action}'. Known: {', '.join(cmds)}."
-    _run(cmds[a], shell=True, timeout=10)
+    known = ("lock", "sleep", "volume_up", "volume_down", "mute")
+    if a not in known:
+        return f"Unknown action '{action}'. Known: {', '.join(known)}."
+
+    if IS_WIN:
+        cmds = {
+            "lock":       'rundll32.exe user32.dll,LockWorkStation',
+            "sleep":      'rundll32.exe powrprof.dll,SetSuspendState 0,1,0',
+            "volume_up":  'powershell -c "(New-Object -ComObject WScript.Shell).SendKeys([char]175)"',
+            "volume_down":'powershell -c "(New-Object -ComObject WScript.Shell).SendKeys([char]174)"',
+            "mute":       'powershell -c "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"',
+        }
+        _run(cmds[a], shell=True, timeout=10)
+        return f"Done: {a.replace('_', ' ')}."
+
+    if IS_MAC:
+        vol = "set volume output volume ((output volume of (get volume settings)) %s 10)"
+        scripts = {
+            "lock":       'tell application "System Events" to keystroke "q" using {control down, command down}',
+            "sleep":      None,   # handled below via pmset
+            "volume_up":   vol % "+",
+            "volume_down": vol % "-",
+            "mute":       "set volume output muted (not (output muted of (get volume settings)))",
+        }
+        if a == "sleep":
+            _run(["pmset", "sleepnow"], timeout=10)
+            return "Done: sleep."
+        _run(["osascript", "-e", scripts[a]], timeout=10)
+        return f"Done: {a.replace('_', ' ')}."
+
+    cmd = _linux_sysctl(a)
+    if not cmd:
+        return (f"I couldn't {a.replace('_', ' ')} on this Linux system — the usual "
+                f"tool for it isn't installed (needs loginctl/systemctl for lock/sleep, "
+                f"or pactl/amixer for volume).")
+    _run(cmd, timeout=10)
     return f"Done: {a.replace('_', ' ')}."
 
 

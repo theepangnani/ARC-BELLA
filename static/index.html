@@ -291,21 +291,24 @@
   #personaBtn.friend { color: var(--void); background: #8affd4; border-color: #8affd4; }
   #personaBtn.coach { color: var(--void); background: #ffb454; border-color: #ffb454; }
 
-  /* Night mode: a chill LED bias-light vibe — a soft glow of ambient colour
-     around the edges (like an LED strip behind a screen), plus a gentle dim.
-     No murky sepia; the centre where the content lives stays clean. */
-  html.night body { filter: brightness(0.9) saturate(1.06); }
+  /* Night mode: a chill RGB bias-light vibe — soft pools of colour glow around
+     the edges (like an RGB LED strip behind the screen) and slowly drift through
+     the whole spectrum. Smooth and relaxed, never harsh. The centre where the
+     content lives stays clean, and it just breathes. */
+  html.night body { filter: brightness(0.95) saturate(1.15); }
   html.night::after {
     content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
     mix-blend-mode: screen;
     background:
-      radial-gradient(110% 55% at 50% -12%, rgba(128, 92, 255, 0.18), transparent 55%),
-      radial-gradient(110% 55% at 50% 112%, rgba(0, 210, 255, 0.14), transparent 55%),
-      radial-gradient(55% 45% at 4% 50%, rgba(255, 120, 200, 0.06), transparent 60%),
-      radial-gradient(55% 45% at 96% 50%, rgba(90, 255, 212, 0.06), transparent 60%);
-    animation: nightGlow 14s ease-in-out infinite alternate;
+      radial-gradient(130% 65% at 50% -14%, rgba(140, 80, 255, 0.42), transparent 62%),
+      radial-gradient(130% 65% at 50% 114%, rgba(0, 210, 255, 0.36), transparent 62%),
+      radial-gradient(75% 65% at -6% 50%, rgba(255, 70, 190, 0.30), transparent 66%),
+      radial-gradient(75% 65% at 106% 50%, rgba(70, 255, 170, 0.30), transparent 66%);
+    animation: nightRGB 30s linear infinite, nightGlow 7s ease-in-out infinite alternate;
   }
-  @keyframes nightGlow { from { opacity: .8; } to { opacity: 1; } }
+  /* Slowly rotate every glow colour through the full RGB spectrum. */
+  @keyframes nightRGB { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+  @keyframes nightGlow { from { opacity: .72; } to { opacity: .95; } }
   #micFixBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
@@ -1135,6 +1138,15 @@ Everything you say goes through a speech synthesiser. This shapes everything:
   e.g. [[canceltimer: tea]] or [[canceltimer: all]]. Omitting the label cancels the most recent.
   All these markers are stripped before anything is spoken, so ALSO confirm in words — "Ten minutes on the tea, sir.", "Alarm set for seven.", "Cancelled." Timers and alarms currently set are listed for you below; report on them when asked. (These live in this page — if the user closes it they stop, so for anything they truly must not miss, prefer set_reminder, which persists and fires on its own.)
 - Hold the thread of this conversation and follow it across turns.
+
+=== VERIFY YOUR WORK ===
+When you have just DONE something on the computer that has a visible on-screen result — opened an app, clicked, changed a setting, launched something — and Live screen is available to you, take a screenshot with the screenshot tool and actually look at it to confirm it worked BEFORE you tell the user it's done. If the screenshot shows it didn't work, try once more, then say plainly what happened. Don't claim something succeeded that you haven't confirmed. (This only applies to actions with a visible result on this desktop; a spoken answer, a reminder, or an email needs no screenshot.)
+
+=== SENSITIVE DATA ===
+Treat the user's secrets with care, and NEVER destroy data on your own.
+- Never read secrets aloud or repeat them back: passwords, API keys, card or account numbers, one-time codes, private addresses. If asked to handle one, do so without reading it out.
+- Never copy a secret into a note, into memory, or anywhere it would persist, and never show one on the second screen — redact it (e.g. "sk-…9f2") if you must refer to it.
+- If you notice something sensitive left exposed on screen or in a file, you may quietly point it out and offer to close, hide, or remove it — but NEVER delete, overwrite, or send anything on your own. Deletion is irreversible: it only ever happens after the user clearly says yes to that specific thing, one item at a time. When in doubt, ask; never guess and destroy.
 
 === STAYING QUIET ===
 You are often left listening while someone thinks aloud, talks to somebody else, or reads something out. Answering those is worse than useless — it interrupts.
@@ -3550,7 +3562,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       }
     } catch (err) {
       cue("error");
-      addEntry("err", "SYSTEM", "Link failure — " + err.message);
+      // "Failed to fetch" is the browser's cryptic word for "couldn't reach the
+      // server" — usually a momentary drop (server restart, network blip). Say
+      // that plainly instead of leaking the raw error.
+      const net = /failed to fetch|networkerror|load failed/i.test(err.message || "");
+      addEntry("err", "SYSTEM", net
+        ? "Couldn't reach ARC — the connection dropped for a moment. Try again."
+        : "Link failure — " + err.message);
       setMode("standby");
       speak("I'm afraid the link is down, sir.");
     } finally {
@@ -3715,9 +3733,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   ----------------------------------------------- */
   function cue(kind) {
     if (!el.cuesOn.checked || !state.audioCtx) return;
-    // Night mode: silence the mic-recovery / heard-you / sent / error chirps —
-    // keep only the gentle "done" chime that goes with a reply or a timer.
-    if (nightMode && kind !== "done") return;
+    // Night mode: silence EVERY interaction chirp — wake, sent, done, error — so
+    // ARC only ever speaks its reply. No beeps at all; just the voice.
+    if (nightMode) return;
     try {
       const ctx = state.audioCtx;
       if (ctx.state === "suspended") ctx.resume();
@@ -3834,9 +3852,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
 
   /* --- night mode -------------------------------------------------------
-     A quiet mode: cue() silences every chirp except the "done" chime, so the
-     mic reconnecting / heard-you / sent / error beeps go away and you're left
-     with spoken replies (and the timer chime) only. Persists. */
+     A quiet, chill mode: cue() silences EVERY chirp — wake / sent / done / error
+     — so all the beeps go away and you're left with spoken replies only, under a
+     warm-dim ambient glow that's easy on the eyes in the dark. Persists. */
   let nightMode = false;
   const nightBtn = document.getElementById("nightBtn");
   function applyNight(on) {
@@ -4606,6 +4624,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // editIdx: null = not editing; -1 = adding a new ticker; >=0 = replacing that row.
     let editIdx = null;
     let lastQuotes = [];
+    let everOk = false;                       // have we EVER gotten a good fetch?
 
     function save() {
       try { localStorage.setItem("arc.tickers", JSON.stringify(tickers)); } catch (_) {}
@@ -4638,7 +4657,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         '<span class="st-add" data-add="1" title="add a stock">+</span></div>';
       const q = lastQuotes;
       if (!q.length && editIdx === null) {
-        html += '<div class="st-row" data-i="0"><span class="st-sym">unavailable</span></div>';
+        // Before the first good fetch, or while reconnecting, say "connecting…"
+        // rather than the alarming "unavailable". Only call it unavailable once
+        // we've actually reached the server and it genuinely returned nothing.
+        const msg = everOk ? "unavailable" : "connecting…";
+        html += '<div class="st-row" data-i="0"><span class="st-sym">' + msg + '</span></div>';
       }
       q.forEach((s, i) => {
         const price = s.price >= 1000 ? Math.round(s.price).toLocaleString()
@@ -4699,12 +4722,26 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       render();
     });
 
+    let retryTimer = null;
     async function load() {
+      if (!tickers.length) { lastQuotes = []; if (editIdx === null) render(); return; }
       try {
-        const d = await (await fetch("/api/stocks?symbols=" +
-          encodeURIComponent(tickers.join(",")))).json();
-        lastQuotes = (d && d.quotes) || [];
-      } catch (_) { lastQuotes = []; }
+        const r = await fetch("/api/stocks?symbols=" +
+          encodeURIComponent(tickers.join(",")));
+        if (!r.ok) throw new Error("http " + r.status);
+        const d = await r.json();
+        const quotes = (d && d.quotes) || [];
+        everOk = true;
+        // Only overwrite when we actually got quotes. A transient blip (server
+        // restart, tunnel drop) that returns nothing must NOT wipe the panel to
+        // "unavailable" — keep the last good prices on screen and heal quietly.
+        if (quotes.length) lastQuotes = quotes;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      } catch (_) {
+        // Don't clobber lastQuotes; retry soon instead of waiting the full
+        // refresh interval, so the panel recovers on its own after an outage.
+        if (!retryTimer) retryTimer = setTimeout(() => { retryTimer = null; load(); }, 6000);
+      }
       if (editIdx === null) render();        // don't clobber an open editor
     }
 

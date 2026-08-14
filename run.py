@@ -653,10 +653,18 @@ async function pollBoard(){
 }
 setInterval(pollBoard,2000); pollBoard();
 
-let tickers;
-try{tickers=JSON.parse(localStorage.getItem("arc.tickers")||"null");}catch(_){}
-if(!Array.isArray(tickers)||!tickers.length) tickers=["AAPL","TSLA","NVDA","BTC-USD"];
+// Read the watchlist fresh each time: the main HUD writes arc.tickers when you
+// add/remove a market, and this second-screen window must pick that up rather
+// than hold the snapshot it had at load (which is why a just-added ticker never
+// appeared here before).
+function readTickers(){
+  let t;
+  try{t=JSON.parse(localStorage.getItem("arc.tickers")||"null");}catch(_){}
+  return (Array.isArray(t)&&t.length)?t:["AAPL","TSLA","NVDA","BTC-USD"];
+}
+let tickers=readTickers();
 async function pollMkts(){
+  tickers=readTickers();
   try{
     const d=await (await fetch("/api/stocks?symbols="+encodeURIComponent(tickers.join(",")))).json();
     const q=(d&&d.quotes)||[]; let html="";
@@ -672,6 +680,9 @@ async function pollMkts(){
   }catch(_){}
 }
 setInterval(pollMkts,60000); pollMkts();
+// Same-origin windows get a 'storage' event the instant the main HUD changes the
+// watchlist, so an added/removed market shows here immediately, not up to 60s later.
+window.addEventListener("storage",function(e){ if(!e||e.key===null||e.key==="arc.tickers") pollMkts(); });
 
 // F or double-click toggles full screen for a clean second-monitor view.
 function toggleFs(){
@@ -1351,6 +1362,10 @@ async def require_login(request: Request, call_next):
         public = (
             path in ("/api/login", "/api/logout", "/favicon.ico",
                      "/sw.js", "/manifest.webmanifest")
+            # Homepage, privacy policy and terms must be reachable WITHOUT the
+            # passphrase — Google's OAuth verification crawler fetches them and
+            # they are the public face of the app.
+            or path in ("/home", "/privacy", "/terms")
             or path.startswith("/static/icon")
             or path in ("/static/arc-logo.svg", "/static/arc.ico")
         )
@@ -1385,6 +1400,25 @@ async def index(request: Request):
     if not authed(request):
         return HTMLResponse(LOGIN_HTML, status_code=401)
     return FileResponse(ROOT / "static" / "index.html", headers=_NO_CACHE)
+
+
+@app.get("/home")
+async def home_page():
+    """Public homepage — describes ARC. Reachable without the passphrase so
+    Google's OAuth verification can crawl it."""
+    return FileResponse(ROOT / "static" / "home.html", headers=_NO_CACHE)
+
+
+@app.get("/privacy")
+async def privacy_page():
+    """Public privacy policy — required for Google OAuth verification."""
+    return FileResponse(ROOT / "static" / "privacy.html", headers=_NO_CACHE)
+
+
+@app.get("/terms")
+async def terms_page():
+    """Public terms of service — linked from the consent screen."""
+    return FileResponse(ROOT / "static" / "terms.html", headers=_NO_CACHE)
 
 
 @app.get("/display")

@@ -1,0 +1,96 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARC — a private, self-hosted voice assistant</title>
+<meta name="description" content="ARC (Ambient Response Core) is a self-hosted, voice-first personal assistant. With your permission it manages your Google Calendar, Gmail, Contacts and Drive, watches your screen on request, and tracks the markets — all running on your own machine.">
+<style>
+*{box-sizing:border-box}
+:root{--bg:#04070c;--ice:#5fd9ff;--ink:#dbe9f5;--dim:#5a86a0;--deep:#1c6d8f;
+ --line:#12293c;--up:#8affd4;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--mono);
+ padding:0 20px 80px;overflow-x:hidden;position:relative;line-height:1.6}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+ background:radial-gradient(60% 45% at 50% 0%,rgba(95,217,255,.14),transparent 60%),
+   radial-gradient(40% 40% at 50% 100%,rgba(90,255,212,.05),transparent 60%)}
+body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.4;
+ background-image:linear-gradient(rgba(95,217,255,.05) 1px,transparent 1px),
+   linear-gradient(90deg,rgba(95,217,255,.05) 1px,transparent 1px);
+ background-size:44px 44px;mask-image:radial-gradient(70% 55% at 50% 25%,#000,transparent 75%)}
+.wrap{position:relative;z-index:1;max-width:820px;margin:0 auto}
+header{text-align:center;padding:70px 0 20px}
+.ring{width:84px;height:84px;margin:0 auto 20px;display:block;
+ filter:drop-shadow(0 0 12px rgba(95,217,255,.55))}
+.ring .r1{animation:spin 18s linear infinite;transform-origin:50% 50%}
+.ring .r2{animation:spin 26s linear infinite reverse;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+h1{font-size:32px;letter-spacing:.5em;margin:0 0 8px;font-weight:400;text-indent:.5em;
+ color:#eaf6ff;text-shadow:0 0 18px rgba(95,217,255,.35)}
+.sub{color:var(--deep);font-size:10px;letter-spacing:.34em;text-transform:uppercase;margin:0 0 20px}
+.lede{color:#bcd6e6;font-size:16px;max-width:600px;margin:0 auto 26px}
+.cta{display:inline-block;padding:13px 26px;background:linear-gradient(180deg,#7fe4ff,#43caf0);
+ color:#04121a;border-radius:10px;font-weight:600;font-size:12px;letter-spacing:.2em;
+ text-transform:uppercase;text-decoration:none}
+.cta:hover{filter:brightness(1.08)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:44px 0}
+.card{border:1px solid var(--line);background:rgba(9,19,32,.5);border-radius:14px;padding:20px}
+.card h3{margin:0 0 8px;font-size:14px;color:#eaf6ff;letter-spacing:.03em}
+.card p{margin:0;color:#9fc0d4;font-size:13px}
+h2{font-size:15px;color:var(--ice);letter-spacing:.06em;text-transform:uppercase;
+ margin:40px 0 12px;font-weight:600;text-align:center}
+.perm{max-width:680px;margin:0 auto}
+.perm li{color:#bcd6e6;margin:0 0 9px;font-size:13.5px}
+.perm strong{color:#eaf6ff}
+.note{text-align:center;color:#9fc0d4;font-size:13.5px;max-width:640px;margin:18px auto 0}
+.foot{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);text-align:center;
+ color:var(--dim);font-size:12px}
+.foot a{color:var(--ice);text-decoration:none;margin:0 8px}
+.foot a:hover{filter:brightness(1.15)}
+</style></head><body>
+<div class="wrap">
+  <header>
+    <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+      <g fill="none" stroke="#5fd9ff">
+        <circle class="r1" cx="50" cy="50" r="44" stroke-width="1.5" stroke-dasharray="6 10" opacity=".7"/>
+        <circle class="r2" cx="50" cy="50" r="34" stroke-width="1.5" stroke-dasharray="3 8" opacity=".5"/>
+        <circle cx="50" cy="50" r="24" stroke-width="1" opacity=".35"/></g>
+      <circle cx="50" cy="50" r="9" fill="#5fd9ff"/>
+    </svg>
+    <h1>ARC</h1>
+    <div class="sub">Ambient Response Core</div>
+    <p class="lede">A private, voice-first AI assistant that runs on your own
+       machine. Say “Bella,” and it manages your calendar and mail, answers
+       questions about what’s on your screen, and keeps an eye on the markets —
+       only ever with your permission.</p>
+    <a class="cta" href="/">Enter ARC →</a>
+  </header>
+
+  <div class="grid">
+    <div class="card"><h3>🎙 Voice-first</h3><p>Wake it with a word and talk
+      naturally. ARC listens, understands, and replies out loud.</p></div>
+    <div class="card"><h3>📅 Calendar &amp; mail</h3><p>Reads your schedule and
+      inbox, drafts replies, and books events — when you ask it to.</p></div>
+    <div class="card"><h3>🖥 Sees your screen</h3><p>Turn on Live screen and ask
+      about whatever you’re looking at. Off by default.</p></div>
+    <div class="card"><h3>🔒 Self-hosted</h3><p>Runs on your own computer. Your
+      data stays with you — not pooled on someone else’s server.</p></div>
+  </div>
+
+  <h2>What it asks permission for</h2>
+  <ul class="perm">
+    <li><strong>Google Calendar</strong> — read your schedule and create or update events you ask for.</li>
+    <li><strong>Gmail</strong> — read and summarise mail you ask about, and draft or send messages on request. It cannot delete mail.</li>
+    <li><strong>Google Contacts</strong> (read-only) — recognise the people you mention.</li>
+    <li><strong>Google Drive</strong> (read-only) — find and read files you ask about.</li>
+  </ul>
+  <p class="note">You grant each of these on Google’s own consent screen, and can
+     revoke them any time from your Google Account or ARC’s Disconnect button.
+     ARC never sells your data, never uses it for ads, and never uses it to train
+     any AI model. See the <a href="/privacy" style="color:var(--ice)">Privacy Policy</a>
+     for details.</p>
+
+  <div class="foot">
+    <a href="/">Enter ARC</a> · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a>
+    <div style="margin-top:12px">Contact: <a href="mailto:theepang@gmail.com">theepang@gmail.com</a></div>
+  </div>
+</div>
+</body></html>

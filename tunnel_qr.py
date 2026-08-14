@@ -41,7 +41,13 @@ def show_qr(url: str) -> None:
     # ...and a PNG, opened in the default image viewer as a fallback.
     try:
         qr.save(str(QR_PNG), scale=8, border=3)
-        os.startfile(str(QR_PNG))  # Windows
+        # Open in the default image viewer on whatever OS this is.
+        if sys.platform.startswith("win"):
+            os.startfile(str(QR_PNG))                       # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(QR_PNG)])
+        else:
+            subprocess.Popen(["xdg-open", str(QR_PNG)])
     except Exception:
         pass
     print("\n  " + "-" * 66)
