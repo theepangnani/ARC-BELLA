@@ -12,6 +12,25 @@ function PortUp($p) {
   try { $c.Connect('127.0.0.1', $p); $c.Close(); return $true } catch { return $false }
 }
 
+# Pick a REAL Python — never the Microsoft Store alias in WindowsApps (a stub
+# that can't run the server). Prefer pythonw (no console), then python, and
+# always include the pythoncore install even if it isn't on PATH.
+function Find-Python {
+  # Prefer the CONCRETE versioned install first: the Python-manager "bin" shim
+  # and the Store alias both misbehave when Start-Process launches them detached
+  # (the shim's real child gets orphaned and dies), so a double-click leaves
+  # nothing running. The real pythoncore exe has no such indirection.
+  $cands = @()
+  $cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\pythonw.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
+  $cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\python.exe"  -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
+  $cands += (Get-Command pythonw.exe -All -ErrorAction SilentlyContinue | ForEach-Object Source)
+  $cands += (Get-Command python.exe  -All -ErrorAction SilentlyContinue | ForEach-Object Source)
+  foreach ($c in $cands) {
+    if ($c -and (Test-Path $c) -and $c -notmatch '\\WindowsApps\\' -and $c -notmatch '\\Python\\bin\\') { return $c }
+  }
+  return 'python'
+}
+
 Set-Location $root
 
 $browser = @(
@@ -33,7 +52,6 @@ if (PortUp $port) {
   }
 } else {
   # Start the core; run.py opens the app window itself once it's listening.
-  $py = (Get-Command pythonw -ErrorAction SilentlyContinue).Source
-  if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
+  $py = Find-Python
   Start-Process -FilePath $py -ArgumentList 'run.py' -WorkingDirectory $root -WindowStyle Hidden
 }
