@@ -290,6 +290,14 @@
   #personaBtn:hover { color: var(--ice); }
   #personaBtn.friend { color: var(--void); background: #8affd4; border-color: #8affd4; }
   #personaBtn.coach { color: var(--void); background: #ffb454; border-color: #ffb454; }
+  /* brain switch — same shape as the personality button; lights amber on Fast */
+  #modelBtn {
+    width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  #modelBtn:hover { color: var(--ice); }
+  #modelBtn.fast { color: var(--void); background: #ffb454; border-color: #ffb454; }
 
   /* Night mode: a chill RGB bias-light vibe — soft pools of colour glow around
      the edges (like an RGB LED strip behind the screen) and slowly drift through
@@ -655,11 +663,52 @@
 
   /* narrow windows / tablets: single column, core on top */
   @media (max-width: 900px) {
-    .shell { grid-template-columns: 1fr; gap: 18px; padding: 16px; }
+    /* minmax(0,1fr), not a bare 1fr — a bare 1fr keeps an auto (min-content)
+       minimum, so a wide child (the core, a long option) stretches the column
+       past the viewport and gets clipped. minmax(0,…) lets it shrink to fit. */
+    .shell { grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 16px; }
     .col.left { flex-direction: column; }
+    /* one natural page scroll on mobile, not a fixed-height scroll box per column */
+    .col { max-height: none; overflow: visible; }
     .stage { order: -1; }
     .core-wrap { width: min(340px, 70vw); }
     .log { max-height: 300px; }
+  }
+
+  /* phones: tighten the HUD frame, shrink the wordmark, and make every control
+     a finger-sized target. The three-rail desktop chrome is decorative here, so
+     trim it rather than cram it. */
+  @media (max-width: 560px) {
+    .frame { inset: 6px; }
+    .frame::before, .frame::after, .corner-tr, .corner-bl { width: 20px; height: 20px; }
+    .sweep, .scan { display: none; }          /* drop the heaviest ambient layers on mobile GPUs */
+
+    .shell { padding: 10px 11px 20px; gap: 13px; }
+    .brandbar { padding: 2px 6px 9px 6px; gap: 9px; flex-wrap: wrap; }
+    .brandbar h1 { font-size: 15px; letter-spacing: .2em; }
+    .brandbar .sub { display: none; }
+    .brandbar .clock { margin-left: auto; font-size: 10px; }
+    .logo { width: 26px; height: 26px; }
+
+    .core-wrap { width: min(300px, 78vw); }
+    .log { max-height: 44vh; }
+
+    /* the config column is a stack of buttons/toggles — size them for thumbs */
+    .panel { padding: 13px; }
+    .panel button, .panel .abtn, .panel .toggle, .panel input[type="text"],
+    .panel input[type="time"] { min-height: 42px; }
+    .panel button, .panel .abtn { font-size: 11px; padding: 11px 6px; }
+    #personaBtn, #modelBtn { font-size: 10.5px; padding: 12px 6px; }
+
+    /* readout tables stay legible without shrinking to a smear */
+    .panel .row { font-size: 11px; }
+  }
+
+  /* very small phones: one more notch tighter so nothing clips the frame */
+  @media (max-width: 380px) {
+    .brandbar h1 { font-size: 13px; letter-spacing: .14em; }
+    .core-wrap { width: min(260px, 82vw); }
+    .shell { padding: 8px 8px 18px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -955,6 +1004,7 @@
       <button id="googleBtn" title="Connect your own Google account so ARC reads YOUR Gmail, Calendar and Drive — not anyone else's.">Connect Google</button>
       <div id="googleStatus" class="gstatus"></div>
       <button id="personaBtn" title="Switch ARC's personality: composed butler, warm best friend, or upbeat coach">Personality: ARC</button>
+      <button id="modelBtn" title="Switch ARC's brain: Smart (Sonnet — more considered) or Fast (Haiku — snappier replies). Takes effect on your next message; saved on this device.">Brain: Smart</button>
       <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
       <button id="liveScreenBtn" title="Let ARC see your current screen with every message (desktop only). Nothing is saved.">Live screen: off</button>
       <button id="watchBtn" title="Watch mode: ARC keeps an eye on your screen and only speaks up when something meaningful changes (desktop only). Nothing is saved.">Watch screen: off</button>
@@ -3458,6 +3508,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           // which now only drives the readout.
           think: thinkMode,
           search: el.searchOn.checked,
+          // Which brain to use this turn — the Smart/Fast switch. Server maps it.
+          model: window.__arcModel,
           // Live-screen: when on (desktop only), the server grabs the current
           // screen and hands it to ARC with this message, so it sees what's
           // happening right now without being asked. Nothing is saved to disk.
@@ -3921,6 +3973,41 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     applyPersona(PERSONA_ORDER[(i + 1) % PERSONA_ORDER.length], true);
   });
   applyPersona(personaMode, false);   // reflect the saved choice on the button
+
+  // ---- brain switch: flip between the smart (Sonnet) and fast (Haiku) model,
+  // live, per device. Stored per-origin so the phone and the desktop can differ.
+  // Sent with every message as `model`; the server maps it to a real id.
+  window.__arcModel = (() => { try { return localStorage.getItem("arc.model") || "smart"; } catch (_) { return "smart"; } })();
+  const modelBtn = document.getElementById("modelBtn");
+  function paintModelReadout() {
+    // Only reflect the brain when the backend is actually reachable and keyed —
+    // never paint a healthy model label over an OFFLINE / NO KEY state (that
+    // would make the readout lie about the connection). checkHealth sets the
+    // flag; until the first check it's undefined and we leave the readout be.
+    if (!el.rModel || window.__arcBrainReady !== true) return;
+    el.rModel.className = "v";
+    el.rModel.textContent = window.__arcModel === "fast" ? "HAIKU-4.5" : "SONNET-5";
+  }
+  function applyModel(announce) {
+    const smart = window.__arcModel !== "fast";
+    if (modelBtn) {
+      modelBtn.textContent = "Brain: " + (smart ? "Smart" : "Fast");
+      modelBtn.classList.toggle("fast", !smart);
+    }
+    paintModelReadout();
+    if (announce) {
+      const msg = smart ? "Switched to the smarter Sonnet brain — a little more considered."
+                        : "Switched to the faster Haiku brain — snappier replies.";
+      addEntry("sys", "SYSTEM", msg);
+      if (state.booted) speak(msg);
+    }
+  }
+  if (modelBtn) modelBtn.addEventListener("click", () => {
+    window.__arcModel = window.__arcModel === "fast" ? "smart" : "fast";
+    try { localStorage.setItem("arc.model", window.__arcModel); } catch (_) {}
+    applyModel(true);
+  });
+  applyModel(false);   // reflect the saved choice on the button + readout
 
   const cameraBtn = document.getElementById("cameraBtn");
   if (cameraBtn) cameraBtn.addEventListener("click", async () => {
@@ -4958,7 +5045,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   async function checkHealth() {
     try {
       const h = await (await fetch("/api/health")).json();
-      el.rModel.textContent = (h.model || "—").replace("claude-", "").toUpperCase();
+      // Reachable and keyed → the brain readout may show the picked model.
+      window.__arcBrainReady = !!h.claude;
+      // Show the brain the user actually picked (Smart/Fast), not just the
+      // server default — the switch is client-side and per-device.
+      if (typeof paintModelReadout === "function") paintModelReadout();
+      else el.rModel.textContent = (h.model || "—").replace("claude-", "").toUpperCase();
       if (h.elevenlabs) {
         // Server-side neural voice (ElevenLabs or the free Edge British voice).
         state.engine = "elevenlabs";
@@ -4988,6 +5080,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       }
       paintCaps(h);
     } catch (e) {
+      window.__arcBrainReady = false;   // don't let a brain toggle paint over OFFLINE
       el.rModel.textContent = "OFFLINE";
       el.rModel.className = "v bad";
       paintCaps(null);

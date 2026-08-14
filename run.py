@@ -137,10 +137,30 @@ TTS_VOICE = os.getenv("ARC_TTS_VOICE", "en-GB-SoniaNeural").strip()
 # reply. Turn on only if the ElevenLabs account has credit.
 PREFER_ELEVEN = os.getenv("ARC_PREFER_ELEVEN", "").strip().lower() in ("1", "true", "yes")
 
-# Low latency matters more than raw depth for a voice loop, so the default is
-# Haiku 4.5 — it answers in ~1s where Sonnet takes several. Set ARC_MODEL to
-# claude-sonnet-5 if you want deeper answers and don't mind the extra wait.
-MODEL = os.getenv("ARC_MODEL", "claude-haiku-4-5-20251001")
+# ARC_MODEL is the default brain. Sonnet 5 is nearly as sharp as Opus but stays
+# fast enough for a live voice loop, so it's the default. The UI can switch to
+# the faster Haiku per-device at runtime (see MODEL_CHOICES / resolve_model),
+# so an unset ARC_MODEL no longer silently drops to the weaker model.
+MODEL = os.getenv("ARC_MODEL", "claude-sonnet-5")
+
+# The two brains the UI's switch offers: "smart" trades a little latency for
+# depth, "fast" the reverse. Overridable by env. resolve_model() maps whatever
+# the client asked for to a real id, falling back to the default for anything
+# unrecognised so a bad value can never reach the API.
+MODEL_CHOICES = {
+    "smart": os.getenv("ARC_MODEL_SMART", "claude-sonnet-5"),
+    "fast":  os.getenv("ARC_MODEL_FAST",  "claude-haiku-4-5-20251001"),
+}
+
+
+def resolve_model(choice) -> str:
+    return MODEL_CHOICES.get(str(choice or "").strip().lower(), MODEL)
+
+
+def supports_effort(model: str) -> bool:
+    # The 'effort' output control exists on Sonnet/Opus but NOT on Haiku, which
+    # rejects the request outright if it's sent. Gate it on the model in use.
+    return "haiku" not in (model or "").lower()
 
 # This ceiling covers thinking AND the spoken reply together. On Sonnet 5
 # thinking is on unless you disable it, so the old 1000 was enough for the
@@ -154,9 +174,8 @@ MAX_TOKENS = int(os.getenv("ARC_MAX_TOKENS", "8000"))
 # only if you want more considered answers at the cost of a slower reply.
 EFFORT = os.getenv("ARC_EFFORT", "low")
 
-# The 'effort' output control exists on Sonnet/Opus but NOT on Haiku, which
-# rejects the request outright if it's sent. Gate it on the model in use.
-SUPPORTS_EFFORT = "haiku" not in MODEL.lower()
+# Default-model effort support (per-request calls use supports_effort(model)).
+SUPPORTS_EFFORT = supports_effort(MODEL)
 
 # Tool calls take extra round trips. This bounds a runaway loop without
 # clipping legitimate work â€” look at the calendar, then act on it, is two.
@@ -190,11 +209,12 @@ RATE_PER_HOUR = int(os.getenv("ARC_RATE_PER_HOUR", "120"))
 DAILY_CAP = int(os.getenv("ARC_DAILY_CAP", "600"))
 
 # Rough per-million-token prices so we can show a running daily spend and stop a
-# runaway loop from quietly draining a paid key. Defaults are ~Haiku 4.5 rates;
-# override if you switch models. DAILY_COST_CAP is a generous safety ceiling —
-# normal use costs pennies a day, so hitting it means something's looping.
-PRICE_IN = float(os.getenv("ARC_PRICE_IN_PER_MTOK", "1.0"))
-PRICE_OUT = float(os.getenv("ARC_PRICE_OUT_PER_MTOK", "5.0"))
+# runaway loop from quietly draining a paid key. Defaults track the default
+# model (Sonnet 5); override if you switch. It's an estimate either way — the
+# runtime brain switch means a day can mix Sonnet and Haiku turns. DAILY_COST_CAP
+# is a generous ceiling — normal use costs pennies, so hitting it means a loop.
+PRICE_IN = float(os.getenv("ARC_PRICE_IN_PER_MTOK", "3.0"))
+PRICE_OUT = float(os.getenv("ARC_PRICE_OUT_PER_MTOK", "15.0"))
 DAILY_COST_CAP = float(os.getenv("ARC_DAILY_COST_CAP", "5.0"))    # dollars; 0 = no cap
 
 # The rate limiter keys off the client's address. X-Forwarded-For is set by a
@@ -745,6 +765,8 @@ async def health(request: Request, _=Depends(require_auth)):
         # use server audio instead of the browser's robot voice.
         "elevenlabs": True,
         "model": MODEL,
+        # The two brains the UI's Smart/Fast switch can pick between.
+        "models": MODEL_CHOICES,
     }
 
 
@@ -765,6 +787,9 @@ async def chat(request: Request, _=Depends(require_auth)):
     # background/automated calls (e.g. watch-mode glances) never set it, so they
     # can never act. See PASSIVE_TOOLS / _is_acting.
     allow_actions = bool(payload.get("allow_actions"))
+    # Which brain this turn runs on — the UI's Smart/Fast switch sends "smart" or
+    # "fast"; anything unrecognised falls back to the server default.
+    model = resolve_model(payload.get("model"))
 
     if not isinstance(messages, list) or not messages:
         raise HTTPException(400, "No messages supplied.")
@@ -859,15 +884,16 @@ async def chat(request: Request, _=Depends(require_auth)):
 
     for _ in range(MAX_TOOL_ROUNDS):
         kwargs = dict(
-            model=MODEL,
+            model=model,
             max_tokens=MAX_TOKENS,
             system=system,
             messages=convo,
             thinking=thinking,
         )
         # The effort control is a Sonnet/Opus feature; Haiku rejects it. Only
-        # send it on models that accept it.
-        if SUPPORTS_EFFORT:
+        # send it on models that accept it — decided per-request, since the brain
+        # can be switched at runtime.
+        if supports_effort(model):
             kwargs["output_config"] = {"effort": EFFORT}
         if tools:
             kwargs["tools"] = tools
