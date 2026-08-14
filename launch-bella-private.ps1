@@ -34,8 +34,9 @@ if (-not $env:ARC_PASSWORD) {
   [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
 }
 
-$env:ARC_PORT     = "$port"
-$env:ARC_DATA_DIR = $data
+$env:ARC_PORT        = "$port"
+$env:ARC_DATA_DIR    = $data
+$env:ARC_APP_VARIANT = 'private'   # light-blue-on-black logo + its own app name
 
 # run.py starts the server (or, if 8421 is already up, just opens a fresh
 # private window) and pops Bella's own app window on this port.

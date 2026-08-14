@@ -48,6 +48,12 @@ load_dotenv(ROOT / ".env")
 DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# App identity. The private Bella (launched with ARC_APP_VARIANT=private) installs
+# as its own app with a light-blue-on-black logo and its own name, so it's visibly
+# distinct from the shared instance on your taskbar / home screen. Default = shared.
+APP_VARIANT = os.getenv("ARC_APP_VARIANT", "").strip().lower()
+PRIVATE_APP = APP_VARIANT == "private"
+
 # Tool modules read their configuration (TG_API_ID, ARC_EMAIL_ALLOWLIST, ...)
 # from the environment at import time, so they MUST be imported after .env is
 # loaded â€” import them earlier and those settings silently read empty.
@@ -1415,10 +1421,64 @@ async def service_worker():
     return FileResponse(ROOT / "static" / "sw.js", media_type="application/javascript")
 
 
+# The private Bella serves a light-blue-on-black icon set and its own app name,
+# so when installed it sits on the taskbar / home screen as a separate app. These
+# explicit routes are defined BEFORE the /static mount, so they take precedence
+# over the files of the same path for the private instance only.
+_STATIC = ROOT / "static"
+
+
 @app.get("/manifest.webmanifest")
 async def manifest():
-    return FileResponse(ROOT / "static" / "manifest.webmanifest",
+    if PRIVATE_APP:
+        body = {
+            "name": "Bella — Private",
+            "short_name": "Bella",
+            "description": "Your own private Bella.",
+            "start_url": "/", "scope": "/", "display": "standalone",
+            "background_color": "#000000", "theme_color": "#000000",
+            "icons": [
+                {"src": "/static/icon-blue-192.png", "sizes": "192x192", "type": "image/png"},
+                {"src": "/static/icon-blue-512.png", "sizes": "512x512", "type": "image/png"},
+                {"src": "/static/icon-blue-maskable.png", "sizes": "512x512",
+                 "type": "image/png", "purpose": "maskable"},
+            ],
+        }
+        return JSONResponse(body, media_type="application/manifest+json")
+    return FileResponse(_STATIC / "manifest.webmanifest",
                         media_type="application/manifest+json")
+
+
+# When private, the tab / app icon is the blue-on-black logo; otherwise the
+# normal one falls through to the static mount.
+def _icon(private_name: str, normal_name: str, media: str):
+    name = private_name if PRIVATE_APP else normal_name
+    return FileResponse(_STATIC / name, media_type=media)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return _icon("arc-logo-blue.svg", "arc-logo.svg", "image/svg+xml")
+
+
+@app.get("/static/arc-logo.svg")
+async def logo_svg():
+    return _icon("arc-logo-blue.svg", "arc-logo.svg", "image/svg+xml")
+
+
+@app.get("/static/icon-192.png")
+async def icon_192():
+    return _icon("icon-blue-192.png", "icon-192.png", "image/png")
+
+
+@app.get("/static/icon-512.png")
+async def icon_512():
+    return _icon("icon-blue-512.png", "icon-512.png", "image/png")
+
+
+@app.get("/static/icon-maskable.png")
+async def icon_maskable():
+    return _icon("icon-blue-maskable.png", "icon-maskable.png", "image/png")
 
 
 # ARC changes often and is served from your own machine — a stale cached page
