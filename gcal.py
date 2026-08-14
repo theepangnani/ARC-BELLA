@@ -73,6 +73,31 @@ def _speakable(ev) -> str:
     return line + f"  [id:{ev['id']}]"
 
 
+def upcoming_events(within_minutes: int = 15) -> list:
+    """Timed events that START within the next `within_minutes` — structured, for
+    the proactive meeting-nudge poller (not a spoken string). Skips all-day
+    events. Returns [{id, title, minutes, start}]."""
+    svc = _service()
+    now = dt.datetime.now(_tz())
+    end = now + dt.timedelta(minutes=max(1, min(int(within_minutes or 15), 180)))
+    items = svc.events().list(
+        calendarId="primary", timeMin=now.isoformat(), timeMax=end.isoformat(),
+        singleEvents=True, orderBy="startTime", maxResults=20,
+    ).execute().get("items", [])
+    out = []
+    for e in items:
+        start = e.get("start", {}).get("dateTime")   # timed only (all-day has 'date')
+        if not start:
+            continue
+        st = _parse(start)
+        mins = round((st - now).total_seconds() / 60)
+        if mins < 0:
+            continue
+        out.append({"id": e.get("id", ""), "title": e.get("summary", "(untitled)"),
+                    "minutes": mins, "start": start})
+    return out
+
+
 # --------------------------------------------------------------------------
 # the tools themselves
 # --------------------------------------------------------------------------

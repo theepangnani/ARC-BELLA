@@ -28,3 +28,12 @@ cloudflared.exe
 
 # generated per-tunnel QR (URL changes every start)
 phone-qr.png
+
+# per-user Google web OAuth client (contains secret)
+credentials_web.json
+
+# per-user Google tokens (one file per browser session)
+google_sessions/
+
+# quick notes (personal)
+notes.json

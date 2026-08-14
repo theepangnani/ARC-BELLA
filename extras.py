@@ -276,6 +276,34 @@ def yahoo_quote(symbol):
             "change": change, "pct": pct, "currency": m.get("currency", "")}
 
 
+def yahoo_search(query):
+    """Resolve a company/asset name to its ticker via Yahoo's search API (free,
+    no key). Returns an upper-case symbol (e.g. "apple" -> "AAPL") or None.
+    Passes an existing ticker straight through if it already quotes."""
+    q = (query or "").strip()
+    if not q:
+        return None
+    # If it's already a valid ticker, keep it (handles BTC-USD, ^GSPC, etc.).
+    if len(q) <= 6 and yahoo_quote(q):
+        return q.upper()
+    try:
+        with httpx.Client(timeout=8, headers={"User-Agent": "Mozilla/5.0"}) as c:
+            d = c.get("https://query1.finance.yahoo.com/v1/finance/search",
+                      params={"q": q, "quotesCount": 6, "newsCount": 0}).json()
+    except Exception:
+        return None
+    quotes = d.get("quotes") or []
+    # Prefer equities/ETFs/crypto with a plain symbol; skip options, futures noise.
+    for pref in ("EQUITY", "CRYPTOCURRENCY", "ETF", "INDEX", "CURRENCY"):
+        for it in quotes:
+            if it.get("quoteType") == pref and it.get("symbol"):
+                return it["symbol"].upper()
+    for it in quotes:
+        if it.get("symbol"):
+            return it["symbol"].upper()
+    return None
+
+
 def stock(symbol: str = "") -> str:
     """Spoken stock quote. Pass a ticker (AAPL, TSLA, BTC-USD). Convert company
     names to tickers yourself before calling."""

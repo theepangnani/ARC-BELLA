@@ -385,57 +385,184 @@ def mouse_control(action: str, x=None, y=None, amount=None) -> str:
 # Remembers the volume from before we ducked, so restore is exact. None means
 # "not currently ducked".
 _pre_duck_level = None
+# Per-application ducking: pid -> the app's own volume before we ducked it. We
+# duck each *other* app individually instead of the whole master output, so
+# ARC's own voice is never lowered (that's what made it start quiet).
+_pre_duck_sessions = {}
+
+
+def _is_arc_session(sess):
+    """True if this audio session belongs to ARC's own browser window, which we
+    must never duck — otherwise ARC's spoken replies get quieted too. ARC runs
+    in a dedicated window (its own --user-data-dir=.arc-window profile / the
+    localhost app URL), and Chrome's shared audio-service child inherits those
+    flags, so the marker shows up on the command line either way."""
+    try:
+        p = sess.Process
+        if not p:
+            return False
+        cl = " ".join(p.cmdline()).lower()
+    except Exception:
+        return False
+    return (".arc-window" in cl) or (":8420" in cl) or ("localhost:8420" in cl)
 
 
 def duck(on) -> str:
-    """Lower the system volume so the mic can hear over playing media, then put
-    it back. duck(True) drops the volume to a fixed 10% (remembering the level
-    it was at); duck(False) restores that exact original level. Idempotent and
-    self-healing: a second duck(True) won't overwrite the saved level, and
-    duck(False) is a no-op if we never ducked."""
-    global _pre_duck_level
-    try:
-        from pycaw.pycaw import AudioUtilities
-        vol = AudioUtilities.GetSpeakers().EndpointVolume
-    except Exception as e:
-        return f"volume control unavailable: {e}"
+    """Quiet OTHER apps' audio so the mic can hear over playing media, then put
+    them back. duck(True) drops each other application to 10% (remembering its
+    own prior level); duck(False) restores each exact level. ARC's own window is
+    left untouched so its spoken replies stay at full, consistent volume.
+    Idempotent and self-healing: a second duck(True) won't overwrite saved
+    levels, and duck(False) is a no-op if we never ducked."""
+    global _pre_duck_sessions
     want_on = on if isinstance(on, bool) else str(on).strip().lower() in ("1", "true", "on", "yes")
     try:
+        from pycaw.pycaw import AudioUtilities
+    except Exception as e:
+        return f"volume control unavailable: {e}"
+
+    try:
+        sessions = AudioUtilities.GetAllSessions()
+    except Exception as e:
+        return f"duck failed: {e}"
+
+    try:
         if want_on:
-            if _pre_duck_level is None:
-                _pre_duck_level = vol.GetMasterVolumeLevelScalar()
-            # Drop to a fixed 10%, then restore the exact original level later.
-            vol.SetMasterVolumeLevelScalar(0.10, None)
-            return "ducked"
+            touched = 0
+            for s in sessions:
+                if not s.Process:            # system-sounds session — leave it
+                    continue
+                if _is_arc_session(s):       # never duck ARC's own voice
+                    continue
+                try:
+                    sav = s.SimpleAudioVolume
+                    pid = int(s.ProcessId)
+                    if pid not in _pre_duck_sessions:
+                        _pre_duck_sessions[pid] = sav.GetMasterVolume()
+                    sav.SetMasterVolume(0.10, None)
+                    touched += 1
+                except Exception:
+                    continue
+            return f"ducked {touched} app(s)"
         else:
-            if _pre_duck_level is not None:
-                vol.SetMasterVolumeLevelScalar(_pre_duck_level, None)
-                _pre_duck_level = None
+            # Restore any session we lowered, matched by PID.
+            by_pid = {}
+            for s in sessions:
+                try:
+                    by_pid[int(s.ProcessId)] = s
+                except Exception:
+                    continue
+            for pid, level in list(_pre_duck_sessions.items()):
+                s = by_pid.get(pid)
+                if s is None:
+                    continue
+                try:
+                    s.SimpleAudioVolume.SetMasterVolume(level, None)
+                except Exception:
+                    pass
+            _pre_duck_sessions = {}
             return "restored"
     except Exception as e:
-        _pre_duck_level = None
+        _pre_duck_sessions = {}
         return f"duck failed: {e}"
 
 
 # --- see the screen --------------------------------------------------------
 
-def screenshot() -> list:
-    """Capture the current screen and hand it back as an image the model can
-    see. Returns Anthropic content blocks (text + image), not a string."""
+def _list_monitors():
+    """Every connected monitor's bounding box in virtual-desktop pixels,
+    primary first (the primary always contains the origin 0,0), then left-to-
+    right. Returns a list of (left, top, right, bottom)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    try:
+        user32.SetProcessDPIAware()
+    except Exception:
+        pass
+    mons = []
+    MEP = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                             ctypes.POINTER(wintypes.RECT), ctypes.c_double)
+
+    def _cb(hMon, hdc, lprc, lparam):
+        r = lprc.contents
+        mons.append((r.left, r.top, r.right, r.bottom))
+        return 1
+
+    try:
+        user32.EnumDisplayMonitors(0, 0, MEP(_cb), 0)
+    except Exception:
+        return []
+
+    def _key(b):
+        primary = (b[0] <= 0 < b[2]) and (b[1] <= 0 < b[3])
+        return (0 if primary else 1, b[0])
+
+    mons.sort(key=_key)
+    return mons
+
+
+def list_monitors() -> str:
+    """How many screens are connected and how big each one is."""
+    mons = _list_monitors()
+    if not mons:
+        return "No monitors detected (or running headless)."
+    out = [f"{len(mons)} monitor(s) connected:"]
+    for i, b in enumerate(mons):
+        tag = "primary" if i == 0 else f"secondary #{i + 1}"
+        out.append(f"- Monitor {i + 1} ({tag}): {b[2] - b[0]} x {b[3] - b[1]}  "
+                   f"[top-left at {b[0]},{b[1]}]")
+    return "\n".join(out)
+
+
+def screenshot(monitor="primary") -> list:
+    """Capture and SEE a screen, returned as image blocks the model can read.
+    `monitor`: 'primary'/'1' (default), 'second'/'2' (…or any number), or 'all'
+    to capture every monitor stitched together."""
     try:
         from PIL import ImageGrab
     except ImportError:
         return "Screen capture needs the Pillow library. Install it with: pip install pillow"
     import io
     import base64
+
+    mons = _list_monitors()
+    sel = str(monitor or "primary").strip().lower()
+    origin = (0, 0)
     try:
-        img = ImageGrab.grab()
+        if sel in ("all", "both", "everything", "-1", "*"):
+            img = ImageGrab.grab(all_screens=True)
+            label = f"all {len(mons)} monitor(s)"
+            origin = (min((b[0] for b in mons), default=0), min((b[1] for b in mons), default=0))
+        else:
+            if sel in ("2", "second", "secondary", "other", "right"):
+                idx = 1
+            elif sel in ("1", "primary", "main", "first"):
+                idx = 0
+            elif sel.isdigit():
+                idx = int(sel) - 1
+            else:
+                idx = 0
+            if not mons:
+                img = ImageGrab.grab()
+                label = "the screen"
+            else:
+                if idx < 0 or idx >= len(mons):
+                    return (f"There is no monitor {idx + 1}. "
+                            + list_monitors()), True
+                b = mons[idx]
+                origin = (b[0], b[1])
+                # all_screens=True lets the bbox reach monitors at negative
+                # coordinates (a second screen to the left/above the primary).
+                img = ImageGrab.grab(bbox=b, all_screens=True)
+                label = f"monitor {idx + 1} of {len(mons)}" + (" (primary)" if idx == 0 else " (secondary)")
     except Exception as e:
         return f"Couldn't capture the screen: {e}"
+
     w, h = img.size
     # Downscale the long edge for a smaller payload; the model still reads it
-    # fine, and we report the TRUE pixel size so mouse_control coordinates line
-    # up with the real screen rather than the shrunk image.
+    # fine, and we report the TRUE pixel size + this monitor's origin so
+    # mouse_control coordinates line up with the real virtual desktop.
     MAXW = 1400
     shown = img
     if w > MAXW:
@@ -445,14 +572,57 @@ def screenshot() -> list:
     buf = io.BytesIO()
     shown.save(buf, "JPEG", quality=70)
     b64 = base64.b64encode(buf.getvalue()).decode()
+    off = ""
+    if origin != (0, 0):
+        off = (f" This monitor's top-left is at virtual coordinates {origin[0]},{origin[1]} — "
+               f"add that offset to any position you read off the image before using mouse_control.")
     return [
         {"type": "text",
-         "text": (f"Screenshot of the user's screen. The REAL screen is {w} by {h} pixels — "
-                  f"use those coordinates with mouse_control (the image may be scaled down, so "
-                  f"scale any position you read off it back up to the real size).")},
+         "text": (f"Screenshot of {label}. The REAL capture is {w} by {h} pixels — use those "
+                  f"coordinates with mouse_control (the image may be scaled down, so scale any "
+                  f"position you read off it back up to the real size).{off}")},
         {"type": "image",
          "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
     ]
+
+
+# Tiny grayscale thumbnail of the last watched frame, for change detection.
+_watch_prev = None
+
+
+def screen_changed(threshold: float = 0.035) -> dict:
+    """Cheap local motion check for watch mode: grab the screen, shrink it to a
+    tiny grayscale thumbnail, and compare it to the previous one. Returns
+    {"changed": bool, "score": 0..1}. No model, no network — this is the gate
+    that decides whether it's even worth asking ARC to look."""
+    global _watch_prev
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        return {"changed": False, "score": 0.0, "error": "pillow missing"}
+    try:
+        img = ImageGrab.grab().convert("L").resize((64, 36))
+    except Exception as e:
+        return {"changed": False, "score": 0.0, "error": str(e)}
+    cur = img.tobytes()
+    prev = _watch_prev
+    _watch_prev = cur
+    if not prev or len(prev) != len(cur):
+        return {"changed": False, "score": 0.0}   # first frame — nothing to compare
+    total = 0
+    for a, b in zip(prev, cur):
+        d = a - b
+        total += d if d >= 0 else -d
+    score = total / (len(cur) * 255.0)
+    return {"changed": score >= threshold, "score": round(score, 4)}
+
+
+def reset_watch():
+    """Forget the last frame so the next check re-baselines (used when watch mode
+    is switched off/on so it doesn't fire on a stale comparison)."""
+    global _watch_prev
+    _watch_prev = None
+    return "ok"
 
 
 # --- media keys + clipboard ------------------------------------------------
@@ -642,7 +812,13 @@ TOOLS = [
     {"name": "screenshot",
      "description": ("Capture and SEE the user's screen right now. Use this whenever you need to know what's on "
                      "screen — to read something, check what app is open, or find where to click. Pair it with "
-                     "mouse_control: screenshot first, see where the target is, then click those coordinates."),
+                     "mouse_control: screenshot first, see where the target is, then click those coordinates. "
+                     "With more than one monitor, set 'monitor' to '1'/'primary', '2'/'second' (or a number), "
+                     "or 'all' to see every screen. Defaults to the primary."),
+     "input_schema": {"type": "object", "properties": {
+         "monitor": {"type": "string", "description": "'primary'/'1', 'second'/'2', a monitor number, or 'all'"}}}},
+    {"name": "list_monitors",
+     "description": "List the connected monitors and their sizes. Use this to know how many screens there are before capturing a specific one.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "media",
      "description": ("Control media playback (Spotify, YouTube, any player) via the media keys. action: "
@@ -686,7 +862,7 @@ _DISPATCH = {
     "find_files": find_files, "read_file": read_file, "open_file": open_file,
     "system_control": system_control, "brightness": brightness,
     "wifi": wifi, "power_mode": power_mode, "mouse_control": mouse_control,
-    "screenshot": screenshot, "keyboard": keyboard,
+    "screenshot": screenshot, "list_monitors": list_monitors, "keyboard": keyboard,
     "media": media, "clipboard": clipboard,
     "prepare_command": prepare_command, "run_prepared": run_prepared,
 }

@@ -30,7 +30,7 @@ import anthropic
 import edge_tts
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import Response, FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import Response, FileResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 # --------------------------------------------------------------------------
@@ -51,11 +51,13 @@ import tg
 import pc
 import extras
 import media
+import display
+import notes
 
 # One place that knows which module owns which tool, so adding a capability is
 # one import and one entry rather than a chain of if-statements in the loop.
 # pc (computer control) and media only report connected() when NOT deployed.
-TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media)
+TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -75,6 +77,33 @@ def dispatch_tool(name: str, args: dict, local: bool = True) -> tuple[str, bool]
     if kit is pc:
         return pc.run_tool(name, args, local=local)
     return kit.run_tool(name, args)
+
+
+# --- consent gate ----------------------------------------------------------
+# Tools that only LOOK something up / report — they never change the machine or
+# send anything out, so they're always safe to run. Everything NOT in this set
+# is treated as an ACTION and, unless the turn is authorised by the user, is
+# refused. Default-deny: a new tool is gated until it's explicitly marked safe.
+PASSIVE_TOOLS = {
+    "find_files", "read_file", "screenshot", "list_monitors",
+    "weather", "stock", "news", "web_search",
+    "list_reminders", "list_todos", "list_events",
+    "read_email", "search_email", "find_contact",
+    "read_drive", "find_drive",
+    "tg_list_chats", "tg_read_chat",
+    # showing info on the user's own second screen is harmless output, not a
+    # change to their machine — no consent prompt needed.
+    "show_on_display", "clear_display",
+    # capturing/reading notes is benign and user-requested; deleting stays gated.
+    "add_note", "list_notes",
+}
+# Master switch. On by default: ARC will not act without the user's say-so. Set
+# ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).
+REQUIRE_CONSENT = os.getenv("ARC_REQUIRE_CONSENT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _is_acting(name: str) -> bool:
+    return name not in PASSIVE_TOOLS
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
@@ -227,6 +256,61 @@ def require_auth(request: Request):
         raise HTTPException(401, "Not signed in.")
 
 
+# --------------------------------------------------------------------------
+# per-user Google: each browser gets a random signed session id, and that id
+# names a token file under google_sessions/. So two people signed into ARC link
+# their OWN Google accounts and never see each other's mail or calendar.
+# --------------------------------------------------------------------------
+GOOGLE_DIR = ROOT / "google_sessions"
+GOOGLE_DIR.mkdir(exist_ok=True)
+SID_COOKIE = "arc_sid"
+
+
+def _sid_sign(sid: str) -> str:
+    return hmac.new(SECRET.encode(), ("sid:" + sid).encode(), hashlib.sha256).hexdigest()
+
+
+def read_sid(request: Request):
+    """The validated session id from the cookie, or None. Signed so nobody can
+    forge one and reach someone else's token."""
+    raw = request.cookies.get(SID_COOKIE, "")
+    if "." not in raw:
+        return None
+    sid, sig = raw.rsplit(".", 1)
+    if sid and hmac.compare_digest(sig, _sid_sign(sid)):
+        return sid
+    return None
+
+
+def make_sid():
+    """A fresh, unguessable session id plus its signed cookie value."""
+    sid = secrets.token_urlsafe(24)
+    return sid, f"{sid}.{_sid_sign(sid)}"
+
+
+def google_path(sid: str) -> Path:
+    # token_urlsafe yields only [A-Za-z0-9_-]; safe as a filename.
+    return GOOGLE_DIR / (f"{sid}.json" if sid else "none.json")
+
+
+def apply_session_google(request: Request):
+    """Point every Google call in THIS request at the signed-in browser's own
+    token. Missing/unconnected sessions get a path with no file, so the Google
+    tools simply read as 'not connected' — never a fallback to anyone else's."""
+    sid = read_sid(request)
+    gauth.set_active_token_path(google_path(sid))
+    return sid
+
+
+def public_base_url(request: Request) -> str:
+    """The externally-visible origin of this request, honouring the funnel's
+    forwarding headers so the OAuth redirect_uri matches what Google will call
+    back (…ts.net over the tunnel, localhost on the desktop)."""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{proto}://{host}"
+
+
 async def read_json(request: Request):
     """Parse the JSON body, turning a malformed one into a clean 400 rather
     than an uncaught 500 (which is what a garbled request would otherwise
@@ -350,29 +434,97 @@ def clear_login_failures(request: Request):
     _logins.pop(client_ip(request), None)
 
 
-LOGIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
+LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ARC</title><style>
+<title>ARC — your private voice AI</title>
+<meta name="description" content="ARC is a private, voice-first AI assistant. It listens, sees your screen, manages your calendar and mail, and watches the markets — self-hosted, so it runs on your own machine.">
+<style>
 *{box-sizing:border-box}
-body{margin:0;height:100vh;display:grid;place-items:center;background:#04070c;
- font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:#5fd9ff}
-form{width:min(320px,88vw);text-align:center}
-h1{font-size:22px;letter-spacing:.42em;margin:0 0 6px;font-weight:400}
-p{color:#1c6d8f;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;margin:0 0 26px}
-input{width:100%;padding:12px 14px;background:rgba(4,7,12,.9);color:#dbe9f5;
- border:1px solid #12293c;font:inherit;font-size:13px;outline:none;text-align:center;letter-spacing:.2em}
-input:focus{border-color:#5fd9ff}
-button{width:100%;margin-top:10px;padding:12px;background:#5fd9ff;color:#04070c;
- border:0;font:inherit;font-size:11px;letter-spacing:.18em;text-transform:uppercase;cursor:pointer}
-.err{color:#ff7d96;font-size:11px;margin-top:14px;min-height:16px;letter-spacing:.04em;text-transform:none}
+:root{--bg:#04070c;--ice:#5fd9ff;--ink:#dbe9f5;--dim:#5a86a0;--deep:#1c6d8f;
+ --line:#12293c;--up:#8affd4;--err:#ff7d96;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--mono);
+ min-height:100vh;display:flex;flex-direction:column;align-items:center;
+ justify-content:center;padding:36px 20px;overflow-x:hidden;position:relative}
+/* ambient glow + faint grid, so the page feels alive like the app */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+ background:
+   radial-gradient(60% 45% at 50% 32%,rgba(95,217,255,.14),transparent 60%),
+   radial-gradient(40% 40% at 50% 100%,rgba(90,255,212,.06),transparent 60%);}
+body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+ background-image:linear-gradient(rgba(95,217,255,.05) 1px,transparent 1px),
+   linear-gradient(90deg,rgba(95,217,255,.05) 1px,transparent 1px);
+ background-size:44px 44px;mask-image:radial-gradient(70% 60% at 50% 40%,#000,transparent 75%)}
+.wrap{position:relative;z-index:1;width:min(440px,94vw);text-align:center}
+.ring{width:88px;height:88px;margin:0 auto 22px;display:block;
+ filter:drop-shadow(0 0 12px rgba(95,217,255,.55))}
+.ring .r1{animation:spin 18s linear infinite;transform-origin:50% 50%}
+.ring .r2{animation:spin 26s linear infinite reverse;transform-origin:50% 50%}
+.ring .core{animation:pulse 3.2s ease-in-out infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
+h1{font-size:30px;letter-spacing:.5em;margin:0 0 8px;font-weight:400;
+ text-indent:.5em;color:#eaf6ff;text-shadow:0 0 18px rgba(95,217,255,.35)}
+.sub{color:var(--deep);font-size:10px;letter-spacing:.34em;text-transform:uppercase;margin:0 0 20px}
+.tag{color:#a9cfe2;font-size:14px;line-height:1.6;letter-spacing:.01em;margin:0 auto 24px;max-width:380px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:0 0 28px}
+.chip{font-size:11px;letter-spacing:.03em;color:#bfe3f2;padding:7px 11px;
+ border:1px solid var(--line);background:rgba(9,19,32,.5);border-radius:999px;white-space:nowrap}
+form{width:100%}
+.field{position:relative}
+input{width:100%;padding:14px 15px;background:rgba(4,7,12,.9);color:var(--ink);
+ border:1px solid var(--line);font:inherit;font-size:14px;outline:none;text-align:center;
+ letter-spacing:.22em;border-radius:10px;transition:border-color .15s,box-shadow .15s}
+input::placeholder{color:var(--dim);letter-spacing:.16em}
+input:focus{border-color:var(--ice);box-shadow:0 0 0 3px rgba(95,217,255,.12)}
+button{width:100%;margin-top:11px;padding:14px;background:linear-gradient(180deg,#7fe4ff,#43caf0);
+ color:#04121a;border:0;font:inherit;font-size:12px;font-weight:600;letter-spacing:.2em;
+ text-transform:uppercase;cursor:pointer;border-radius:10px;transition:filter .15s,transform .05s}
+button:hover{filter:brightness(1.08)}
+button:active{transform:translateY(1px)}
+.err{color:var(--err);font-size:12px;margin-top:13px;min-height:16px;letter-spacing:.02em}
+.trust{display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:center;margin:26px 0 0;
+ color:var(--dim);font-size:10.5px;letter-spacing:.04em}
+.trust span{display:inline-flex;align-items:center;gap:5px}
+.foot{margin-top:22px;font-size:10.5px;letter-spacing:.03em;color:var(--dim)}
+.foot a{color:var(--ice);text-decoration:none;border-bottom:1px solid rgba(95,217,255,.4)}
+.foot a:hover{filter:brightness(1.15)}
+@media(max-width:420px){h1{font-size:24px}.tag{font-size:13px}}
 </style></head><body>
-<form id="f">
+<div class="wrap">
+  <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+    <g fill="none" stroke="#5fd9ff">
+      <circle class="r1" cx="50" cy="50" r="44" stroke-width="1.5" stroke-dasharray="6 10" opacity=".7"/>
+      <circle class="r2" cx="50" cy="50" r="34" stroke-width="1.5" stroke-dasharray="3 8" opacity=".5"/>
+      <circle cx="50" cy="50" r="24" stroke-width="1" opacity=".35"/>
+    </g>
+    <circle class="core" cx="50" cy="50" r="9" fill="#5fd9ff"/>
+  </svg>
   <h1>ARC</h1>
-  <p>ambient response core</p>
-  <input type="password" id="p" placeholder="passphrase" autofocus autocomplete="current-password">
-  <button type="submit">Enter</button>
-  <div class="err" id="e"></div>
-</form>
+  <div class="sub">Ambient Response Core</div>
+  <p class="tag">Your own voice-first AI. It listens, sees your screen, runs your
+     calendar and mail, and keeps an eye on the markets — all on your terms.</p>
+  <div class="chips">
+    <span class="chip">🎙 Just say “Bella”</span>
+    <span class="chip">🖥 Sees your screen</span>
+    <span class="chip">📅 Your calendar &amp; mail</span>
+    <span class="chip">📈 Live markets</span>
+  </div>
+  <form id="f">
+    <div class="field">
+      <input type="password" id="p" placeholder="Enter passphrase" autofocus autocomplete="current-password" aria-label="passphrase">
+    </div>
+    <button type="submit">Enter ARC</button>
+    <div class="err" id="e"></div>
+  </form>
+  <div class="trust">
+    <span>🔒 Self-hosted &amp; private</span>
+    <span>🛡 Encrypted connection</span>
+    <span>⚡ Powered by Claude</span>
+    <span>✳ No sign-up</span>
+  </div>
+  <div class="foot">Want your own ARC? <a href="mailto:theepang@gmail.com?subject=I%27d%20like%20my%20own%20ARC">Request access →</a></div>
+</div>
 <script>
 document.getElementById("f").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -386,9 +538,126 @@ document.getElementById("f").addEventListener("submit", async (ev) => {
     });
     if (r.ok) { location.href = "/"; return; }
     const d = await r.json().catch(() => ({}));
-    e.textContent = d.detail || "Incorrect.";
+    e.textContent = d.detail || "Incorrect passphrase.";
   } catch (_) { e.textContent = "Could not reach the server."; }
 });
+</script></body></html>"""
+
+
+# The second-screen display: a glanceable dashboard meant to sit on a second
+# monitor. Big clock, live markets, and a spotlight card for whatever ARC pushes
+# with show_on_display. Self-contained; polls /api/display and /api/stocks.
+DISPLAY_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARC · Second Screen</title><style>
+*{box-sizing:border-box}
+:root{--bg:#04070c;--ice:#5fd9ff;--ink:#dbe9f5;--dim:#5a86a0;--deep:#1c6d8f;
+ --line:#12293c;--up:#8affd4;--down:#ff7a8a;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--mono);height:100vh;
+ overflow:hidden;padding:4vh 4vw;display:flex;flex-direction:column;position:relative;cursor:none}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+ background:radial-gradient(60% 50% at 50% 30%,rgba(95,217,255,.10),transparent 60%)}
+.top{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start}
+.clock{font-size:12vw;line-height:.9;letter-spacing:.02em;color:#eaf6ff;
+ text-shadow:0 0 30px rgba(95,217,255,.3);font-weight:400}
+.date{font-size:1.5vw;letter-spacing:.28em;text-transform:uppercase;color:var(--deep);margin-top:1.2vh}
+.brand{text-align:right;color:var(--deep)}
+.brand .n{font-size:1.6vw;letter-spacing:.5em;color:var(--ice)}
+.brand .s{font-size:.85vw;letter-spacing:.3em;text-transform:uppercase;margin-top:.5vh}
+.mkts{display:flex;gap:2.4vw;margin-top:1.5vh;flex-wrap:wrap}
+.mkts .m{font-size:1.3vw;letter-spacing:.04em}
+.mkts .sym{color:var(--ice)}
+.mkts .pr{color:var(--ink)}
+.mkts .up{color:var(--up)}.mkts .down{color:var(--down)}
+.spot{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;
+ justify-content:center;margin-top:3vh}
+.spot .card{border:1px solid var(--line);background:linear-gradient(180deg,rgba(9,19,32,.6),rgba(4,7,12,.4));
+ padding:4vh 4vw;border-radius:14px;box-shadow:0 0 40px rgba(4,7,12,.6),inset 0 0 40px rgba(95,217,255,.04)}
+.spot .h{font-size:3vw;color:var(--ice);letter-spacing:.02em;margin:0 0 2.5vh;line-height:1.15}
+.spot .b{font-size:2vw;color:var(--ink);line-height:1.55;white-space:pre-wrap;
+ max-height:52vh;overflow:hidden}
+.idle{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;
+ align-items:center;justify-content:center;color:var(--deep)}
+.idle .ring{width:12vw;height:12vw;margin-bottom:3vh;filter:drop-shadow(0 0 14px rgba(95,217,255,.5))}
+.idle .ring circle{animation:spin 20s linear infinite;transform-origin:50% 50%}
+.idle .core{animation:pulse 3.2s ease-in-out infinite}
+.idle .msg{font-size:1.3vw;letter-spacing:.24em;text-transform:uppercase}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+.hidden{display:none}
+</style></head><body>
+<div class="top">
+  <div>
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="date"></div>
+    <div class="mkts" id="mkts"></div>
+  </div>
+  <div class="brand"><div class="n">ARC</div><div class="s">Second Screen</div></div>
+</div>
+<div class="spot hidden" id="spot"><div class="card">
+  <h1 class="h" id="spotH"></h1><div class="b" id="spotB"></div>
+</div></div>
+<div class="idle" id="idle">
+  <svg class="ring" viewBox="0 0 100 100" fill="none" stroke="#5fd9ff">
+    <circle cx="50" cy="50" r="42" stroke-width="1.5" stroke-dasharray="6 10" opacity=".7"/>
+    <circle class="core" cx="50" cy="50" r="8" fill="#5fd9ff" stroke="none"/>
+  </svg>
+  <div class="msg">Ready · ask ARC to show something here</div>
+</div>
+<script>
+function tick(){
+  const d=new Date();
+  const hh=String(d.getHours()).padStart(2,"0"), mm=String(d.getMinutes()).padStart(2,"0");
+  document.getElementById("clock").textContent=hh+":"+mm;
+  document.getElementById("date").textContent=d.toLocaleDateString(undefined,
+    {weekday:"long",month:"long",day:"numeric"});
+}
+setInterval(tick,1000); tick();
+
+let lastTs=-1;
+async function pollBoard(){
+  try{
+    const b=await (await fetch("/api/display")).json();
+    if(b.ts===lastTs) return; lastTs=b.ts;
+    const has=(b.title&&b.title.trim())||(b.text&&b.text.trim());
+    document.getElementById("spot").classList.toggle("hidden",!has);
+    document.getElementById("idle").classList.toggle("hidden",!!has);
+    document.getElementById("spotH").textContent=b.title||"";
+    document.getElementById("spotH").style.display=(b.title&&b.title.trim())?"":"none";
+    document.getElementById("spotB").textContent=b.text||"";
+  }catch(_){}
+}
+setInterval(pollBoard,2000); pollBoard();
+
+let tickers;
+try{tickers=JSON.parse(localStorage.getItem("arc.tickers")||"null");}catch(_){}
+if(!Array.isArray(tickers)||!tickers.length) tickers=["AAPL","TSLA","NVDA","BTC-USD"];
+async function pollMkts(){
+  try{
+    const d=await (await fetch("/api/stocks?symbols="+encodeURIComponent(tickers.join(",")))).json();
+    const q=(d&&d.quotes)||[]; let html="";
+    q.forEach(s=>{
+      const price=s.price>=1000?Math.round(s.price).toLocaleString():(Math.round(s.price*100)/100);
+      const pct=(s.pct==null)?"":(s.pct>=0?"+":"")+s.pct.toFixed(1)+"%";
+      const cls=(s.pct==null)?"":(s.pct>=0?"up":"down");
+      const sym=String(s.symbol).replace("-USD","");
+      html+='<span class="m"><span class="sym">'+sym+'</span> <span class="pr">'+price+
+        '</span> <span class="'+cls+'">'+pct+'</span></span>';
+    });
+    document.getElementById("mkts").innerHTML=html;
+  }catch(_){}
+}
+setInterval(pollMkts,60000); pollMkts();
+
+// F or double-click toggles full screen for a clean second-monitor view.
+function toggleFs(){
+  const r=document.documentElement;
+  if(!document.fullscreenElement){(r.requestFullscreen||r.webkitRequestFullscreen||function(){}).call(r);}
+  else{(document.exitFullscreen||document.webkitExitFullscreen||function(){}).call(document);}
+}
+document.addEventListener("keydown",e=>{if(e.key==="f"||e.key==="F"){e.preventDefault();toggleFs();}});
+document.addEventListener("dblclick",toggleFs);
 </script></body></html>"""
 
 
@@ -399,6 +668,7 @@ document.getElementById("f").addEventListener("submit", async (ev) => {
 @app.get("/api/health")
 async def health(request: Request, _=Depends(require_auth)):
     """The UI calls this on boot so it can show what's actually wired up."""
+    apply_session_google(request)   # report THIS user's Google, not a shared one
     return {
         "claude": bool(ANTHROPIC_KEY),
         "calendar": gcal.connected(),
@@ -428,6 +698,11 @@ async def chat(request: Request, _=Depends(require_auth)):
     system = payload.get("system") or ""
     use_search = bool(payload.get("search"))
     see_screen = bool(payload.get("see_screen"))
+    # Consent: only a genuine, user-authorised turn may run action tools. The
+    # client sends this true only for turns the user themselves drove and ok'd;
+    # background/automated calls (e.g. watch-mode glances) never set it, so they
+    # can never act. See PASSIVE_TOOLS / _is_acting.
+    allow_actions = bool(payload.get("allow_actions"))
 
     if not isinstance(messages, list) or not messages:
         raise HTTPException(400, "No messages supplied.")
@@ -455,7 +730,13 @@ async def chat(request: Request, _=Depends(require_auth)):
     # --- what ARC can actually do this turn -------------------------------
     # Computer control only for the local desktop, never over the tunnel.
     local = is_local_request(request)
+    apply_session_google(request)   # use THIS signed-in user's own Google account
     tools = all_tools(local)
+    # A passive glance (watch mode) just looks and reports — it must not click,
+    # type, or otherwise act on the machine. no_tools strips the toolset for it.
+    if bool(payload.get("no_tools")):
+        tools = []
+        use_search = False
     if use_search:
         # The dated variant matters: _20260209 filters results before they hit
         # the context window. The older _20250305 has no such filtering.
@@ -509,6 +790,7 @@ async def chat(request: Request, _=Depends(require_auth)):
 
     searched = False
     used: list[str] = []
+    blocked_actions: list[str] = []
     tokens_in = tokens_out = 0
     reply = ""
     claude = request.app.state.claude
@@ -566,6 +848,25 @@ async def chat(request: Request, _=Depends(require_auth)):
 
         results = []
         for call in calls:
+            # Consent gate: an action tool only runs when the user authorised
+            # this turn. Otherwise it's refused (not executed) and ARC is told to
+            # ask first — so nothing happens to the machine without a say-so.
+            if REQUIRE_CONSENT and _is_acting(call.name) and not allow_actions:
+                out = ("NOT AUTHORISED. ARC is in ask-first mode and the user has not approved "
+                       "any action this turn. Do NOT run this or any other action. Instead, tell "
+                       "the user in one short sentence exactly what you want to do and ask them to "
+                       "confirm; only act once they clearly say yes.")
+                failed = True
+                blocked_actions.append(call.name)
+                used.append(call.name + " (needs consent)")
+                print(f"{C_DIM}  {C_RED}âš‘{C_OFF} {call.name} {C_DIM}blocked — needs consent{C_OFF}")
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": call.id,
+                    "content": out,
+                    "is_error": True,
+                })
+                continue
             out, failed = dispatch_tool(call.name, dict(call.input or {}), local=local)
             used.append(call.name)
             mark = f"{C_RED}âœ—{C_OFF}" if failed else f"{C_CYAN}âœ“{C_OFF}"
@@ -604,8 +905,74 @@ async def chat(request: Request, _=Depends(require_auth)):
         "searched": searched,
         "thought": thinking["type"] == "adaptive",
         "tools": used,
+        "blocked": blocked_actions,   # actions ARC wanted but that need the user's ok
         "cost_today": round(_day_cost(), 4),
     })
+
+
+@app.post("/api/summarize")
+async def summarize(request: Request, _=Depends(require_auth)):
+    """Maintain a rolling 'thread' digest — the shape of what ARC and the user
+    are working through — so continuity survives long after old turns scroll out
+    of the sent history. The client sends the current note plus the recent turns;
+    we fold them into a fresh, compact note. Cheap: one small, tool-free call."""
+    check_rate(request)
+    if not ANTHROPIC_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY is not set.")
+
+    payload = await read_json(request)
+    note = (payload.get("note") or "").strip()[:4000]
+    msgs = payload.get("messages") or []
+    if not isinstance(msgs, list):
+        raise HTTPException(400, "messages must be a list.")
+
+    # Flatten the recent turns into a plain transcript for the summariser.
+    lines = []
+    for m in msgs[-40:]:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        content = m.get("content")
+        if role not in ("user", "assistant") or not isinstance(content, str):
+            continue
+        who = "User" if role == "user" else "ARC"
+        lines.append(f"{who}: {content.strip()}")
+    transcript = "\n".join(lines)[:16000]
+    if not transcript:
+        return JSONResponse({"note": note})
+
+    sys_prompt = (
+        "You maintain a running memory of an ongoing assistant<->user relationship. "
+        "Given the PREVIOUS NOTE and the RECENT CONVERSATION, output an updated note that "
+        "captures the SHAPE of what they are working through: the user's current goals and "
+        "projects, decisions already made, open questions, preferences, and any threads left "
+        "unfinished. Keep what still matters, drop what is stale, merge duplicates. "
+        "Write terse bullet points, no preamble, under 1200 characters. Output ONLY the note."
+    )
+    user_msg = f"PREVIOUS NOTE:\n{note or '(none yet)'}\n\nRECENT CONVERSATION:\n{transcript}"
+
+    claude = request.app.state.claude
+    try:
+        resp = await claude.messages.create(
+            model=MODEL,
+            max_tokens=500,
+            system=sys_prompt,
+            messages=[{"role": "user", "content": user_msg}],
+            thinking={"type": "disabled"},
+        )
+    except anthropic.APIConnectionError as e:
+        raise HTTPException(502, f"Could not reach the Anthropic API: {e}")
+    except anthropic.RateLimitError:
+        raise HTTPException(429, "Rate limited by the Anthropic API.")
+    except anthropic.APIStatusError as e:
+        raise HTTPException(e.status_code, str(e.message)[:400])
+
+    u = resp.usage
+    _day["tok_in"] += getattr(u, "input_tokens", 0) or 0
+    _day["tok_out"] += getattr(u, "output_tokens", 0) or 0
+
+    new_note = " ".join(b.text for b in resp.content if b.type == "text").strip()[:1600]
+    return JSONResponse({"note": new_note or note, "cost_today": round(_day_cost(), 4)})
 
 
 async def _eleven_tts(http, text: str):
@@ -711,6 +1078,28 @@ async def stocks(request: Request, _=Depends(require_auth)):
     return JSONResponse({"quotes": quotes})
 
 
+@app.get("/api/stock-search")
+async def stock_search(request: Request, _=Depends(require_auth)):
+    """Resolve a typed name/ticker to a real symbol for the widget's editor,
+    so users can type "apple" or "bitcoin" instead of the exact ticker."""
+    q = (request.query_params.get("q") or "").strip()
+    if not q:
+        return JSONResponse({"symbol": None})
+
+    def _resolve():
+        try:
+            return extras.yahoo_search(q)
+        except Exception:
+            return None
+
+    try:
+        import anyio
+        sym = await anyio.to_thread.run_sync(_resolve)
+    except Exception:
+        sym = None
+    return JSONResponse({"symbol": sym})
+
+
 @app.get("/api/reminders/due")
 async def reminders_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any reminder whose time has come is returned once
@@ -719,6 +1108,25 @@ async def reminders_due(request: Request, _=Depends(require_auth)):
         return JSONResponse({"due": extras.due_reminders()})
     except Exception:
         return JSONResponse({"due": []})
+
+
+@app.get("/api/calendar/upcoming")
+async def calendar_upcoming(request: Request, _=Depends(require_auth)):
+    """Timed events starting within ?lead minutes, for the meeting-nudge poller.
+    Uses THIS user's own calendar; the client de-dupes what it has announced."""
+    apply_session_google(request)
+    if not gcal.connected():
+        return JSONResponse({"events": []})
+    try:
+        lead = int(request.query_params.get("lead", "10"))
+    except Exception:
+        lead = 10
+    try:
+        import anyio
+        events = await anyio.to_thread.run_sync(lambda: gcal.upcoming_events(lead))
+    except Exception:
+        events = []
+    return JSONResponse({"events": events})
 
 
 @app.post("/api/duck")
@@ -737,6 +1145,30 @@ async def duck(request: Request, _=Depends(require_auth)):
     except Exception as e:
         state = f"error: {e}"
     return JSONResponse({"ok": True, "state": state})
+
+
+@app.post("/api/screen-watch")
+async def screen_watch(request: Request, _=Depends(require_auth)):
+    """Watch mode's cheap gate: report whether the screen has changed since the
+    last check (local pixel diff, no model). The client polls this and only asks
+    ARC to actually look when something moved. Desktop-only — the server grabs
+    THIS machine's screen, which a remote caller must never trigger."""
+    if not is_local_request(request):
+        return JSONResponse({"ok": False, "reason": "remote"})
+    payload = await read_json(request)
+    if payload.get("reset"):
+        try:
+            import anyio
+            await anyio.to_thread.run_sync(pc.reset_watch)
+        except Exception:
+            pass
+        return JSONResponse({"ok": True, "changed": False, "score": 0.0})
+    try:
+        import anyio
+        res = await anyio.to_thread.run_sync(pc.screen_changed)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": str(e)})
+    return JSONResponse({"ok": True, **res})
 
 
 @app.post("/api/login")
@@ -771,6 +1203,90 @@ async def logout():
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(COOKIE, path="/")
     return resp
+
+
+# --- per-user Google sign-in (web redirect flow) ---------------------------
+
+@app.get("/oauth/google/start")
+async def google_start(request: Request, _=Depends(require_auth)):
+    """Send the signed-in user to Google's consent screen to link THEIR account."""
+    if not gauth.web_available():
+        raise HTTPException(500, "Per-user Google isn't set up (credentials_web.json is missing).")
+    sid = read_sid(request)
+    fresh_cookie = None
+    if not sid:
+        sid, fresh_cookie = make_sid()
+    redirect_uri = public_base_url(request) + "/oauth/callback"
+    is_https = redirect_uri.startswith("https://")
+    try:
+        url = gauth.web_auth_url(redirect_uri, state=_sid_sign(sid))
+    except Exception as e:
+        raise HTTPException(500, f"Could not start Google sign-in: {e}")
+    resp = RedirectResponse(url, status_code=302)
+    if fresh_cookie:
+        resp.set_cookie(SID_COOKIE, fresh_cookie, max_age=SESSION_DAYS * 86400,
+                        httponly=True, secure=is_https, samesite="lax", path="/")
+    return resp
+
+
+@app.get("/oauth/callback")
+async def google_callback(request: Request, _=Depends(require_auth)):
+    """Google sends the user back here with a code; trade it for this user's
+    tokens and store them under their session id."""
+    sid = read_sid(request)
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if request.query_params.get("error"):
+        return RedirectResponse("/?google=denied", status_code=302)
+    if not sid or not code or not state or not hmac.compare_digest(state, _sid_sign(sid)):
+        return RedirectResponse("/?google=error", status_code=302)
+    redirect_uri = public_base_url(request) + "/oauth/callback"
+    try:
+        import anyio
+        token_json = await anyio.to_thread.run_sync(lambda: gauth.web_exchange(redirect_uri, code))
+    except Exception as e:
+        print(f"{C_RED}  ! google exchange failed: {str(e)[:200]}{C_OFF}")
+        return RedirectResponse("/?google=error", status_code=302)
+    try:
+        google_path(sid).write_text(token_json, encoding="utf-8")
+    except Exception:
+        return RedirectResponse("/?google=error", status_code=302)
+    return RedirectResponse("/?google=connected", status_code=302)
+
+
+@app.get("/oauth/google/status")
+async def google_status(request: Request, _=Depends(require_auth)):
+    """What (if anything) this browser's Google account is, for the UI."""
+    sid = apply_session_google(request)   # points gauth at this session's token
+    p = google_path(sid)
+    connected = bool(sid) and p.exists()
+    email = ""
+    if connected:
+        try:
+            import anyio
+            email = await anyio.to_thread.run_sync(lambda: gauth.account_email(p))
+        except Exception:
+            email = ""
+    return JSONResponse({
+        "web_available": gauth.web_available(),
+        "connected": connected,
+        "email": email,
+        "calendar": gcal.connected(),
+        "gmail": gmail.connected(),
+        "contacts_drive": gextra.connected(),
+    })
+
+
+@app.post("/oauth/google/disconnect")
+async def google_disconnect(request: Request, _=Depends(require_auth)):
+    """Unlink this browser's Google account (delete its stored token)."""
+    sid = read_sid(request)
+    if sid:
+        try:
+            google_path(sid).unlink(missing_ok=True)
+        except Exception:
+            pass
+    return JSONResponse({"ok": True})
 
 
 @app.middleware("http")
@@ -825,6 +1341,20 @@ async def index(request: Request):
     if not authed(request):
         return HTMLResponse(LOGIN_HTML, status_code=401)
     return FileResponse(ROOT / "static" / "index.html", headers=_NO_CACHE)
+
+
+@app.get("/display")
+async def display_page(request: Request):
+    """The second-screen dashboard. Open it and drag it to your second monitor."""
+    if not authed(request):
+        return HTMLResponse(LOGIN_HTML, status_code=401)
+    return HTMLResponse(DISPLAY_HTML, headers=_NO_CACHE)
+
+
+@app.get("/api/display")
+async def api_display(request: Request, _=Depends(require_auth)):
+    """Current second-screen content (the /display page polls this)."""
+    return JSONResponse(display.get_board())
 
 
 @app.get("/static/index.html")

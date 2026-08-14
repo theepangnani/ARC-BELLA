@@ -94,13 +94,15 @@
   .shell {
     position: relative; z-index: 1;
     display: grid;
-    /* Slim side rails so the centre — Bella herself — is the main area. */
+    /* Side rails carry the readouts; centre — Bella herself — stays the main
+       area. Rails widen on bigger screens so they reach the edges instead of
+       leaving a dark gutter. */
     grid-template-columns:
-      clamp(160px, 12vw, 205px)
+      clamp(180px, 13vw, 250px)
       minmax(0, 1fr)
-      clamp(210px, 17vw, 280px);
+      clamp(240px, 19vw, 380px);
     gap: clamp(14px, 1.8vw, 28px);
-    max-width: 1600px;
+    max-width: 2200px;
     margin: 0 auto;
     padding: clamp(14px, 1.6vw, 22px) clamp(14px, 1.8vw, 26px) 26px;
     min-height: 100vh;
@@ -289,10 +291,21 @@
   #personaBtn.friend { color: var(--void); background: #8affd4; border-color: #8affd4; }
   #personaBtn.coach { color: var(--void); background: #ffb454; border-color: #ffb454; }
 
-  /* Night mode: dim the whole display and warm it slightly — kinder on the
-     eyes in the dark. Toggled by the Night mode button. */
-  html.night body { filter: brightness(0.68) saturate(0.9) sepia(0.06); }
-  html.night { background: #010204; }
+  /* Night mode: a chill LED bias-light vibe — a soft glow of ambient colour
+     around the edges (like an LED strip behind a screen), plus a gentle dim.
+     No murky sepia; the centre where the content lives stays clean. */
+  html.night body { filter: brightness(0.9) saturate(1.06); }
+  html.night::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    mix-blend-mode: screen;
+    background:
+      radial-gradient(110% 55% at 50% -12%, rgba(128, 92, 255, 0.18), transparent 55%),
+      radial-gradient(110% 55% at 50% 112%, rgba(0, 210, 255, 0.14), transparent 55%),
+      radial-gradient(55% 45% at 4% 50%, rgba(255, 120, 200, 0.06), transparent 60%),
+      radial-gradient(55% 45% at 96% 50%, rgba(90, 255, 212, 0.06), transparent 60%);
+    animation: nightGlow 14s ease-in-out infinite alternate;
+  }
+  @keyframes nightGlow { from { opacity: .8; } to { opacity: 1; } }
   #micFixBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
@@ -300,14 +313,67 @@
   }
   #micFixBtn:hover { color: var(--ice); border-color: var(--accent); }
   #micFixBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
-  #liveScreenBtn {
+  #liveScreenBtn, #watchBtn, #displayBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
     background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
   }
-  #liveScreenBtn:hover { color: var(--ice); }
-  #liveScreenBtn.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
-  #liveScreenBtn:disabled { opacity: .4; cursor: not-allowed; }
+  #displayBtn:hover { color: var(--ice); }
+  /* Assistant section: briefing / nudges / routines */
+  .assection { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .assection .ahead {
+    font-size: 9px; letter-spacing: .24em; text-transform: uppercase;
+    color: var(--cyan-dim); margin-bottom: 8px;
+  }
+  .assection .ahint { letter-spacing: .06em; opacity: .6; text-transform: none; }
+  .assection .arow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .assection .atog { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--ice); cursor: pointer; }
+  .assection .alead { font-size: 10px; color: var(--cyan-dim); display: flex; align-items: center; gap: 5px; }
+  .assection input[type="time"], .assection input[type="number"] {
+    background: rgba(4,7,12,.9); color: var(--ice); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; padding: 4px 6px; outline: none; width: auto;
+  }
+  .assection input[type="number"] { width: 46px; text-align: center; }
+  .assection input:focus { border-color: var(--accent); }
+  .assection .atext {
+    width: 100%; box-sizing: border-box; margin-top: 6px; resize: vertical;
+    background: rgba(4,7,12,.9); color: var(--ice); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.5; padding: 7px 8px; outline: none;
+  }
+  .assection .atext:focus { border-color: var(--accent); }
+  .assection .abtn {
+    width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .16em; text-transform: uppercase; padding: 8px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  .assection .abtn:hover { color: var(--ice); }
+  /* consent lock — green while it's protecting you, amber when you've opened it up */
+  #consentBtn {
+    width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .14em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
+    background: rgba(6,20,14,.85); color: #8affd4; border: 1px solid rgba(138,255,212,.55);
+  }
+  #consentBtn.off { background: rgba(28,18,4,.85); color: var(--amber); border-color: rgba(255,180,80,.5); }
+  #consentBtn:hover { filter: brightness(1.15); }
+  #googleBtn {
+    width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .14em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  #googleBtn:hover { color: var(--ice); }
+  #googleBtn.on { color: var(--void); background: #8affd4; border-color: #8affd4; }
+  #googleBtn:disabled { opacity: .4; cursor: not-allowed; }
+  .gstatus {
+    font-size: 8px; letter-spacing: .1em; color: var(--cyan-dim); opacity: .8;
+    margin-top: 5px; text-align: center; word-break: break-all; line-height: 1.5;
+  }
+  .gstatus a { color: var(--rose); cursor: pointer; text-decoration: underline; }
+  #liveScreenBtn:hover, #watchBtn:hover { color: var(--ice); }
+  #liveScreenBtn.on, #watchBtn.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+  #liveScreenBtn:disabled, #watchBtn:disabled { opacity: .4; cursor: not-allowed; }
+  /* watch mode gently pulses while active, so it's clear ARC is keeping an eye out */
+  #watchBtn.on { animation: watchPulse 2.4s ease-in-out infinite; }
+  @keyframes watchPulse { 0%,100% { box-shadow: 0 0 0 rgba(95,217,255,0); } 50% { box-shadow: 0 0 14px rgba(95,217,255,.55); } }
   #cameraBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
@@ -443,8 +509,8 @@
      Floats in the open top-right of the main area, just left of the right
      rail, over the reactor. Glassy, like the other HUD panels. */
   .forecast {
-    position: fixed; top: 60px; right: calc(clamp(210px, 17vw, 280px) + 34px);
-    z-index: 3; width: 190px; pointer-events: none;
+    position: fixed; top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px);
+    z-index: 3; width: 190px; pointer-events: auto;
     border: 1px solid rgba(95,217,255,.22);
     background: linear-gradient(180deg, rgba(9,19,32,.55), rgba(4,7,12,.4));
     backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
@@ -468,10 +534,29 @@
   /* below the 3-rail breakpoint the centre is cramped — hide it */
   @media (max-width: 1180px) { .forecast { display: none; } }
 
+  /* draggable HUD panels — grab anywhere to reposition */
+  .forecast, .stocks { cursor: grab; }
+  .forecast.dragging, .stocks.dragging {
+    cursor: grabbing; z-index: 30;
+    box-shadow: 0 0 34px rgba(95,217,255,.28), inset 0 0 22px rgba(95,217,255,.08);
+    border-color: rgba(95,217,255,.5);
+  }
+  /* keep the stock editor/rows usable — text cursor, not the grab hand */
+  .stocks .st-edit { cursor: text; }
+  .stocks .st-row, .stocks .st-add { cursor: pointer; }
+  /* right side of a market row: price, change, and a remove button on hover */
+  .stocks .st-right { display: inline-flex; align-items: center; gap: 6px; }
+  .stocks .st-del {
+    cursor: pointer; font-size: 10px; line-height: 1; color: var(--cyan-dim);
+    opacity: 0; transition: opacity .15s, color .15s, text-shadow .15s; padding: 0 1px;
+  }
+  .stocks .st-row:hover .st-del { opacity: .6; }
+  .stocks .st-del:hover { opacity: 1; color: #ff7a8a; text-shadow: 0 0 8px rgba(255,122,138,.6); }
+
   /* stock watcher — sits just under the forecast, same glassy panel */
   .stocks {
-    position: fixed; top: 262px; right: calc(clamp(210px, 17vw, 280px) + 34px);
-    z-index: 3; width: 190px; pointer-events: none;
+    position: fixed; top: 262px; right: calc(clamp(240px, 19vw, 380px) + 34px);
+    z-index: 3; width: 190px; pointer-events: auto;
     border: 1px solid rgba(95,217,255,.22);
     background: linear-gradient(180deg, rgba(9,19,32,.55), rgba(4,7,12,.4));
     backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
@@ -479,19 +564,38 @@
     box-shadow: 0 0 22px rgba(4,7,12,.55), inset 0 0 22px rgba(95,217,255,.05);
   }
   .stocks .st-title {
+    display: flex; justify-content: space-between; align-items: center;
     font-size: 8.5px; letter-spacing: .22em; text-transform: uppercase;
     color: var(--cyan-dim); margin-bottom: 6px;
   }
+  .stocks .st-add {
+    cursor: pointer; font-size: 12px; line-height: 1; color: var(--ice);
+    opacity: .55; transition: opacity .15s, text-shadow .15s; padding: 0 2px;
+  }
+  .stocks .st-add:hover { opacity: 1; text-shadow: 0 0 8px var(--ice); }
   .stocks .st-row {
-    display: flex; justify-content: space-between; gap: 6px;
+    display: flex; justify-content: space-between; gap: 6px; align-items: center;
     font-size: 10.5px; letter-spacing: .03em; padding: 3px 0;
     border-top: 1px dashed rgba(18,41,60,.7);
+    cursor: pointer; transition: background .15s;
   }
+  .stocks .st-row:hover { background: rgba(95,217,255,.07); }
   .stocks .st-row:first-of-type { border-top: none; }
   .stocks .st-sym { color: var(--ice); }
   .stocks .st-price { color: var(--accent); }
   .stocks .st-up { color: #8affd4; }
   .stocks .st-down { color: #ff7a8a; }
+  .stocks .st-hint {
+    font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--cyan-dim); opacity: .5; margin-top: 6px; text-align: center;
+  }
+  .stocks .st-edit {
+    width: 100%; box-sizing: border-box; margin-top: 6px;
+    background: rgba(3,7,12,.7); border: 1px solid rgba(95,217,255,.4);
+    color: var(--ice); font-family: var(--mono); font-size: 11px;
+    letter-spacing: .05em; padding: 5px 7px; outline: none;
+  }
+  .stocks .st-edit::placeholder { color: var(--cyan-dim); opacity: .7; }
   @media (max-width: 1180px) { .stocks { display: none; } }
 
   /* ---------- boot ---------- */
@@ -844,11 +948,38 @@
         <input type="checkbox" id="cuesOn" checked>
       </label>
 
+      <button id="consentBtn" title="When on, ARC never acts on its own — it asks before opening apps, typing, changing settings, playing media, running commands, or sending anything. It can always look things up. Nothing background (like watch mode) can ever act.">🔒 Ask before acting: on</button>
+      <button id="googleBtn" title="Connect your own Google account so ARC reads YOUR Gmail, Calendar and Drive — not anyone else's.">Connect Google</button>
+      <div id="googleStatus" class="gstatus"></div>
       <button id="personaBtn" title="Switch ARC's personality: composed butler, warm best friend, or upbeat coach">Personality: ARC</button>
       <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
       <button id="liveScreenBtn" title="Let ARC see your current screen with every message (desktop only). Nothing is saved.">Live screen: off</button>
+      <button id="watchBtn" title="Watch mode: ARC keeps an eye on your screen and only speaks up when something meaningful changes (desktop only). Nothing is saved.">Watch screen: off</button>
+      <button id="displayBtn" title="Open ARC's second-screen dashboard — a big clock, live markets, and whatever you ask ARC to show. Drag it to your second monitor and press F for full screen.">🖥 Open second screen</button>
       <button id="cameraBtn" title="Capture one photo from your camera and ask ARC what it sees. Nothing is saved.">📷 Show ARC (camera)</button>
       <button id="micFixBtn" title="Re-request the microphone and rebuild voice recognition from scratch">Reconnect mic</button>
+      <button id="fullscreenBtn" title="Toggle full-screen (or press F)">⛶ Full screen</button>
+      <button id="resetPanelsBtn" title="Snap the weather and stock panels back to their default spots">Reset panels</button>
+
+      <div class="assection">
+        <div class="ahead">Assistant</div>
+
+        <div class="arow">
+          <label class="atog"><input type="checkbox" id="briefOn"> Daily briefing</label>
+          <input type="time" id="briefTime" value="08:00" title="When ARC speaks your morning briefing">
+        </div>
+        <button id="briefNowBtn" class="abtn" title="Get your briefing right now — calendar, weather, news, unread email">Brief me now</button>
+
+        <div class="arow" style="margin-top:10px">
+          <label class="atog"><input type="checkbox" id="nudgeOn"> Meeting nudges</label>
+          <span class="alead"><input type="number" id="nudgeLead" min="1" max="60" value="10"> min before</span>
+        </div>
+
+        <div class="ahead" style="margin-top:12px">Routines <span class="ahint">phrase = what to do</span></div>
+        <textarea id="routines" class="atext" rows="4" spellcheck="false"
+          placeholder="good morning = give me my briefing&#10;focus mode = turn on do not disturb and open my code editor&#10;i'm heading out = what's the weather and my next meeting"></textarea>
+        <button id="routinesSave" class="abtn">Save routines</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1109,6 +1240,35 @@ You are an upbeat, motivating coach in the user's corner.
     return p && p.override ? p.override + "\n\n" : "";
   }
 
+  /* ---------------- consent lock ("ask before acting") ----------------
+     ARC never acts without the user's say-so. When the lock is on (default),
+     the server refuses any action tool unless THIS turn is authorised, and the
+     system prompt tells ARC to ask first. A turn is authorised only when the
+     user clearly approves (a fresh confirmation after ARC asked, or the lock is
+     off). Background/automated calls (watch mode) never authorise, so they can
+     never act — that guarantee holds regardless of this button. */
+  let askFirst = true;
+  try { askFirst = localStorage.getItem("arc.askfirst") !== "0"; } catch (_) {}
+  let pendingConsent = false;   // ARC asked to do something and is waiting on a yes
+
+  function consentBlock() {
+    if (!askFirst) return "";
+    return "\n\nASK-FIRST SAFETY LOCK IS ON. Do not change anything or send anything on the " +
+      "user's behalf unless they clearly told you to and it has been approved. You may ALWAYS " +
+      "look things up and report back (time, weather, prices, news, reading a file, looking at " +
+      "the screen). But for anything that DOES something — opening apps or websites, opening or " +
+      "changing files, typing, clicking, changing settings, playing or pausing media, running " +
+      "commands, or creating/sending emails, messages, calendar events or reminders — first say " +
+      "in one short sentence exactly what you intend to do and ask the user to confirm, then wait. " +
+      "Never act on your own initiative, and never assume silence or a vague reply is a yes.";
+  }
+
+  const AFFIRMATIONS = /^(y|ya|yes|yed|yep|yeah|yup|sure|ok|okay|okey|k|kk|alright|all right|go|do it|go ahead|go for it|please do|do that|yes please|confirmed?|affirmative|permission granted|i approve|approved|proceed|make it so)\b/i;
+  function isAffirmation(text) {
+    const t = (text || "").toLowerCase().replace(/[.,!?]/g, "").replace(/\b(bella|arc|sir|please|now|then)\b/g, "").trim();
+    return !!t && AFFIRMATIONS.test(t) && t.split(/\s+/).length <= 4;
+  }
+
   /* ---------------- persistent memory ----------------
      ARC can end a reply with [[remember: ...]]. We strip that line out
      before it is spoken and keep it on this machine, then feed it back on
@@ -1145,6 +1305,60 @@ You are an upbeat, motivating coach in the user's corner.
     if (memory.length > MEM_MAX) memory = memory.slice(-MEM_MAX);
     saveMemory();
     el.rMem && (el.rMem.textContent = memory.length);
+  }
+
+  /* ---------------- thread continuity ----------------
+     Discrete facts (above) answer "what do I know about this person"; this note
+     answers "what are we in the middle of". It's a compact, rolling digest of
+     the shape of the current work — goals, decisions, open threads — rebuilt by
+     the server every few turns and kept here so continuity survives both the
+     trimming of old turns and a full reload/new session. */
+  const THREAD_KEY = "arc.thread.v1";
+  let threadNote = "";
+  let turnsSinceDigest = 0;
+  let digestInFlight = false;
+
+  function loadThread() {
+    try { threadNote = (localStorage.getItem(THREAD_KEY) || "").slice(0, 1600); } catch (_) { threadNote = ""; }
+  }
+  function saveThread() {
+    try { localStorage.setItem(THREAD_KEY, threadNote || ""); } catch (_) {}
+  }
+  function threadBlock() {
+    if (roomMode() || !threadNote.trim()) return "";
+    return "\n\nTHE THREAD — what you and the user are currently working through " +
+      "together (built up over the whole conversation; hold on to it even after " +
+      "older messages have scrolled out of view, and continue it without needing " +
+      "to be reminded):\n" + threadNote.trim();
+  }
+  // Fold the recent turns into the rolling note. Runs in the background after a
+  // reply so it never adds to reply latency; skipped in room mode.
+  async function refreshThread() {
+    if (digestInFlight || roomMode()) return;
+    const turns = (state.history || []).filter(m => typeof m.content === "string");
+    if (turns.length < 4) return;   // nothing worth digesting yet
+    digestInFlight = true;
+    try {
+      const r = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: threadNote, messages: turns.slice(-40) })
+      });
+      if (r.ok) {
+        const d = await r.json();
+        if (d && typeof d.note === "string" && d.note.trim()) {
+          threadNote = d.note.trim().slice(0, 1600);
+          saveThread();
+          turnsSinceDigest = 0;
+        }
+      }
+    } catch (_) {} finally { digestInFlight = false; }
+  }
+  function maybeRefreshThread() {
+    // Refresh every few turns, or promptly once the sent window starts dropping
+    // older turns (that's exactly when the raw history stops covering the thread).
+    turnsSinceDigest++;
+    if (turnsSinceDigest >= 6 || (state.history || []).length > 24) refreshThread();
   }
   // pulls the marker out of a reply and returns the clean spoken text
   /* ---------------- timers ----------------
@@ -1252,6 +1466,7 @@ You are an upbeat, motivating coach in the user's corner.
     return { text: out.trim(), silent };
   }
   loadMemory();
+  loadThread();
 
   /* --- how hard to think ---------------------------------------------
      Extended thinking makes the model reason before answering. It is
@@ -3049,6 +3264,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const thinking = needsThought(userText);
     el.rThink.textContent = thinking ? "DEEP" : (thinkMode === "off" ? "OFF" : "FAST");
     el.rThink.className = thinking ? "v good" : "v";
+    // Consent: authorise actions this turn only if the lock is off, or the user
+    // is clearly confirming an action ARC just asked about. Otherwise the server
+    // will refuse any action and ARC will ask first.
+    const authorize = !askFirst || (pendingConsent && isAffirmation(userText));
     // Only commit to history once the call succeeds. Previously a failed
     // request left an unanswered user turn behind, so the *next* question
     // sent two user messages in a row and the API rejected it.
@@ -3068,7 +3287,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: pending,
-          system: personaBlock() + SYSTEM_PROMPT + contextBlock() + timerBlock() + altBlock(alts),
+          system: personaBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + consentBlock() + altBlock(alts),
+          // Only a genuine, user-approved turn may act. Background calls never set this.
+          allow_actions: authorize,
           // Send the mode, not a local guess. The server turns anything but
           // "off" into adaptive thinking and lets the model judge each
           // question — it is better at that than the keyword heuristic here,
@@ -3109,7 +3330,17 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       el.rCost.textContent = "≈$" + data.cost_today.toFixed(2);
     }
     lastReply = out.text || "";   // remembered for "say that again"
+    // Track whether ARC is now waiting on the user's go-ahead: it wanted to act
+    // but the lock held it, so the NEXT clear yes should authorise it. If this
+    // turn was itself authorised (the action ran), the request is settled.
+    if (askFirst && !authorize && Array.isArray(data.blocked) && data.blocked.length) {
+      pendingConsent = true;
+      addEntry("sys", "SYSTEM", "Awaiting your go-ahead before I act. Say \"yes\" to allow, or turn off “Ask before acting”.");
+    } else {
+      pendingConsent = false;
+    }
     saveHistory();                // survive a reload
+    maybeRefreshThread();         // keep the rolling thread-continuity note current
     return out;
   }
 
@@ -3163,6 +3394,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       else { const m = "I haven't said anything yet, sir."; addEntry("arc", "ARC", m); speak(m); }
       return;
     }
+    // Routines & briefing: the user says a short trigger; ARC actually runs the
+    // mapped instruction (transcript still shows what they said).
+    let effective = text;
+    const routine = matchRoutine(text);
+    if (routine) { effective = routine; addEntry("sys", "SYSTEM", "Running routine…"); }
+    else if (isBriefingReq(text)) { effective = BRIEFING_PROMPT; }
     // Two overlapping requests corrupt the conversation history and produce
     // two replies talking over each other.
     if (inFlight) { addEntry("sys", "SYSTEM", "One moment — still working on the last one."); return; }
@@ -3173,7 +3410,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const t0 = performance.now();
 
     try {
-      const out = await askClaude(text, alts);
+      const out = await askClaude(effective, alts);
       el.rLat.textContent = Math.round(performance.now() - t0) + " ms";
       state.turns++;
       el.rTurns.textContent = state.turns;
@@ -3551,10 +3788,318 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       : "Live screen off.");
   });
 
+  /* ---------------- watch mode ----------------
+     ARC keeps half an eye on the screen: every few seconds the server does a
+     cheap local pixel-diff (no model), and only when something actually changes
+     — and no more than once every WATCH_MIN_GAP — does ARC take a real look and
+     speak up if it's worth it. Off by default, desktop-only, nothing saved. */
+  let watchMode = false;
+  let watchTimer = null;
+  let lastWatchAt = 0;
+  let watchBusy = false;
+  let lastWatchSaid = "";
+  const WATCH_POLL = 4000;        // how often the cheap change-check runs
+  const WATCH_MIN_GAP = 20000;    // never call the model more than once per 20s
+  const WATCH_SENTINEL = "(nothing)";
+  const WATCH_SYSTEM =
+    "You are ARC, quietly keeping an eye on the user's screen in the background. " +
+    "You are shown the current screen. Speak up ONLY if there is something the user " +
+    "would genuinely want flagged right now — an error or crash, a finished " +
+    "download/build/render/export, a notification or message that just arrived, " +
+    "something that looks risky or wrong, or a task that appears to have completed " +
+    "or gotten stuck. Ignore ordinary typing, scrolling, and normal use. If nothing " +
+    "is worth interrupting for, reply with exactly: (nothing). When you do speak, be " +
+    "brief — one short spoken sentence, no markdown, address the user as 'sir'.";
+
+  const watchBtn = document.getElementById("watchBtn");
+
+  async function watchGlance() {
+    if (watchBusy) return;
+    watchBusy = true;
+    lastWatchAt = Date.now();
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: "Glance at my screen and only say something if it's worth interrupting me for." }],
+          system: WATCH_SYSTEM,
+          think: "off",
+          search: false,
+          no_tools: true,        // a passive glance never acts on the machine
+          allow_actions: false,  // and is never authorised to act, belt-and-braces
+          see_screen: true       // server attaches the current screenshot (desktop-only)
+        })
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (typeof data.cost_today === "number" && el.rCost) el.rCost.textContent = "≈$" + data.cost_today.toFixed(2);
+      const say = (data.reply || "").replace(/[*_#`]/g, "").trim();
+      const norm = say.toLowerCase().replace(/[.!]+$/, "");
+      if (!say || norm === WATCH_SENTINEL || norm === "nothing") return;   // all quiet
+      if (say === lastWatchSaid) return;                                   // don't repeat the same flag
+      lastWatchSaid = say;
+      // Only interrupt if ARC is genuinely idle right now.
+      if (state.mode !== "standby" || state.speakingLock || inFlight) return;
+      addEntry("arc", "ARC", say);
+      cue("done");
+      speak(say);
+    } catch (_) {} finally { watchBusy = false; }
+  }
+
+  async function watchTick() {
+    if (!watchMode || !canSeeScreen) return;
+    // Never glance while a real conversation is happening, or too soon after the last look.
+    if (state.mode !== "standby" || state.speakingLock || inFlight || state.holding) return;
+    if (Date.now() - lastWatchAt < WATCH_MIN_GAP) return;
+    if (document.hidden) return;   // tab not visible → nothing to watch
+    try {
+      const r = await (await fetch("/api/screen-watch", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+      })).json();
+      if (r && r.ok && r.changed) watchGlance();
+    } catch (_) {}
+  }
+
+  function setWatch(on) {
+    watchMode = on;
+    if (watchBtn) {
+      watchBtn.classList.toggle("on", on);
+      watchBtn.textContent = "Watch screen: " + (on ? "on" : "off");
+    }
+    clearInterval(watchTimer);
+    if (on) {
+      lastWatchSaid = "";
+      lastWatchAt = Date.now();   // don't fire instantly on enable
+      // Re-baseline the change detector so we don't trip on a stale first frame.
+      fetch("/api/screen-watch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reset: true }) }).catch(() => {});
+      watchTimer = setInterval(watchTick, WATCH_POLL);
+      addEntry("sys", "SYSTEM", "Watch mode on — I'll keep an eye on your screen and speak up if something worth noting changes. Nothing is saved.");
+    } else {
+      addEntry("sys", "SYSTEM", "Watch mode off.");
+    }
+  }
+
+  if (watchBtn) watchBtn.addEventListener("click", () => {
+    if (!canSeeScreen) {
+      addEntry("sys", "SYSTEM", "Watch mode only works on the desktop app, not over the phone.");
+      return;
+    }
+    setWatch(!watchMode);
+  });
+
+  // Second-screen dashboard: opens the /display page in its own window so you
+  // can drag it to your other monitor and full-screen it (press F there).
+  const displayBtn = document.getElementById("displayBtn");
+  if (displayBtn) displayBtn.addEventListener("click", () => {
+    const w = window.open("/display", "arc-second-screen",
+      "width=1280,height=720,menubar=no,toolbar=no,location=no");
+    if (!w) { addEntry("sys", "SYSTEM", "Allow pop-ups for ARC to open the second screen, then try again."); return; }
+    addEntry("sys", "SYSTEM", "Second screen opened — drag that window to your other monitor and press F for full screen. Ask me to “show ... on the second screen” anytime.");
+  });
+
   if (nightBtn) {
     nightBtn.addEventListener("click", () => applyNight(!nightMode));
     try { applyNight(localStorage.getItem("arc.night") === "1"); } catch (_) {}
   }
+
+  /* ---------------- assistant: briefing · routines · meeting nudges ---------------- */
+  const BRIEFING_PROMPT =
+    "Give me my briefing now: a short spoken rundown of today's calendar, the current " +
+    "weather, one or two top news headlines, and how many unread emails I have. Use your " +
+    "tools to get real values. Keep it to about four short sentences, warm and natural.";
+  const BRIEF_RE = /\b(brief me|briefing|brief me up|catch me up|what('?s| is) my day|morning briefing|daily briefing|run down my day|rundown)\b/i;
+  function isBriefingReq(t) { return BRIEF_RE.test((t || "").toLowerCase()); }
+
+  // Routines: lines of "trigger = instruction". Saying a trigger runs the instruction.
+  let routines = [];
+  function normalizePhrase(s) {
+    return (s || "").toLowerCase().replace(/[.,!?;:]/g, "")
+      .replace(/\b(bella|arc|please|hey|ok|okay)\b/g, "").replace(/\s+/g, " ").trim();
+  }
+  function loadRoutines() {
+    try {
+      const raw = localStorage.getItem("arc.routines") || "";
+      routines = raw.split("\n").map(line => {
+        const i = line.indexOf("=");
+        if (i < 0) return null;
+        const trig = normalizePhrase(line.slice(0, i));
+        const instr = line.slice(i + 1).trim();
+        return trig && instr ? { trig, instr } : null;
+      }).filter(Boolean);
+      if (el.routines && document.activeElement !== el.routines) el.routines.value = raw;
+    } catch (_) { routines = []; }
+  }
+  function matchRoutine(text) {
+    const t = normalizePhrase(text);
+    if (!t) return null;
+    // exact match, or the utterance is just the trigger (avoid firing on a long sentence
+    // that merely contains the words).
+    const hit = routines.find(r => t === r.trig || t.replace(/^(run|start|do) /, "") === r.trig);
+    return hit ? hit.instr : null;
+  }
+
+  const el2 = {
+    briefOn: document.getElementById("briefOn"),
+    briefTime: document.getElementById("briefTime"),
+    briefNow: document.getElementById("briefNowBtn"),
+    nudgeOn: document.getElementById("nudgeOn"),
+    nudgeLead: document.getElementById("nudgeLead"),
+    routinesSave: document.getElementById("routinesSave"),
+  };
+  el.routines = document.getElementById("routines");
+
+  // load saved assistant settings
+  try {
+    if (el2.briefOn) el2.briefOn.checked = localStorage.getItem("arc.brief.on") === "1";
+    if (el2.briefTime) el2.briefTime.value = localStorage.getItem("arc.brief.time") || "08:00";
+    if (el2.nudgeOn) el2.nudgeOn.checked = localStorage.getItem("arc.nudge.on") === "1";
+    if (el2.nudgeLead) el2.nudgeLead.value = localStorage.getItem("arc.nudge.lead") || "10";
+  } catch (_) {}
+  loadRoutines();
+
+  function saveAssist() {
+    try {
+      localStorage.setItem("arc.brief.on", el2.briefOn && el2.briefOn.checked ? "1" : "0");
+      localStorage.setItem("arc.brief.time", (el2.briefTime && el2.briefTime.value) || "08:00");
+      localStorage.setItem("arc.nudge.on", el2.nudgeOn && el2.nudgeOn.checked ? "1" : "0");
+      localStorage.setItem("arc.nudge.lead", (el2.nudgeLead && el2.nudgeLead.value) || "10");
+    } catch (_) {}
+  }
+  [el2.briefOn, el2.briefTime, el2.nudgeOn, el2.nudgeLead].forEach(e => {
+    if (e) e.addEventListener("change", saveAssist);
+  });
+  if (el2.briefNow) el2.briefNow.addEventListener("click", () => {
+    if (inFlight) return;
+    submit("Brief me now");
+  });
+  if (el2.routinesSave) el2.routinesSave.addEventListener("click", () => {
+    try { localStorage.setItem("arc.routines", el.routines ? el.routines.value : ""); } catch (_) {}
+    loadRoutines();
+    addEntry("sys", "SYSTEM", "Routines saved (" + routines.length + ").");
+  });
+
+  // Daily briefing scheduler: fires once when the clock hits the set time.
+  let lastBriefDay = "";
+  setInterval(() => {
+    if (!el2.briefOn || !el2.briefOn.checked) return;
+    if (state.mode !== "standby" || inFlight || state.speakingLock) return;
+    const now = new Date();
+    const hhmm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    const day = now.toDateString();
+    if (hhmm === (el2.briefTime ? el2.briefTime.value : "08:00") && lastBriefDay !== day) {
+      lastBriefDay = day;
+      submit("Good morning, brief me");
+    }
+  }, 30000);
+
+  // Meeting nudges: announce each upcoming event once, a lead time before it.
+  const announcedEvents = new Set();
+  async function pollNudges() {
+    if (!el2.nudgeOn || !el2.nudgeOn.checked) return;
+    if (!state.booted || state.mode === "thinking" || state.mode === "speaking" || state.holding || inFlight) return;
+    const lead = Math.max(1, Math.min(60, parseInt((el2.nudgeLead && el2.nudgeLead.value) || "10", 10)));
+    let events = [];
+    try {
+      const d = await (await fetch("/api/calendar/upcoming?lead=" + lead)).json();
+      events = (d && d.events) || [];
+    } catch (_) { return; }
+    for (const ev of events) {
+      const key = ev.id + "@" + ev.start;
+      if (announcedEvents.has(key)) continue;
+      announcedEvents.add(key);
+      const m = ev.minutes;
+      const when = m <= 0 ? "now" : (m === 1 ? "in about a minute" : "in about " + m + " minutes");
+      const line = "You have " + ev.title + " " + when + ", sir.";
+      addEntry("sys", "SYSTEM", "Meeting nudge — " + ev.title + " (" + (m <= 0 ? "now" : m + "m") + ")");
+      cue("done");
+      speak(line);
+      break;   // one nudge at a time; the next poll handles the rest
+    }
+  }
+  setInterval(pollNudges, 60000);
+
+  /* Consent lock button — the switch behind "never act without my say-so". */
+  const consentBtn = document.getElementById("consentBtn");
+  function applyConsent(on) {
+    askFirst = on;
+    if (!on) pendingConsent = false;
+    try { localStorage.setItem("arc.askfirst", on ? "1" : "0"); } catch (_) {}
+    if (consentBtn) {
+      consentBtn.classList.toggle("off", !on);
+      consentBtn.textContent = (on ? "🔒" : "🔓") + " Ask before acting: " + (on ? "on" : "off");
+    }
+  }
+  if (consentBtn) {
+    consentBtn.addEventListener("click", () => {
+      applyConsent(!askFirst);
+      addEntry("sys", "SYSTEM", askFirst
+        ? "Ask-first is on. I won't do anything to your computer — open apps, type, change settings, play media, send messages — without asking you first. I can still look things up freely."
+        : "Ask-first is off. I'll carry out what you ask right away. (I still can't act on my own in the background.)");
+    });
+    applyConsent(askFirst);   // paint initial state from saved preference
+  }
+
+  /* ---------------- per-user Google sign-in ----------------
+     Each person links their OWN Google, so ARC reads their Gmail/Calendar/Drive
+     — never someone else's. The button sends them to Google's consent page and
+     they land back here; status shows whose account is linked. */
+  const googleBtn = document.getElementById("googleBtn");
+  const googleStatusEl = document.getElementById("googleStatus");
+  let googleConnected = false;
+
+  async function refreshGoogleStatus() {
+    if (!googleBtn) return;
+    let d = null;
+    try { d = await (await fetch("/oauth/google/status")).json(); } catch (_) {}
+    if (!d) { googleStatusEl.textContent = ""; return; }
+    if (!d.web_available) {
+      // Per-user Google isn't configured on the server; hide the control.
+      googleBtn.style.display = "none";
+      googleStatusEl.textContent = "";
+      return;
+    }
+    googleConnected = !!d.connected;
+    googleBtn.classList.toggle("on", googleConnected);
+    if (googleConnected) {
+      googleBtn.textContent = "✓ Google connected";
+      const who = d.email ? d.email : "your account";
+      googleStatusEl.innerHTML = "Using " + who + " · <a id=\"gDisc\">disconnect</a>";
+      const disc = document.getElementById("gDisc");
+      if (disc) disc.addEventListener("click", disconnectGoogle);
+    } else {
+      googleBtn.textContent = "Connect Google";
+      googleStatusEl.textContent = "Not linked — connect to use your own mail & calendar.";
+    }
+  }
+
+  async function disconnectGoogle() {
+    try { await fetch("/oauth/google/disconnect", { method: "POST" }); } catch (_) {}
+    addEntry("sys", "SYSTEM", "Google account disconnected.");
+    refreshGoogleStatus();
+    checkHealth();   // the CAL/MAIL/DRIVE chips reflect the change
+  }
+
+  if (googleBtn) {
+    googleBtn.addEventListener("click", () => {
+      if (googleConnected) { disconnectGoogle(); return; }
+      // Full-page redirect to Google's consent screen; we come back to "/".
+      window.location.href = "/oauth/google/start";
+    });
+  }
+
+  // Coming back from Google's consent screen: show the result, tidy the URL.
+  (function handleGoogleReturn() {
+    const q = new URLSearchParams(window.location.search);
+    const g = q.get("google");
+    if (!g) return;
+    if (g === "connected") addEntry("sys", "SYSTEM", "Google connected — I can now use your own Gmail, Calendar and Drive.");
+    else if (g === "denied") addEntry("sys", "SYSTEM", "Google sign-in was cancelled.");
+    else if (g === "error") addEntry("sys", "SYSTEM", "Google sign-in didn't complete — please try again.");
+    q.delete("google");
+    const clean = window.location.pathname + (q.toString() ? "?" + q.toString() : "");
+    window.history.replaceState({}, "", clean);
+  })();
 
   /* A few great circles so the eye reads a surface instead of floating
      points. Rebuilt as flat point lists once, then reprojected each frame. */
@@ -3739,6 +4284,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   el.clearBtn.addEventListener("click", () => {
     el.log.innerHTML = ""; state.history = []; state.turns = 0; el.rTurns.textContent = "0";
     lastReply = "";
+    threadNote = ""; turnsSinceDigest = 0; saveThread();   // fresh start of the thread
     try { localStorage.removeItem(HIST_KEY); } catch (_) {}
     addEntry("sys", "SYSTEM", "Context cleared.");
   });
@@ -3762,6 +4308,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   el.forgetBtn.addEventListener("click", () => {
     memory = [];
     saveMemory();
+    threadNote = ""; turnsSinceDigest = 0; saveThread();
     el.rMem.textContent = "0";
     addEntry("sys", "SYSTEM", "Long-term memory wiped.");
   });
@@ -3837,32 +4384,240 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     try { tickers = JSON.parse(localStorage.getItem("arc.tickers") || "null"); } catch (_) {}
     if (!Array.isArray(tickers) || !tickers.length) tickers = ["AAPL", "TSLA", "NVDA", "BTC-USD"];
 
+    // editIdx: null = not editing; -1 = adding a new ticker; >=0 = replacing that row.
+    let editIdx = null;
+    let lastQuotes = [];
+
+    function save() {
+      try { localStorage.setItem("arc.tickers", JSON.stringify(tickers)); } catch (_) {}
+    }
+
+    // Turn typed text ("apple", "bitcoin", "nvda") into a real ticker via the
+    // server-side Yahoo resolver, then add/replace it in the list.
+    async function resolveAndSet(idx, text) {
+      const q = (text || "").trim();
+      if (!q) { editIdx = null; render(); return; }
+      let sym = null;
+      try {
+        const r = await (await fetch("/api/stock-search?q=" +
+          encodeURIComponent(q))).json();
+        sym = r && r.symbol;
+      } catch (_) {}
+      if (!sym) sym = q.toUpperCase();       // fall back to raw text as a ticker
+      if (idx === -1) {
+        if (!tickers.includes(sym)) tickers.push(sym);
+      } else {
+        tickers[idx] = sym;
+      }
+      save();
+      editIdx = null;
+      await load();
+    }
+
+    function render() {
+      let html = '<div class="st-title"><span>markets</span>' +
+        '<span class="st-add" data-add="1" title="add a stock">+</span></div>';
+      const q = lastQuotes;
+      if (!q.length && editIdx === null) {
+        html += '<div class="st-row" data-i="0"><span class="st-sym">unavailable</span></div>';
+      }
+      q.forEach((s, i) => {
+        const price = s.price >= 1000 ? Math.round(s.price).toLocaleString()
+                                      : (Math.round(s.price * 100) / 100);
+        const pct = (s.pct == null) ? "" : (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%";
+        const cls = (s.pct == null) ? "" : (s.pct >= 0 ? "st-up" : "st-down");
+        const sym = String(s.symbol).replace("-USD", "");
+        html += '<div class="st-row" data-i="' + i + '" title="click to change">' +
+          '<span class="st-sym">' + sym + '</span>' +
+          '<span class="st-right"><span class="st-price">' + price + '</span> ' +
+          '<span class="' + cls + '">' + pct + '</span>' +
+          '<span class="st-del" data-del="1" title="remove ' + sym + '">✕</span></span></div>';
+      });
+      if (editIdx !== null) {
+        const ph = editIdx === -1 ? "add stock name…" : "new stock name…";
+        html += '<input class="st-edit" type="text" placeholder="' + ph +
+          '" autocomplete="off" spellcheck="false">';
+        html += '<div class="st-hint">enter to set · esc to cancel</div>';
+      } else {
+        html += '<div class="st-hint">＋ add · click to change · ✕ to remove</div>';
+      }
+      box.innerHTML = html;
+      if (editIdx !== null) {
+        const inp = box.querySelector(".st-edit");
+        if (inp) {
+          inp.focus();
+          inp.addEventListener("keydown", e => {
+            if (e.key === "Enter") { e.preventDefault(); resolveAndSet(editIdx, inp.value); }
+            else if (e.key === "Escape") { editIdx = null; render(); }
+          });
+          inp.addEventListener("blur", () => {
+            // Cancel on blur unless a value was already committed.
+            if (editIdx !== null) { editIdx = null; render(); }
+          });
+        }
+      }
+    }
+
+    function removeAt(i) {
+      if (isNaN(i) || i < 0 || i >= tickers.length) return;
+      tickers.splice(i, 1);
+      save();
+      if (!tickers.length) lastQuotes = [];   // nothing left to show
+      load();
+    }
+
+    box.addEventListener("click", e => {
+      if (e.target.closest(".st-edit")) return;
+      const add = e.target.closest(".st-add");
+      if (add) { editIdx = -1; render(); return; }
+      const row = e.target.closest(".st-row");
+      if (!row) return;
+      const i = parseInt(row.getAttribute("data-i"), 10);
+      if (isNaN(i) || i >= tickers.length) return;
+      // The ✕ button (or the old shift-click) removes this market.
+      if (e.target.closest(".st-del") || e.shiftKey) { removeAt(i); return; }
+      editIdx = i;
+      render();
+    });
+
     async function load() {
       try {
         const d = await (await fetch("/api/stocks?symbols=" +
           encodeURIComponent(tickers.join(",")))).json();
-        const q = (d && d.quotes) || [];
-        if (!q.length) {
-          box.innerHTML = '<div class="st-title">markets</div>' +
-            '<div class="st-row"><span class="st-sym">unavailable</span></div>';
-          return;
-        }
-        let html = '<div class="st-title">markets</div>';
-        q.forEach(s => {
-          const price = s.price >= 1000 ? Math.round(s.price).toLocaleString()
-                                        : (Math.round(s.price * 100) / 100);
-          const pct = (s.pct == null) ? "" : (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%";
-          const cls = (s.pct == null) ? "" : (s.pct >= 0 ? "st-up" : "st-down");
-          const sym = String(s.symbol).replace("-USD", "");
-          html += '<div class="st-row"><span class="st-sym">' + sym + '</span>' +
-            '<span><span class="st-price">' + price + '</span> ' +
-            '<span class="' + cls + '">' + pct + '</span></span></div>';
-        });
-        box.innerHTML = html;
-      } catch (_) {}
+        lastQuotes = (d && d.quotes) || [];
+      } catch (_) { lastQuotes = []; }
+      if (editIdx === null) render();        // don't clobber an open editor
     }
+    render();
     load();
     setInterval(load, 60000);
+  })();
+
+  /* ---------- draggable HUD panels ----------
+     Grab the weather or stock panel anywhere and drag it. Positions persist
+     in localStorage. A small movement threshold means a plain click still
+     edits a stock — only real drags reposition. */
+  (function draggablePanels() {
+    const KEY = "arc.panelPos";
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (_) {}
+
+    function persist() {
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (_) {}
+    }
+
+    function applyPos(el, p) {
+      // Switch from the CSS right/top anchoring to explicit left/top.
+      el.style.left = p.x + "px";
+      el.style.top = p.y + "px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+    }
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    function makeDraggable(el) {
+      if (!el) return;
+      const id = el.id;
+      if (saved[id]) applyPos(el, saved[id]);
+
+      let startX, startY, baseL, baseT, dragging, pid;
+
+      el.addEventListener("pointerdown", e => {
+        // Don't hijack the stock editor input or its buttons for dragging.
+        if (e.target.closest(".st-edit")) return;
+        if (e.button !== 0) return;
+        const r = el.getBoundingClientRect();
+        baseL = r.left; baseT = r.top;
+        startX = e.clientX; startY = e.clientY;
+        dragging = false; pid = e.pointerId;
+        el.setPointerCapture(pid);
+      });
+
+      el.addEventListener("pointermove", e => {
+        if (pid == null || e.pointerId !== pid) return;
+        const dx = e.clientX - startX, dy = e.clientY - startY;
+        if (!dragging && Math.hypot(dx, dy) < 5) return;   // still a click
+        if (!dragging) { dragging = true; el.classList.add("dragging"); }
+        const w = el.offsetWidth, h = el.offsetHeight;
+        const x = clamp(baseL + dx, 4, window.innerWidth - w - 4);
+        const y = clamp(baseT + dy, 4, window.innerHeight - h - 4);
+        applyPos(el, { x, y });
+      });
+
+      function end(e) {
+        if (pid == null || (e && e.pointerId !== pid)) return;
+        try { el.releasePointerCapture(pid); } catch (_) {}
+        pid = null;
+        if (dragging) {
+          const r = el.getBoundingClientRect();
+          saved[id] = { x: Math.round(r.left), y: Math.round(r.top) };
+          persist();
+          // Swallow the click that follows a drag so it doesn't edit a stock.
+          el.addEventListener("click", ev => {
+            ev.stopPropagation(); ev.preventDefault();
+          }, { capture: true, once: true });
+        }
+        dragging = false;
+        el.classList.remove("dragging");
+      }
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+    }
+
+    ["forecast", "stocks"].forEach(id => makeDraggable(document.getElementById(id)));
+
+    // Keep panels on-screen if the window shrinks.
+    window.addEventListener("resize", () => {
+      ["forecast", "stocks"].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el || !saved[id]) return;
+        const w = el.offsetWidth, h = el.offsetHeight;
+        const x = clamp(saved[id].x, 4, window.innerWidth - w - 4);
+        const y = clamp(saved[id].y, 4, window.innerHeight - h - 4);
+        saved[id] = { x, y }; applyPos(el, saved[id]);
+      });
+      persist();
+    });
+
+    const resetBtn = document.getElementById("resetPanelsBtn");
+    if (resetBtn) resetBtn.addEventListener("click", () => {
+      saved = {}; persist();
+      ["forecast", "stocks"].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.left = el.style.top = el.style.right = el.style.bottom = "";
+      });
+    });
+  })();
+
+  /* ---------- full-screen toggle ---------- */
+  (function fullscreen() {
+    const btn = document.getElementById("fullscreenBtn");
+    function isFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+    function toggle() {
+      const root = document.documentElement;
+      if (!isFs()) {
+        (root.requestFullscreen || root.webkitRequestFullscreen || (() => {})).call(root);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+      }
+    }
+    function sync() {
+      if (btn) btn.textContent = isFs() ? "⛶ Exit full screen" : "⛶ Full screen";
+    }
+    if (btn) btn.addEventListener("click", toggle);
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    // Press "F" to toggle — but not while typing.
+    document.addEventListener("keydown", e => {
+      if (e.key !== "f" && e.key !== "F") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = document.activeElement;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault(); toggle();
+    });
+    sync();
   })();
 
   /* ---------------- boot sequence ---------------- */
@@ -3900,6 +4655,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       if (liveScreenBtn) {
         liveScreenBtn.disabled = !canSeeScreen;
         if (!canSeeScreen) { liveScreen = false; liveScreenBtn.classList.remove("on"); liveScreenBtn.textContent = "Live screen: n/a"; }
+      }
+      if (typeof watchBtn !== "undefined" && watchBtn) {
+        watchBtn.disabled = !canSeeScreen;
+        if (!canSeeScreen && typeof setWatch === "function") { if (watchMode) setWatch(false); watchBtn.textContent = "Watch screen: n/a"; }
       }
       paintCaps(h);
     } catch (e) {
@@ -3953,6 +4712,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     restoreTimers();
     restoreHistory();
     startReminderPoll();
+    refreshGoogleStatus();
     setMode("standby");
 
     await new Promise(r => setTimeout(r, 420));
