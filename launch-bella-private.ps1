@@ -8,8 +8,12 @@
 # Shortcut it, or just run:  powershell -ExecutionPolicy Bypass -File launch-bella-private.ps1
 
 $ErrorActionPreference = 'Stop'
-$root = 'C:\dev\arc-voice-assistant\arc'
-$data = 'C:\dev\arc-voice-assistant\bella-private'   # private data lives here (not in the repo)
+# Both derived from this script's own location, so a clone works wherever it
+# lands on a second machine. The data folder sits beside the repo, not inside
+# it — it holds a passphrase and a signed-in browser profile, and must never
+# be committed.
+$root = $PSScriptRoot
+$data = Join-Path (Split-Path $PSScriptRoot -Parent) 'bella-private'
 $port = 8421
 
 # Pick a REAL Python — never the Microsoft Store alias in WindowsApps, which is

@@ -35,6 +35,59 @@ app…*) and it behaves like any installed app. Because the microphone needs rea
 Chrome/Edge, this stays a Chromium app rather than a bundled Electron `.exe`
 (which would break voice).
 
+### On a second machine
+
+```
+git clone https://github.com/theepangnani/ARC-BELLA.git arc
+cd arc
+pip install -r requirements.txt
+```
+
+The launchers work out their own paths, so the clone can live anywhere — it
+does not have to be `C:\dev\arc-voice-assistant\arc`.
+
+Four things are deliberately **not** in the repo, because they are secrets or
+machine-specific. You have to supply each one:
+
+| What | How to get it on the new machine |
+| --- | --- |
+| `.env` | `cp .env.example .env`, then paste your Anthropic key. Copy the ElevenLabs values across too if you use a real voice. |
+| `credentials.json` / `credentials_web.json` | Re-download from the Google Cloud console for the same project. These are per-user OAuth clients. |
+| `token.json`, `google_sessions/` | Nothing to copy — sign in through the app once and they regenerate. |
+| `cloudflared.exe` | Download per-machine; it's a large binary, deliberately untracked. |
+
+Carry `.env` across by hand — a password manager or a direct transfer, not
+email and not a git commit.
+
+### The private Bella on a second machine
+
+`bella-private/` is **not a repository and should never become one.** It is a
+data folder the launcher creates for itself, and it holds two things you would
+not want on GitHub: your passphrase, and a 200 MB+ signed-in Chrome profile.
+
+There is nothing to clone. Just run the launcher:
+
+```
+powershell -ExecutionPolicy Bypass -File launch-bella-private.ps1
+```
+
+It creates the folder beside the repo, prompts for a passphrase, and opens on
+port 8421. Sign in to Google once and the private instance is fully set up —
+its reminders, notes and price alerts start empty, separate from the shared
+Bella by design.
+
+If you want the same settings as your first machine, copy the template rather
+than the live file:
+
+```
+cp arc.env.example ../bella-private/arc.env
+```
+
+Then fill it in. The one thing that genuinely cannot be regenerated is the
+*contents* of the private instance — reminders, notes, watchlists. Those are
+per-machine by design; if you want them on both laptops, copy the individual
+`.json` files out of `bella-private/` by hand.
+
 ### On your phone
 
 There's no app-store download — ARC is a server you run, not a native app. But

@@ -4,7 +4,9 @@
 # duplicate window) — if the core is already up, it just opens a fresh window.
 
 $ErrorActionPreference = 'SilentlyContinue'
-$root = 'C:\dev\arc-voice-assistant\arc'
+# Derived from this script's own location, never hardcoded, so a clone works
+# wherever it lands on a second machine.
+$root = $PSScriptRoot
 $port = 8420
 
 function PortUp($p) {
