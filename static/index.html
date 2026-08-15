@@ -317,13 +317,13 @@
   /* Slowly rotate every glow colour through the full RGB spectrum. */
   @keyframes nightRGB { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
   @keyframes nightGlow { from { opacity: .72; } to { opacity: .95; } }
-  #micFixBtn {
+  #micFixBtn, #reconnectBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
     background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
   }
-  #micFixBtn:hover { color: var(--ice); border-color: var(--accent); }
-  #micFixBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
+  #micFixBtn:hover, #reconnectBtn:hover { color: var(--ice); border-color: var(--accent); }
+  #micFixBtn.working, #reconnectBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
   #liveScreenBtn, #watchBtn, #displayBtn {
     width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 9px 4px; cursor: pointer;
@@ -1011,6 +1011,7 @@
       <button id="displayBtn" title="Open ARC's second-screen dashboard — a big clock, live markets, and whatever you ask ARC to show. Drag it to your second monitor and press F for full screen.">🖥 Open second screen</button>
       <button id="cameraBtn" title="Capture one photo from your camera and ask ARC what it sees. Nothing is saved.">📷 Show ARC (camera)</button>
       <button id="micFixBtn" title="Re-request the microphone and rebuild voice recognition from scratch">Reconnect mic</button>
+      <button id="reconnectBtn" title="Reconnect to ARC after a dropped connection — restores the neural voice, rechecks the server, and rebuilds voice input in one tap">Reconnect ARC</button>
       <button id="fullscreenBtn" title="Toggle full-screen (or press F)">⛶ Full screen</button>
       <button id="resetPanelsBtn" title="Snap the weather and stock panels back to their default spots">Reset panels</button>
 
@@ -2193,7 +2194,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   async function initAudio() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
+        // autoGainControl lifts quiet/soft speech so you don't have to raise
+        // your voice; echo/noise suppression keep it clean.
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
       if (IS_MOBILE) {
         // We only opened it to trigger/confirm the mic permission. Release it
@@ -2682,6 +2685,42 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
     addEntry("sys", "SYSTEM", "Microphone reconnected. Go ahead.");
     if (state.wakeArmed || state.holding) setTimeout(startRecognition, 300);
+  }
+
+  // User-initiated "Reconnect ARC": the recovery for a dropped CONNECTION (not
+  // the mic). A server restart or a network blip leaves ARC showing "Couldn't
+  // reach ARC" and its voice fallen back to the browser synth. One tap here
+  // rechecks the backend, restores the neural voice, and rebuilds voice input —
+  // so you're never stuck waiting for the automatic retries to catch up.
+  async function reconnectArc() {
+    const btn = document.getElementById("reconnectBtn");
+    if (btn) { btn.classList.add("working"); btn.textContent = "Reconnecting…"; }
+    addEntry("sys", "SYSTEM", "Reconnecting to ARC…");
+
+    // 1. Stop any wedged or fallen-back speech and clear the speaking state.
+    try { speechSynthesis.cancel(); } catch (_) {}
+    try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
+    state.currentAudio = null;
+    state.speakingLock = false;
+    speakGen++;               // supersede anything mid-speak
+    synthMisses = 0;
+    setMode("standby");
+
+    // 2. Recheck the backend — restores the neural voice, capability chips and
+    //    the model readout if ARC is reachable again.
+    try { await checkHealth(); } catch (_) {}
+    const online = window.__arcBrainReady === true;
+
+    // 3. Clear the recogniser's give-up / back-off flags and rebuild it fresh so
+    //    a dropped mic session returns without waiting on the cooldown.
+    gaveUp = false; rebuilds = 0; lastRebuildAt = 0; recogFails = 0;
+    recovering = false; startPending = false;
+    try { rebuildRecognition(); } catch (_) {}
+
+    if (btn) { btn.classList.remove("working"); btn.textContent = "Reconnect ARC"; }
+    addEntry("sys", "SYSTEM", online
+      ? "Reconnected to ARC. Go ahead."
+      : "ARC is still unreachable — make sure it's running, then tap Reconnect ARC again.");
   }
 
   // 80ms normally; grows to a couple of seconds if the service keeps failing
@@ -3196,20 +3235,33 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       onDone && onDone();
     };
 
-    async function fetchChunk(t) {
-      const tctrl = new AbortController();
-      const td = setTimeout(() => tctrl.abort(), 20000);
-      try {
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: t, voice: selectedVoice }),
-          signal: tctrl.signal
-        });
-        clearTimeout(td);
-        if (!res.ok) throw new Error("tts " + res.status);
-        return URL.createObjectURL(await res.blob());
-      } catch (e) { clearTimeout(td); throw e; }
+    async function fetchChunk(t, tries) {
+      // Retry a couple of times: a single transient TTS hiccup on a MIDDLE
+      // sentence used to end the whole reply early (the voice "cut out" mid-
+      // thought). A brief retry recovers almost all of those before we ever give up.
+      tries = tries || 3;
+      let lastErr;
+      for (let attempt = 1; attempt <= tries; attempt++) {
+        const tctrl = new AbortController();
+        const td = setTimeout(() => tctrl.abort(), 20000);
+        try {
+          const res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: t, voice: selectedVoice }),
+            signal: tctrl.signal
+          });
+          clearTimeout(td);
+          if (!res.ok) throw new Error("tts " + res.status);
+          return URL.createObjectURL(await res.blob());
+        } catch (e) {
+          clearTimeout(td);
+          lastErr = e;
+          if (done || gen !== speakGen) throw e;           // superseded — stop trying
+          if (attempt < tries) await new Promise(r => setTimeout(r, 220 * attempt));
+        }
+      }
+      throw lastErr;
     }
 
     function playUrl(url, chunkText) {
@@ -3254,7 +3306,22 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         if (done || gen !== speakGen) return;
         const url = await nextFetch;
         if (done || gen !== speakGen) { try { URL.revokeObjectURL(url); } catch (_) {} return; }
-        if (url == null) { finish(); return; }     // a later chunk failed to synthesise
+        if (url == null) {
+          // A later chunk failed even after retries. Don't cut the reply off
+          // mid-thought — finish the REMAINING sentences in the browser voice.
+          const rest = chunks.slice(i).join(" ").trim();
+          clearTimeout(stallGuard);
+          cleanupTap();
+          state.currentAudio = null;
+          if (rest && !done && gen === speakGen) {
+            done = true;                  // hand off; the browser path owns completion
+            state.speakingLock = false;
+            speak(rest, onDone, true);    // force the browser voice for the remainder
+            return;
+          }
+          finish();
+          return;
+        }
         // Kick off the NEXT chunk's synthesis before playing this one.
         nextFetch = (i + 1 < chunks.length) ? fetchChunk(chunks[i + 1]).catch(() => null) : null;
         await playUrl(url, chunks[i]);
@@ -3336,9 +3403,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     addEntry("sys", "SYSTEM", "Speech engine restarted.");
   }
 
-  function speak(text, onDone) {
+  function speak(text, onDone, forceBrowser) {
     if (!text) { onDone && onDone(); return; }
-    if (state.engine === "elevenlabs") { speakRemote(text, onDone); return; }
+    if (state.engine === "elevenlabs" && !forceBrowser) { speakRemote(text, onDone); return; }
 
     const gen = ++speakGen;
     speechSynthesis.cancel();
@@ -3948,6 +4015,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
   const micFixBtn = document.getElementById("micFixBtn");
   if (micFixBtn) micFixBtn.addEventListener("click", reconnectMic);
+  const reconnectBtn = document.getElementById("reconnectBtn");
+  if (reconnectBtn) reconnectBtn.addEventListener("click", reconnectArc);
 
   const personaBtn = document.getElementById("personaBtn");
   function applyPersona(mode, announce) {
@@ -3977,7 +4046,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // ---- brain switch: flip between the smart (Sonnet) and fast (Haiku) model,
   // live, per device. Stored per-origin so the phone and the desktop can differ.
   // Sent with every message as `model`; the server maps it to a real id.
-  window.__arcModel = (() => { try { return localStorage.getItem("arc.model") || "smart"; } catch (_) { return "smart"; } })();
+  // Saved choice wins; otherwise start on "smart" provisionally and let the
+  // server's default_brain decide once /api/health returns (private → fast).
+  const __brainSaved = (() => { try { return localStorage.getItem("arc.model"); } catch (_) { return null; } })();
+  window.__arcModel = __brainSaved || "smart";
+  window.__brainUserSet = !!__brainSaved;   // only a real user toggle locks it in
   const modelBtn = document.getElementById("modelBtn");
   function paintModelReadout() {
     // Only reflect the brain when the backend is actually reachable and keyed —
@@ -4004,6 +4077,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
   if (modelBtn) modelBtn.addEventListener("click", () => {
     window.__arcModel = window.__arcModel === "fast" ? "smart" : "fast";
+    window.__brainUserSet = true;   // an explicit choice; stop following the server default
     try { localStorage.setItem("arc.model", window.__arcModel); } catch (_) {}
     applyModel(true);
   });
@@ -5047,6 +5121,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       const h = await (await fetch("/api/health")).json();
       // Reachable and keyed → the brain readout may show the picked model.
       window.__arcBrainReady = !!h.claude;
+      // Adopt this instance's default brain (private → fast) until the user
+      // makes their own pick — so the private Bella feels snappy out of the box.
+      if (!window.__brainUserSet && (h.default_brain === "fast" || h.default_brain === "smart")
+          && h.default_brain !== window.__arcModel) {
+        window.__arcModel = h.default_brain;
+        if (typeof applyModel === "function") applyModel(false);
+      }
       // Show the brain the user actually picked (Smart/Fast), not just the
       // server default — the switch is client-side and per-device.
       if (typeof paintModelReadout === "function") paintModelReadout();

@@ -54,6 +54,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 APP_VARIANT = os.getenv("ARC_APP_VARIANT", "").strip().lower()
 PRIVATE_APP = APP_VARIANT == "private"
 
+# Which brain a fresh browser starts on (the UI's Smart/Fast switch, per-device,
+# can override and remember). The private Bella defaults to Fast so it feels
+# snappy out of the box; the shared one defaults to Smart. Overridable by env.
+DEFAULT_BRAIN = (os.getenv("ARC_DEFAULT_BRAIN") or ("fast" if PRIVATE_APP else "smart")).strip().lower()
+if DEFAULT_BRAIN not in ("smart", "fast"):
+    DEFAULT_BRAIN = "smart"
+
 # Tool modules read their configuration (TG_API_ID, ARC_EMAIL_ALLOWLIST, ...)
 # from the environment at import time, so they MUST be imported after .env is
 # loaded â€” import them earlier and those settings silently read empty.
@@ -765,8 +772,10 @@ async def health(request: Request, _=Depends(require_auth)):
         # use server audio instead of the browser's robot voice.
         "elevenlabs": True,
         "model": MODEL,
-        # The two brains the UI's Smart/Fast switch can pick between.
+        # The two brains the UI's Smart/Fast switch can pick between, and which
+        # one a fresh browser should start on (private = fast, shared = smart).
         "models": MODEL_CHOICES,
+        "default_brain": DEFAULT_BRAIN,
     }
 
 
