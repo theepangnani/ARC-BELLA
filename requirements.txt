@@ -1,12 +1,20 @@
+# Server
 fastapi>=0.115
 uvicorn[standard]>=0.32
 httpx>=0.27
 python-dotenv>=1.0
+
+# Reasoning
 anthropic>=0.69
+
+# Google — calendar, email, contacts, Drive
 google-api-python-client>=2.150
 google-auth-oauthlib>=1.2
+
+# Telegram
 telethon>=1.36
+
+# Voice, QR for phone pairing, image handling
+edge-tts>=6.1
 segno>=1.6
-edge-tts>=6.1
 pillow>=10.0
-edge-tts>=6.1
