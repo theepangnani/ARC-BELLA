@@ -488,6 +488,28 @@
   }
   .live:empty::after { content: "—"; color: var(--line); }
 
+  /* input meter — proof ARC is hearing you, on phone as well as desktop */
+  .hearmeter {
+    display: flex; align-items: center; gap: 8px;
+    width: min(340px, 74vw); margin: 12px auto 0;
+    height: 8px;
+  }
+  .hearmeter .hearlbl {
+    font-family: var(--mono); font-size: 8px; letter-spacing: .16em;
+    color: var(--cyan-dim); white-space: nowrap;
+  }
+  .hearmeter > i {
+    flex: 1; display: block; height: 8px; position: relative;
+    border: 1px solid var(--line); background: rgba(4,7,12,.6); overflow: hidden;
+  }
+  .hearmeter > i::after {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+    width: var(--hear, 0%);
+    background: linear-gradient(90deg, var(--cyan-dim), var(--accent));
+    box-shadow: 0 0 8px rgba(95,217,255,.55);
+    transition: width .09s linear;
+  }
+
   /* ---------- transcript ---------- */
   .log {
     flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
@@ -947,6 +969,13 @@
     </div>
 
     <div class="live" id="live"></div>
+    <!-- Input meter: shows whether ARC is actually hearing you. Real mic level
+         on desktop; driven by the recogniser's own events on mobile (where the
+         mic is handed to the recogniser and there's no separate analyser). -->
+    <div class="hearmeter" id="hearMeter" title="Input level — fills when ARC hears you">
+      <span class="hearlbl">HEARING</span>
+      <i id="hearFill"></i>
+    </div>
   </div>
 
   <!-- RIGHT: transcript -->
@@ -2239,6 +2268,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   function idleFloor(i) {
     return 0.035 + 0.05 * Math.pow(0.5 + 0.5 * Math.sin(idlePhase - i * 0.16), 3);
   }
+  // "Is it hearing me?" — on mobile the mic is handed to the recogniser and
+  // there's no analyser, so we synthesise an input level from the recogniser's
+  // own sound / speech / interim events. noteHeard() bumps it; renderLoop decays it.
+  let micActivity = 0;
+  const hearFill = document.getElementById("hearFill");
+  function noteHeard(strength) { micActivity = Math.min(1, Math.max(micActivity, strength || 0)); }
+
   function renderLoop() {
     let amp = 0;
     const N = geo.length || BAR_COUNT;   // the sphere uses more bars than the ring
@@ -2278,8 +2314,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       }
       amp = Math.min(1, (sum / N) * 1.5);
     } else {
-      for (let i = 0; i < N; i++) setBar(i, idleFloor(i));
-      amp = 0.02 + 0.02 * (0.5 + 0.5 * Math.sin(idlePhase * 0.9));
+      // No analyser here (mobile hands the mic to the recogniser). Drive the
+      // core from the recogniser's "I hear you" events so you can SEE it listen.
+      micActivity *= 0.9;                       // decay between events
+      for (let i = 0; i < N; i++) {
+        const wobble = micActivity * (0.55 + 0.45 * Math.abs(Math.sin(idlePhase * 3 + i * 0.5)));
+        setBar(i, Math.max(idleFloor(i), wobble));
+      }
+      amp = Math.max(0.02 + 0.02 * (0.5 + 0.5 * Math.sin(idlePhase * 0.9)), micActivity);
     }
 
     idlePhase += 0.028;
@@ -2301,6 +2343,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const shown = Math.min(1, amp * boost());
     document.documentElement.style.setProperty("--amp", shown.toFixed(3));
     if (state.booted) el.rLvl.textContent = Math.round(amp * 100) + "%";  // raw level, not boosted
+    // Visible input meter: real mic level on desktop, recogniser-driven on
+    // mobile; zero while ARC is speaking (it isn't listening then).
+    if (hearFill) {
+      const inLevel = speaking ? 0 : (state.analyser ? amp : micActivity);
+      hearFill.style.setProperty("--hear", Math.round(Math.min(1, inLevel) * 100) + "%");
+    }
     requestAnimationFrame(renderLoop);
   }
 
@@ -2474,6 +2522,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
       if (interim) {
         el.live.textContent = interim;
+        noteHeard(0.85);   // words are arriving — keep the input meter alive
         // still talking — don't let the silence timer fire mid-sentence
         if (state.wakeArmed) nudgeBuffer();
       }
@@ -2543,9 +2592,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         cue("wake");
       }
     };
-    r.onaudiostart = recogAlive;
-    r.onspeechstart = recogAlive;
-    r.onsoundstart = recogAlive;
+    // These also feed the input meter — the only "is it hearing me" signal on
+    // mobile, where there's no audio analyser.
+    r.onaudiostart = () => { recogAlive(); noteHeard(0.28); };
+    r.onsoundstart = () => { recogAlive(); noteHeard(0.55); };
+    r.onspeechstart = () => { recogAlive(); noteHeard(0.9); };
 
     r.onend = () => {
       recogAlive();
