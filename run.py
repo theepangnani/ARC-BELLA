@@ -271,6 +271,20 @@ GUEST_EMAILS = {e.strip().lower() for e in
                 if e.strip()}
 ALLOWED_EMAILS |= GUEST_EMAILS
 
+# The owner is not on a timer. Idle and absolute timeouts are there so a
+# session cannot outlive the person using it — a phone left on a table, a
+# borrowed laptop, a guest's stolen cookie. None of that describes the person
+# whose machine this is, and signing in again every thirty minutes on your own
+# desktop is a cost with nothing bought by it. Guests keep both clocks.
+#
+# Set ARC_OWNER_SESSION_UNLIMITED=0 to put the owner back on the same timers as
+# everyone else. Either way the session is still revocable: /api/logout, or
+# deleting sessions.json, ends it at once.
+OWNER_EMAILS = ALLOWED_EMAILS - GUEST_EMAILS
+OWNER_UNLIMITED = os.getenv("ARC_OWNER_SESSION_UNLIMITED", "1").strip().lower() \
+    not in ("0", "false", "no", "off")
+session.set_unlimited(OWNER_EMAILS if OWNER_UNLIMITED else ())
+
 # Pins the OAuth redirect_uri instead of deriving it from forwarding headers a
 # client can set. Leave empty on the desktop; set it to the funnel origin
 # (https://…ts.net) when tunnelling.
@@ -325,6 +339,20 @@ async def lifespan(app: FastAPI):
         anthropic.AsyncAnthropic(api_key=ANTHROPIC_KEY, timeout=90.0)
         if ANTHROPIC_KEY else None
     )
+    # Anything left in google_sessions/ that no session points at is a live
+    # Google refresh token nobody can use and nobody will notice. Clearing it
+    # at startup is the one moment we know the store is settled.
+    if AUTH_MODE != "open":
+        try:
+            # Called straight, not through a thread: it is one directory scan
+            # of a handful of files, and it runs before the first request.
+            n = prune_orphan_google_tokens()
+            if n:
+                print(f"{C_DIM}  · cleared {n} orphaned google token"
+                      f"{'s' if n != 1 else ''}{C_OFF}")
+        except Exception:
+            pass
+
     # Phone-push loop: watch for reminders coming due and push them to the owner's
     # phone even with no browser open. Only runs when ntfy is configured; a single
     # owner topic means pushes never reach a signed-in visitor. Best-effort — any
@@ -458,7 +486,18 @@ def current_session(request: Request, touch: bool | None = None):
                 touch = alarm.armed()
             except Exception:
                 touch = False
-    return session.validate(request.cookies.get(COOKIE, ""), touch=touch)
+    sid = request.cookies.get(COOKIE, "")
+    rec = session.validate(sid, touch=touch)
+    # The allowlist is the authority; the session record only caches what it
+    # said at sign-in. Taking an address out of .env has to end its access at
+    # the next request rather than whenever its session happens to lapse —
+    # which, for an unlimited one, is never. Cheap: a set lookup per request.
+    if rec and (rec.get("email") or "").lower() not in ALLOWED_EMAILS:
+        session.revoke(sid)          # takes its Google token with it
+        print(f"{C_AMBER}  ! signed out {rec.get('email')} — no longer on the "
+              f"allowlist{C_OFF}")
+        return None
+    return rec
 
 
 def authed(request: Request) -> bool:
@@ -515,10 +554,23 @@ def cookie_secure(request: Request) -> bool:
 COOKIE_MAX_AGE_UNCAPPED = 30 * 24 * 3600
 
 
-def set_session_cookie(resp, sid: str, request: Request):
+# Browsers clamp a cookie's lifetime to 400 days no matter what is asked for,
+# so this is "as long as it is possible to ask for" rather than an opinion.
+# It is only how long the BROWSER keeps its copy; the server decides whether
+# the session behind it is still live.
+COOKIE_MAX_AGE_UNLIMITED = 400 * 24 * 3600
+
+
+def set_session_cookie(resp, sid: str, request: Request, email: str = ""):
+    # An owner session that never expires server-side must not be undone by the
+    # browser throwing the cookie away on the absolute cap's schedule.
+    if session.unlimited(email):
+        max_age = COOKIE_MAX_AGE_UNLIMITED
+    else:
+        max_age = int(session.MAX_AGE) if session.MAX_AGE else COOKIE_MAX_AGE_UNCAPPED
     resp.set_cookie(
         COOKIE, sid,
-        max_age=int(session.MAX_AGE) if session.MAX_AGE else COOKIE_MAX_AGE_UNCAPPED,
+        max_age=max_age,
         httponly=True,                    # JavaScript can't read it
         secure=cookie_secure(request),
         samesite="lax",
@@ -549,6 +601,31 @@ def google_path(sid: str) -> Path:
 # A session's Google token dies with the session, rather than lingering on disk
 # after the access it belonged to has expired.
 session.set_evict_hook(lambda key: google_path_for_key(key).unlink(missing_ok=True))
+
+
+def prune_orphan_google_tokens() -> int:
+    """Delete token files no session can reach any more.
+
+    The evict hook covers the ordinary path, but not the two ways a token gets
+    stranded: the process being killed between writing the token and writing
+    the store, and someone deleting sessions.json to sign everybody out — which
+    the README recommends, and which on its own leaves every refresh token
+    sitting there belonging to nobody.
+
+    Only 64-hex names are considered, so `none.json` (the deliberate dead end
+    for requests with no session) is never touched.
+    """
+    live = session.live_keys()
+    gone = 0
+    for f in GOOGLE_DIR.glob("*.json"):
+        key = f.stem
+        if len(key) == 64 and all(c in "0123456789abcdef" for c in key) and key not in live:
+            try:
+                f.unlink()
+                gone += 1
+            except Exception:
+                pass
+    return gone
 
 
 def apply_session_google(request: Request):
@@ -843,7 +920,14 @@ if (why && REASONS[why]) document.getElementById("e").textContent = REASONS[why]
 # Says what actually happens, which depends on whether the absolute cap is on.
 # Promising "at most N hours" with no cap configured would simply be untrue.
 _idle_mins = f"{session.IDLE_AGE / 60:g}"
-if session.MAX_AGE:
+if OWNER_UNLIMITED and GUEST_EMAILS:
+    _session_note = ("Sign-in is limited to the owner's Google account, plus invited guests. "
+                     f"The owner stays signed in; guests are signed out after {_idle_mins} "
+                     "minutes idle.")
+elif OWNER_UNLIMITED:
+    _session_note = ("Sign-in is limited to the owner's Google account. You stay signed in "
+                     "until you sign out.")
+elif session.MAX_AGE:
     _session_note = (f"Sign-in is limited to the owner's Google account. You stay signed in "
                      f"while you're using it, and at most {session.MAX_AGE / 3600:g} hours.")
 else:
@@ -1789,7 +1873,7 @@ async def oauth_callback(request: Request):
     clear_login_failures(request)
     print(f"{C_CYAN}  · signed in: {email}{C_OFF}")
     resp = RedirectResponse("/", status_code=302)
-    set_session_cookie(resp, sid, request)
+    set_session_cookie(resp, sid, request, email)
     resp.delete_cookie(OAUTH_COOKIE, path="/")
     return resp
 
@@ -2148,16 +2232,22 @@ def banner(port: int):
         lock = f"{C_AMBER}OPEN â€” localhost only, no sign-in{C_OFF}"
     else:
         who = ", ".join(sorted(ALLOWED_EMAILS - GUEST_EMAILS))
-        span = (f"{session.MAX_AGE / 3600:g}h max, {session.IDLE_AGE / 60:g}m idle"
-                if session.MAX_AGE else
-                f"signed out after {session.IDLE_AGE / 60:g}m unused")
+        if OWNER_UNLIMITED:
+            span = "no session timeout"
+        elif session.MAX_AGE:
+            span = f"{session.MAX_AGE / 3600:g}h max, {session.IDLE_AGE / 60:g}m idle"
+        else:
+            span = f"signed out after {session.IDLE_AGE / 60:g}m unused"
         lock = f"{C_CYAN}google{C_OFF} {C_DIM}({who}; {span}){C_OFF}"
     # Spelled out on its own line: a guest is a different kind of account, and
     # the whole point is that it should never be mistaken for a second owner.
     guest_line = ""
     if GUEST_EMAILS and AUTH_MODE != "open":
         guest_line = (f"\n  {C_DIM}guests{C_OFF}      {C_AMBER}{', '.join(sorted(GUEST_EMAILS))}{C_OFF} "
-                      f"{C_DIM}({len(GUEST_TOOLS)} tools — own google + lookups only){C_OFF}")
+                      f"{C_DIM}({len(GUEST_TOOLS)} tools — own google + lookups only"
+                      # Guests keep the clocks the owner is exempt from, so say so
+                      # here rather than leaving the line above to speak for both.
+                      f"{f', {session.IDLE_AGE / 60:g}m idle' if OWNER_UNLIMITED else ''}){C_OFF}")
     print(f"""
 {C_CYAN}  ARC{C_OFF} {C_DIM}Â· ambient response core{C_OFF}
 

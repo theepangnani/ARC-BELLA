@@ -694,7 +694,9 @@ no passphrase.
 |---|---|---|
 | `ARC_ALLOWED_EMAILS` | `theepang@gmail.com` | Who may sign in. Google proves *who someone is*; this decides whether that someone is you. Empty ⇒ ARC refuses to start. |
 | `ARC_GUEST_EMAILS` | *(empty)* | Signs in normally, then gets the cut-down guest ARC. Implies permission to sign in. |
-| `ARC_SESSION_IDLE_MINUTES` | `30` | Backstop for when you wander off without closing anything. |
+| `ARC_OWNER_SESSION_UNLIMITED` | `1` | The owner's session never times out — no idle clock, no cap, and closing the tab isn't a sign-out. Guests keep all three. `0` puts everyone on the same clocks. |
+| `ARC_MAX_SESSIONS_PER_ACCOUNT` | `8` | Live sign-ins one address may hold at once; a ninth drops the least recently used, deleting its Google token with it. Matters because an owner session never expires on its own. `0` = no limit. |
+| `ARC_SESSION_IDLE_MINUTES` | `30` | Backstop for a **guest** who wanders off without closing anything. |
 | `ARC_SESSION_LEAVE_GRACE_SECONDS` | `60` | How long after closing the tab/app the session ends. Must be long enough for a refresh to return, or F5 logs you out. |
 | `ARC_SESSION_MAX_HOURS` | `0` | Optional hard stop, measured from sign-in, however busy the session is. `0` = off. Capped at 4 when on. |
 | `ARC_ALARM_KEEPS_SESSION` | `1` | While an alarm is set, its poll counts as use so the tab is still signed in when the alarm goes off. `0` = strict idle timeout, and alarms reach the phone only. |
@@ -703,7 +705,17 @@ no passphrase.
 | `ARC_AUTH_MODE` | `google` | `open` disables sign-in entirely, and is refused unless the bind is loopback. |
 
 **Staying signed in.** ARC works like logging off rather than like a parking
-meter. There's no four-hour guillotine mid-conversation. Instead:
+meter. There's no four-hour guillotine mid-conversation.
+
+**You, the owner, are not on a clock at all.** Sign in once and stay signed in
+— no idle timeout, no cap, and closing the tab doesn't sign you out. Timeouts
+are there so a session can't outlive the person using it: a borrowed laptop, a
+phone left on a table, a stolen cookie. None of that describes your own
+machine, and re-signing-in every half hour buys nothing. The session is still
+revocable the moment you want it gone — sign out, or delete `sessions.json`.
+Set `ARC_OWNER_SESSION_UNLIMITED=0` if you'd rather have the clocks back.
+
+**Guests are on a clock**, and everything below is about them:
 
 - **Close the tab or the app and you're signed out** about a minute later. The
   page tells the server it's going as it unloads.
@@ -722,13 +734,19 @@ normally but don't reset the clock, so walking away is genuinely enough. Set
 
 **You re-consent every time.** The authorization request carries
 `prompt=consent`, so Google shows the full permission screen on every sign-in
-rather than waving a returning session through. Combined with the four-hour
-cap, that means access is re-established deliberately several times a day and
-can never quietly persist.
+rather than waving a returning session through. Every sign-in is therefore a
+deliberate act — which is exactly what makes an owner session with no timeout
+reasonable: it was granted on purpose, and it ends on purpose.
 
 Sessions live server-side in `sessions.json` and are revocable: delete the file
 and everyone is signed out immediately. A session's Google token is deleted
-with it, so tool access never outlives the session that granted it.
+with it, so tool access never outlives the session that granted it — including
+when you delete the store by hand, since ARC clears tokens no session points at
+on the next start.
+
+Taking an address out of `ARC_ALLOWED_EMAILS` also ends its sessions, on the
+first request after the restart. The allowlist is the authority; a session
+record only caches what it said at sign-in.
 
 Rate limits default to 12 requests per person per minute, 120 per hour, and
 600 per day across the whole deployment. Tune with `ARC_RATE_PER_MIN`,

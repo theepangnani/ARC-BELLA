@@ -28,6 +28,11 @@ on (clamped to four, since a larger figure is a typo rather than a preference).
 At 0 there is no such stop and idle is the only clock — sign in, use it all
 day, close the lid, and it ends by itself.
 
+Both clocks are skipped entirely for the owner — see set_unlimited() below.
+Timeouts exist to stop a borrowed or forgotten browser from carrying somebody
+else's ARC around; that reasoning applies to guests, not to the person whose
+machine, keys and life this is. The owner signs in and stays signed in.
+
 Sessions are stored under sha256(id), never the id itself. Anyone who reads
 sessions.json off a backup learns that sessions exist and whose they are, but
 cannot mint a cookie from it.
@@ -60,6 +65,19 @@ IDLE_AGE = float(os.getenv("ARC_SESSION_IDLE_MINUTES", "30") or 30) * 60
 LEAVE_GRACE = float(os.getenv("ARC_SESSION_LEAVE_GRACE_SECONDS", "60") or 60)
 CLAMPED = _configured_hours > MAX_HOURS_CEILING
 
+# How many live sessions one address may hold at once. A ninth sign-in drops
+# whichever has gone longest without being used, not the oldest one — the
+# desktop you use daily should outlive a hotel laptop you signed in on once.
+#
+# This exists because of the exemption above. Every sign-in mints a session and
+# a Google token file beside it; the clocks used to clear both away within half
+# an hour of the browser going quiet. Nothing clears an unlimited session, so
+# without a cap a year of signing in on new phones, fresh profiles and cleared
+# cookies leaves a heap of live refresh tokens on disk that nothing references.
+# Eight is well past the number of devices anyone actually uses at once, so in
+# practice this only ever collects litter.
+MAX_PER_ACCOUNT = int(os.getenv("ARC_MAX_SESSIONS_PER_ACCOUNT", "8") or 8)
+
 # Writing to disk on every request would mean a file write every four seconds
 # from the screen-watch poll alone. last_seen is authoritative in memory; the
 # file only needs to be close enough to survive a restart.
@@ -74,10 +92,35 @@ _last_persist = 0.0
 # with the session, rather than outliving it on disk.
 _on_evict = None
 
+# Addresses whose sessions never expire. Empty here on purpose: this module
+# knows nothing about who owns the instance, so run.py fills it in from
+# ARC_ALLOWED_EMAILS minus ARC_GUEST_EMAILS. Nobody is unlimited by default,
+# which is the right way round — a mistake leaves a session too short, not
+# for ever.
+_unlimited: set[str] = set()
+
 
 def set_evict_hook(fn):
     global _on_evict
     _on_evict = fn
+
+
+def set_unlimited(emails):
+    """Name the accounts that are exempt from both clocks.
+
+    Idle and absolute timeouts protect against a session outliving the person
+    using it — a shared laptop, a phone left on a table, a cookie stolen from a
+    guest. The owner is a different case: it is their machine, their keys and
+    their data, and signing in again every half hour is a cost with no matching
+    benefit. Their sessions are still revocable (revoke_all, or deleting
+    sessions.json), which is what actually ends one when it has to be ended.
+    """
+    global _unlimited
+    _unlimited = {(e or "").strip().lower() for e in (emails or ()) if (e or "").strip()}
+
+
+def unlimited(email: str) -> bool:
+    return (email or "").strip().lower() in _unlimited
 
 
 def key_for(sid: str) -> str:
@@ -125,6 +168,11 @@ def _evict(key: str):
 
 
 def _expired(rec: dict, now: float) -> bool:
+    # The owner's session has no clock on it at all — not idle, not absolute,
+    # and closing the tab is not a logout either. Checked first so none of the
+    # three below can quietly re-introduce one.
+    if unlimited(rec.get("email", "")):
+        return False
     # MAX_AGE of 0 means no absolute cap. Testing it before comparing matters:
     # without the guard, "age > 0" is true the instant a session is created and
     # turning the cap off would log everybody out on their very next request.
@@ -139,13 +187,37 @@ def _expired(rec: dict, now: float) -> bool:
     return now - rec.get("last_seen", 0) > IDLE_AGE
 
 
+def _cap_account(email: str):
+    """Keep only the most recently used sessions for one address.
+
+    Sorted by last_seen, so what goes is whatever has been sitting unused
+    longest — and since the caller has just created one, the new session is
+    never the one dropped. Eviction takes the Google token with it, which is
+    the point: an unreachable session must not leave a live credential behind.
+    """
+    if MAX_PER_ACCOUNT <= 0:
+        return
+    who = (email or "").strip().lower()
+    mine = sorted(((r.get("last_seen", 0), k) for k, r in _sessions.items()
+                   if (r.get("email") or "").strip().lower() == who), reverse=True)
+    for _, key in mine[MAX_PER_ACCOUNT:]:
+        _evict(key)
+
+
 def sweep():
     """Drop everything past either clock. Cheap; the store holds a handful."""
     with _lock:
         _load()
         now = time.time()
-        for key in [k for k, r in _sessions.items() if _expired(r, now)]:
+        dead = [k for k, r in _sessions.items() if _expired(r, now)]
+        for key in dead:
             _evict(key)
+        # Persist immediately rather than waiting for whatever writes next.
+        # Eviction has already deleted the Google token on disk, so leaving the
+        # record in the file would survive a restart as a session that exists
+        # but has no credentials behind it.
+        if dead:
+            _write()
 
 
 def create(email: str, user_agent: str = "") -> str:
@@ -162,6 +234,7 @@ def create(email: str, user_agent: str = "") -> str:
             "last_seen": now,
             "ua": (user_agent or "")[:120],
         }
+        _cap_account(email)
         _write()
         return sid
 
@@ -216,6 +289,10 @@ def mark_left(sid: str) -> bool:
         rec = _sessions.get(key_for(sid))
         if not rec:
             return False
+        # Nothing to start a countdown for, and no reason to write to disk every
+        # time the owner reloads a page.
+        if unlimited(rec.get("email", "")):
+            return False
         rec["left_at"] = time.time()
         _write()
         return True
@@ -246,15 +323,28 @@ def describe(sid: str):
     rec = validate(sid, touch=False)
     if not rec:
         return None
+    # An unlimited session has nothing to count down to, so every clock reads
+    # None rather than a time that will never arrive. The HUD already treats a
+    # missing expires_at as "no warning to show".
+    free = unlimited(rec["email"])
     return {
         "email": rec["email"],
-        # None when there is no absolute cap. The HUD already treats a missing
-        # expires_at as "nothing to count down to" and shows no warning.
-        "expires_at": (rec["created"] + MAX_AGE) if MAX_AGE else None,
-        "idle_expires_at": rec["last_seen"] + IDLE_AGE,
-        "max_hours": (MAX_AGE / 3600) if MAX_AGE else None,
-        "idle_minutes": IDLE_AGE / 60,
+        "unlimited": free,
+        # None when there is no absolute cap.
+        "expires_at": None if free else ((rec["created"] + MAX_AGE) if MAX_AGE else None),
+        "idle_expires_at": None if free else rec["last_seen"] + IDLE_AGE,
+        "max_hours": None if free else ((MAX_AGE / 3600) if MAX_AGE else None),
+        "idle_minutes": None if free else IDLE_AGE / 60,
     }
+
+
+def live_keys() -> set:
+    """Storage keys of every live session — what a Google token file must be
+    named after to still belong to somebody."""
+    with _lock:
+        _load()
+        sweep()
+        return set(_sessions)
 
 
 def count() -> int:

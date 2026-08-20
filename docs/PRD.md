@@ -361,11 +361,13 @@ and everything below sits behind this one gate.
 | A3 | The user **re-consents on every sign-in**. No silent re-auth, no "remember me". | `prompt=consent` on every authorization request |
 | A4 | A session ends when the person **leaves** — closing the tab or app signs you out, with a short grace window so a refresh survives. | `pagehide` → `POST /api/leave`; `ARC_SESSION_LEAVE_GRACE_SECONDS` |
 | A4b | If they wander off without closing anything, an idle timeout catches it. | `ARC_SESSION_IDLE_MINUTES`, 30 |
+| A4c | **The owner is exempt from every clock** — A4, A4b and A6 all apply to guests only. A timeout guards against a session outliving the person using it (a borrowed laptop, a stolen cookie); the owner's own machine is not that case, and re-authenticating on it half-hourly is cost without benefit. Revocation (A7) is what ends an owner session. | `ARC_OWNER_SESSION_UNLIMITED`, default on; `session.set_unlimited(ALLOWED_EMAILS - GUEST_EMAILS)` |
 | A5 | "Unused" means the person, not the browser. Background polling must not hold a session open. | `BACKGROUND_PATHS`; `validate(touch=False)` |
 | A5b | **Exception:** a set alarm is an instruction that this page must still be able to make a noise hours from now, which it cannot do signed out. While one is armed, and only for its own poll, the idle clock is held off. | `ARC_ALARM_KEEPS_SESSION`, default on; `alarm.armed()` |
-| A6 | An optional **absolute cap** is available for a hard stop regardless of use, off by default, clamped to 4h when on. | `ARC_SESSION_MAX_HOURS`, `0` = off |
+| A6 | An optional **absolute cap** is available for a hard stop regardless of use, off by default, clamped to 4h when on. Guests only — see A4c. | `ARC_SESSION_MAX_HOURS`, `0` = off |
 | A7 | Sessions are **revocable**. | Server-side store; deleting `sessions.json` signs everyone out |
-| A8 | Tool access must not outlive the session that granted it. | The session's Google token is deleted with it |
+| A7b | Revocation must not depend on a clock. Removing an address from the allowlist ends its sessions at the next request, and one account may hold only a bounded number of live sessions — both matter because A4c means an owner session has no clock to fall back on. | Allowlist re-check in `current_session()`; `ARC_MAX_SESSIONS_PER_ACCOUNT`, default 8, least-recently-used evicted |
+| A8 | Tool access must not outlive the session that granted it. | The session's Google token is deleted with it; orphaned token files are cleared at startup |
 | A9 | ARC **fails closed** — it refuses to start rather than come up ungated. | `auth_preflight()` on missing credentials, empty allowlist, or `open` mode on a public bind |
 | A10 | Google scopes are **read-only except Calendar**. ARC must not be able to modify the mail account. | `gmail.readonly`; `gmail.compose` and `gmail.modify` both withheld |
 
