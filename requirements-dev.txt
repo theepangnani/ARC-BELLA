@@ -1,0 +1,8 @@
+# Only for running the test suite. Nothing here is imported by ARC itself.
+-r requirements.txt
+
+# A JavaScript parser, so tests/test_js_syntax.py can prove the 280 KB of
+# inline script in static/index.html still parses. A syntax error there does
+# not degrade — the whole page becomes a dark rectangle that answers nothing.
+# `node` on PATH works too; the suite uses whichever it finds.
+esprima>=4.0

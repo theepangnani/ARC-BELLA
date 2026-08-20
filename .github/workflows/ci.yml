@@ -1,6 +1,10 @@
-# There is no test suite here, so this checks the two things that can actually
-# break a pull on another machine: a syntax error in any module, and a
-# requirements.txt that no longer resolves.
+# Two jobs, and they answer different questions.
+#
+# `verify` asks whether the code parses and the pins still resolve — cheap, and
+# it runs everywhere. `tests` asks whether ARC still behaves, on Windows,
+# because that is the only platform it is actually used on: the launchers are
+# PowerShell, the computer-control layer is pywin32/pycaw, and a suite passing
+# on Ubuntu would be proving something about a machine nobody runs this on.
 name: CI
 
 on:
@@ -29,3 +33,23 @@ jobs:
       # other laptop discovers it mid-install.
       - name: Dependencies resolve
         run: pip install -r requirements.txt
+
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      # No keys, no network, no Google account, no microphone: the suites
+      # sandbox themselves into a temp directory and stub what they must.
+      # ARC_DATA_DIR is deliberately not set — the harness refuses to run if it
+      # points anywhere that looks like real data.
+      - name: Tests
+        run: python tests/run_all.py

@@ -481,7 +481,7 @@ answer for anything suspicious.
 | Gap | Detail | Tracked |
 |---|---|---|
 | **`DEPLOY.md` does not exist** | Linked from the README's deployment section | #4 |
-| **No test suite** | CI runs only `compileall` and a dependency resolve, and says so. Weakest where it matters most: session lifetime and the consent gate are exactly the logic where a regression is silent | #5 |
+| ~~**No test suite**~~ | Closed. `tests/` holds 21 suites — sessions, guests, alarms, echo suppression, the mobile pass, and a parse check over the inline JavaScript — run on Windows in CI. Still untested: anything needing a real microphone, a second monitor or a phone (see `tests/manual/`) | #5 |
 | **Undeclared runtime dependencies** | `pycaw`, `mss` and the input libraries are imported by `pc.py` but absent from `requirements.txt`, so computer control silently degrades on a fresh install | #5 |
 | **Duplicated dependency** | `edge-tts` appears twice in `requirements.txt` | #5 |
 | **Unpinned dependencies** | All use `>=`, with no lockfile | #5 |
@@ -489,7 +489,7 @@ answer for anything suspicious.
 | **No security headers** | No CSP, HSTS, X-Frame-Options or X-Content-Type-Options anywhere | #2 |
 | **No streaming** | `/api/chat` is request/response with a 25 s client abort | — |
 | **Half-built multi-user** | Google identity is per-session; notes, reminders, alerts, display, Telegram and computer control are global | — |
-| **Second screen expires** | `/display` sits behind the 4-hour cap, so a wall-mounted dashboard goes dark. A separate long-lived display token is the likely fix | — |
+| **Second screen expires** | `/display` sits behind the session gate. Now moot for the owner, whose session has no clock (A4c), but it returns for anyone who sets `ARC_OWNER_SESSION_UNLIMITED=0` | — |
 | **Private instance needs its own redirect URI** | Bella on 8421 cannot sign in until `http://localhost:8421/oauth/callback` is registered in the Google console | — |
 
 ## 8. Roadmap

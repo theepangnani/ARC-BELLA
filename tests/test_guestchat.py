@@ -1,0 +1,153 @@
+# -*- coding: utf-8 -*-
+"""A guest asking a question, through the real /api/chat, with Claude stubbed.
+
+The point is to separate "ARC is broken for guests" from "the model said
+nothing". The stub records exactly what ARC sent to Anthropic, so the tool list,
+the system prompt and the reply path can all be inspected on a guest turn and
+compared against an owner turn.
+"""
+import os
+import sys
+import types
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _harness import ARC, HUD, sandbox   # noqa: E402
+sandbox()
+
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+os.environ["ARC_ALLOWED_EMAILS"] = "owner@example.com"
+os.environ["ARC_GUEST_EMAILS"] = "guest@example.com"
+os.environ["ARC_SESSION_MAX_HOURS"] = "0"
+
+from starlette.testclient import TestClient  # noqa: E402
+import run       # noqa: E402
+import session   # noqa: E402
+
+ok = True
+sent = []          # every kwargs dict ARC handed to Anthropic
+
+
+def check(label, got, want):
+    global ok
+    good = got == want
+    ok = ok and good
+    print(("  PASS  " if good else "  FAIL  ") + label +
+          ("" if good else "\n          got  %r\n          want %r" % (got, want)))
+
+
+def truthy(label, got):
+    check(label, bool(got), True)
+
+
+class Blk:
+    def __init__(self, text):
+        self.type = "text"
+        self.text = text
+
+
+class Resp:
+    def __init__(self, text):
+        self.content = [Blk(text)]
+        self.stop_reason = "end_turn"
+        self.usage = types.SimpleNamespace(input_tokens=10, output_tokens=5)
+
+
+class FakeMessages:
+    async def create(self, **kwargs):
+        sent.append(kwargs)
+        return Resp("Certainly, sir. It is sunny.")
+
+
+class FakeClaude:
+    def __init__(self):
+        self.messages = FakeMessages()
+
+    async def close(self):
+        pass
+
+
+PROMPT = "You are ARC."
+
+
+def ask(client, cookies, text="what is the weather"):
+    return client.post("/api/chat", cookies=cookies, json={
+        "system": PROMPT,
+        "messages": [{"role": "user", "content": text}],
+        "allow_actions": False,
+    })
+
+
+with TestClient(run.app) as client:
+    run.app.state.claude = FakeClaude()
+
+    owner_sid = session.create("owner@example.com", "browser")
+    guest_sid = session.create("guest@example.com", "phone")
+    OWNER = {run.COOKIE: owner_sid}
+    GUEST = {run.COOKIE: guest_sid}
+
+    print("The owner asks something:")
+    sent.clear()
+    r = ask(client, OWNER)
+    check("HTTP 200", r.status_code, 200)
+    truthy("a reply came back", (r.json() or {}).get("reply"))
+    check("the model was actually called", len(sent), 1)
+
+    print("\nThe GUEST asks the same thing:")
+    sent.clear()
+    r = ask(client, GUEST)
+    check("HTTP 200", r.status_code, 200)
+    if r.status_code != 200:
+        print("      body:", r.text[:500])
+    body = r.json() if r.status_code == 200 else {}
+    truthy("a reply came back", body.get("reply"))
+    check("the model was actually called", len(sent), 1)
+
+    if sent:
+        kw = sent[0]
+        names = [t.get("name") for t in kw.get("tools", [])]
+        print("\n  what ARC sent for the guest turn:")
+        print("    tools     :", len(names))
+        print("    names     :", sorted(n for n in names if n))
+        truthy("    guest is told it is a guest", "GUEST ACCOUNT" in kw["system"])
+        truthy("    no owner alarm summary leaked", "ALARMS SET" not in kw["system"])
+        truthy("    no alarm tools offered",
+               not any((n or "").endswith("_alarm") or n == "list_alarms" for n in names))
+        # NOT asserted: calendar/mail. Those appear only when the signed-in
+        # browser's OWN google token is present, and this suite runs against a
+        # scratch data dir with no token linked -- so 3 tools here is the test
+        # environment, not the guest tier. run.GUEST_TOOLS is the contract.
+        truthy("    public lookups are there", "weather" in names)
+        truthy("    the guest tier still names 13 tools", len(run.GUEST_TOOLS) == 13)
+        # Every tool offered must be one a guest may actually run, or the model
+        # will pick one and hit a refusal it cannot explain.
+        bad = [n for n in names if n and n not in run.GUEST_TOOLS]
+        check("    every offered tool is allowed for a guest", bad, [])
+
+    print("\nThe guest asks something needing a tool it does NOT have:")
+    sent.clear()
+    r = ask(client, GUEST, "send a telegram to mum")
+    check("still answers rather than erroring", r.status_code, 200)
+    truthy("with words", (r.json() or {}).get("reply"))
+
+    print("\nThings the guest's page polls on its own:")
+    for path, want in [("/api/health", 200), ("/api/session", 200),
+                       ("/api/alarms/due", 403), ("/api/reminders/due", 403),
+                       ("/api/alerts/due", 403)]:
+        got = client.get(path, cookies=GUEST).status_code
+        check("  %-22s -> %d" % (path, want), got, want)
+
+    h = client.get("/api/health", cookies=GUEST).json()
+    check("  health says guest", h.get("guest"), True)
+    check("  and hides the machine", h.get("computer"), False)
+
+    print("\nThe guest's page itself loads and boots:")
+    r = client.get("/", cookies=GUEST)
+    check("  HUD served", r.status_code, 200)
+    page = r.text
+    for t in ["SYSTEM_PROMPT", "startAlarmPoll", "speakerFace", "lvlShown"]:
+        truthy("  contains %s" % t, t in page)
+
+    session.revoke_all()
+
+print("\nALL PASS" if ok else "\nFAILURES ABOVE")
+sys.exit(0 if ok else 1)

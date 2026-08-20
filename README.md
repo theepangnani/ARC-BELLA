@@ -843,6 +843,25 @@ rather than buried in `.env`.
 
 ---
 
+## Tests
+
+```
+python tests/run_all.py
+```
+
+21 suites, no pytest, no keys, no network, no microphone. They run against a
+throwaway data directory — never your real one, and the harness refuses to
+start if you point it at real data — so running them cannot sign you out,
+delete a token or cancel tomorrow's alarm.
+
+They exist because the failures worth catching here are silent ones: a session
+that expires while you are still talking to it, an alarm that reschedules onto
+the day it already rang, a guest tool list that quietly includes your mail, a
+bracket in `index.html` that turns the whole page into a dark rectangle. None
+of those announce themselves. See [tests/README.md](tests/README.md).
+
+---
+
 ## Why the proxy exists
 
 The Anthropic API deliberately doesn't send CORS headers to browser origins,
