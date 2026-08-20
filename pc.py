@@ -670,54 +670,17 @@ def list_monitors() -> str:
     return "\n".join(out)
 
 
-def screenshot(monitor="primary") -> list:
-    """Capture and SEE a screen, returned as image blocks the model can read.
-    `monitor`: 'primary'/'1' (default), 'second'/'2' (…or any number), or 'all'
-    to capture every monitor stitched together."""
-    try:
-        from PIL import ImageGrab
-    except ImportError:
-        return "Screen capture needs the Pillow library. Install it with: pip install pillow"
+def _encode_shot(img, label, origin) -> list:
+    """One capture as the [caption, image] block pair the model reads.
+
+    Downscale the long edge for a smaller payload — the model still reads it
+    fine — but report the TRUE pixel size and this monitor's origin, so
+    mouse_control coordinates land on the real virtual desktop rather than on
+    the scaled-down picture."""
     import io
     import base64
 
-    mons = _list_monitors()
-    sel = str(monitor or "primary").strip().lower()
-    origin = (0, 0)
-    try:
-        if sel in ("all", "both", "everything", "-1", "*"):
-            img = ImageGrab.grab(all_screens=True)
-            label = f"all {len(mons)} monitor(s)"
-            origin = (min((b[0] for b in mons), default=0), min((b[1] for b in mons), default=0))
-        else:
-            if sel in ("2", "second", "secondary", "other", "right"):
-                idx = 1
-            elif sel in ("1", "primary", "main", "first"):
-                idx = 0
-            elif sel.isdigit():
-                idx = int(sel) - 1
-            else:
-                idx = 0
-            if not mons:
-                img = ImageGrab.grab()
-                label = "the screen"
-            else:
-                if idx < 0 or idx >= len(mons):
-                    return (f"There is no monitor {idx + 1}. "
-                            + list_monitors()), True
-                b = mons[idx]
-                origin = (b[0], b[1])
-                # all_screens=True lets the bbox reach monitors at negative
-                # coordinates (a second screen to the left/above the primary).
-                img = ImageGrab.grab(bbox=b, all_screens=True)
-                label = f"monitor {idx + 1} of {len(mons)}" + (" (primary)" if idx == 0 else " (secondary)")
-    except Exception as e:
-        return f"Couldn't capture the screen: {e}"
-
     w, h = img.size
-    # Downscale the long edge for a smaller payload; the model still reads it
-    # fine, and we report the TRUE pixel size + this monitor's origin so
-    # mouse_control coordinates line up with the real virtual desktop.
     MAXW = 1400
     shown = img
     if w > MAXW:
@@ -741,34 +704,116 @@ def screenshot(monitor="primary") -> list:
     ]
 
 
-# Tiny grayscale thumbnail of the last watched frame, for change detection.
+def _mon_label(idx, total):
+    return f"monitor {idx + 1} of {total}" + (" (primary)" if idx == 0 else " (secondary)")
+
+
+def screenshot(monitor="primary") -> list:
+    """Capture and SEE a screen, returned as image blocks the model can read.
+
+    `monitor`: 'primary'/'1' (default), 'second'/'2' (…or any number),
+    'each' for every monitor as its own full-detail image, or 'all' for the
+    whole virtual desktop stitched into one.
+
+    'each' beats 'all' for actually reading anything: stitched, two screens
+    side by side get squeezed into one 1400px-wide image — half the detail
+    each, plus the dead space between mismatched monitors — whereas 'each'
+    gives every screen its own frame at full width."""
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        return "Screen capture needs the Pillow library. Install it with: pip install pillow"
+
+    mons = _list_monitors()
+    sel = str(monitor or "primary").strip().lower()
+    try:
+        if sel in ("each", "every", "separate", "individually"):
+            if len(mons) <= 1:
+                return _encode_shot(ImageGrab.grab(), "the screen", (0, 0))
+            blocks = []
+            for i, b in enumerate(mons):
+                # all_screens=True lets the bbox reach monitors at negative
+                # coordinates (a second screen to the left of / above the primary).
+                blocks += _encode_shot(ImageGrab.grab(bbox=b, all_screens=True),
+                                       _mon_label(i, len(mons)), (b[0], b[1]))
+            return blocks
+
+        if sel in ("all", "both", "everything", "-1", "*"):
+            return _encode_shot(
+                ImageGrab.grab(all_screens=True),
+                f"all {len(mons)} monitor(s)",
+                (min((b[0] for b in mons), default=0), min((b[1] for b in mons), default=0)))
+
+        if sel in ("2", "second", "secondary", "other", "right"):
+            idx = 1
+        elif sel in ("1", "primary", "main", "first"):
+            idx = 0
+        elif sel.isdigit():
+            idx = int(sel) - 1
+        else:
+            idx = 0
+        if not mons:
+            return _encode_shot(ImageGrab.grab(), "the screen", (0, 0))
+        if idx < 0 or idx >= len(mons):
+            return (f"There is no monitor {idx + 1}. " + list_monitors()), True
+        b = mons[idx]
+        return _encode_shot(ImageGrab.grab(bbox=b, all_screens=True),
+                            _mon_label(idx, len(mons)), (b[0], b[1]))
+    except Exception as e:
+        return f"Couldn't capture the screen: {e}"
+
+
+# Tiny grayscale thumbnail of each watched monitor, for change detection.
 _watch_prev = None
 
 
-def screen_changed(threshold: float = 0.035) -> dict:
-    """Cheap local motion check for watch mode: grab the screen, shrink it to a
-    tiny grayscale thumbnail, and compare it to the previous one. Returns
+def _thumb_diff(prev: bytes, cur: bytes) -> float:
+    total = 0
+    for a, b in zip(prev, cur):
+        d = a - b
+        total += d if d >= 0 else -d
+    return total / (len(cur) * 255.0)
+
+
+def screen_changed(threshold: float = 0.035, monitor: str = "each") -> dict:
+    """Cheap local motion check for watch mode: grab the screens, shrink each to
+    a tiny grayscale thumbnail, and compare against the previous frame. Returns
     {"changed": bool, "score": 0..1}. No model, no network — this is the gate
-    that decides whether it's even worth asking ARC to look."""
+    that decides whether it's even worth asking ARC to look.
+
+    Every monitor is thumbnailed and scored SEPARATELY, and the loudest one
+    wins. Stitching them into a single thumbnail first would quietly desensitise
+    the gate: on a 3286-pixel-wide virtual desktop, a change filling the smaller
+    screen occupies well under half the pixels it used to, so the same threshold
+    starts missing things purely because a second monitor was plugged in."""
     global _watch_prev
     try:
         from PIL import ImageGrab
     except ImportError:
         return {"changed": False, "score": 0.0, "error": "pillow missing"}
+    mons = _list_monitors()
+    # Must match whatever the glance will be shown. A gate watching both screens
+    # while the glance only sees one is the worst of both: it wakes the model for
+    # a change it then cannot find, pays for the look, and reports nothing.
+    only_primary = str(monitor or "each").strip().lower() in ("primary", "1", "main", "first")
     try:
-        img = ImageGrab.grab().convert("L").resize((64, 36))
+        if len(mons) <= 1 or only_primary:
+            frames = [ImageGrab.grab().convert("L").resize((64, 36)).tobytes()]
+        else:
+            frames = [ImageGrab.grab(bbox=b, all_screens=True).convert("L")
+                      .resize((64, 36)).tobytes() for b in mons]
     except Exception as e:
         return {"changed": False, "score": 0.0, "error": str(e)}
-    cur = img.tobytes()
+
     prev = _watch_prev
-    _watch_prev = cur
-    if not prev or len(prev) != len(cur):
-        return {"changed": False, "score": 0.0}   # first frame — nothing to compare
-    total = 0
-    for a, b in zip(prev, cur):
-        d = a - b
-        total += d if d >= 0 else -d
-    score = total / (len(cur) * 255.0)
+    _watch_prev = frames
+    # First frame, or a monitor was plugged in or unplugged since the last
+    # check — re-baseline rather than reporting a change that never happened.
+    if not prev or len(prev) != len(frames):
+        return {"changed": False, "score": 0.0}
+
+    score = max((_thumb_diff(p, c) for p, c in zip(prev, frames)
+                 if len(p) == len(c)), default=0.0)
     return {"changed": score >= threshold, "score": round(score, 4)}
 
 
@@ -1074,10 +1119,14 @@ TOOLS = [
      "description": ("Capture and SEE the user's screen right now. Use this whenever you need to know what's on "
                      "screen — to read something, check what app is open, or find where to click. Pair it with "
                      "mouse_control: screenshot first, see where the target is, then click those coordinates. "
-                     "With more than one monitor, set 'monitor' to '1'/'primary', '2'/'second' (or a number), "
-                     "or 'all' to see every screen. Defaults to the primary."),
+                     "With more than one monitor, set 'monitor' to '1'/'primary', '2'/'second' (or a number) for "
+                     "one screen, or 'each' to see EVERY screen — each one its own full-detail image. Use 'each' "
+                     "when you don't know which screen the thing is on; it is the reliable way to find something "
+                     "across several monitors. ('all' stitches them into one image instead, which halves the "
+                     "detail — prefer 'each' for anything you need to read.) Defaults to the primary."),
      "input_schema": {"type": "object", "properties": {
-         "monitor": {"type": "string", "description": "'primary'/'1', 'second'/'2', a monitor number, or 'all'"}}}},
+         "monitor": {"type": "string",
+                     "description": "'primary'/'1', 'second'/'2', a monitor number, 'each' (every screen separately), or 'all' (stitched)"}}}},
     {"name": "list_monitors",
      "description": "List the connected monitors and their sizes. Use this to know how many screens there are before capturing a specific one.",
      "input_schema": {"type": "object", "properties": {}}},

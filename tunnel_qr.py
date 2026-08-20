@@ -53,7 +53,10 @@ def show_qr(url: str) -> None:
     print("\n  " + "-" * 66)
     print("  Scan the QR above with your phone camera, or open this on the phone:")
     print("  " + url)
-    print("  Then log in (J.A.R.V.I.S) and 'Add to Home screen'. Allow the mic.")
+    # Never print the credential itself. This line used to name the passphrase,
+    # which put it in the repo and in every commit — the sign-in is Google now,
+    # and there is nothing here worth writing down.
+    print("  Then sign in with Google and 'Add to Home screen'. Allow the mic.")
     print("  " + "-" * 66 + "\n")
 
 

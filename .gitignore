@@ -35,8 +35,20 @@ credentials_web.json
 # per-user Google tokens (one file per browser session)
 google_sessions/
 
+# live login sessions — deleting this file signs everyone out
+sessions.json
+
 # quick notes (personal)
 notes.json
 
 # Market price alerts (personal watchlist)
 price_alerts.json
+
+# Alarms (personal — when you get up)
+alarms.json
+alarms.json.tmp
+
+# Security assessment: documents live, unfixed findings for an
+# internet-exposed instance. Kept local until the credentials it names are
+# rotated; publishing it to a public repo would be an attack map.
+docs/SECURITY.md

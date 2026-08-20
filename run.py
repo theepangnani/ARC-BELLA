@@ -61,10 +61,11 @@ DEFAULT_BRAIN = (os.getenv("ARC_DEFAULT_BRAIN") or ("fast" if PRIVATE_APP else "
 if DEFAULT_BRAIN not in ("smart", "fast"):
     DEFAULT_BRAIN = "smart"
 
-# Tool modules read their configuration (TG_API_ID, ARC_EMAIL_ALLOWLIST, ...)
+# Tool modules read their configuration (TG_API_ID, ARC_TG_ALLOWLIST, ...)
 # from the environment at import time, so they MUST be imported after .env is
 # loaded â€” import them earlier and those settings silently read empty.
 import gauth
+import session
 import gcal
 import gmail
 import gextra
@@ -80,20 +81,54 @@ import push
 # one import and one entry rather than a chain of if-statements in the loop.
 # pc (computer control) and media only report connected() when NOT deployed.
 import alerts
-TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push, alerts)
+import alarm
+TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
+            alerts, alarm)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
-def all_tools(local: bool = True):
+# Everything a GUEST_EMAILS account is allowed to touch. Default-deny, the same
+# idiom as PASSIVE_TOOLS below: a tool added later is refused to guests until
+# someone decides otherwise, rather than silently inheriting access.
+#
+# The rule behind the list: a guest may use their OWN Google account and look up
+# public facts. They may not read or change anything belonging to the owner.
+# That rules out the whole of tg (owner's Telegram), notes (owner's memory),
+# pc/media (owner's machine), display (owner's second screen), push (owner's
+# phone), alerts (owner's watchlist), alarm (the owner's alarm clock), and
+# todos/reminders (shared files).
+GUEST_TOOLS = {
+    # Their own mail, calendar, drive and contacts. Safe because
+    # apply_session_google points every Google call at the signed-in browser's
+    # own token — a guest literally cannot reach the owner's account here.
+    "list_events", "create_event", "move_event", "cancel_event",
+    "search_email", "read_email",
+    "find_contact", "find_drive", "read_drive",
+    # Public lookups. No owner data involved in any of them.
+    "weather", "stock", "news", "web_search",
+}
+
+
+def all_tools(local: bool = True, guest: bool = False):
     """Only offer what is actually authorised â€” a signed-in calendar with no
     mail should produce calendar tools, not tools that fail on contact. Computer
     control is offered only to the local desktop, never to a remote (tunnelled)
     caller, so the model isn't tempted to try what it can't do from the phone."""
     kits = [kit for kit in TOOLKITS if kit.connected() and (local or kit is not pc)]
-    return [t for kit in kits for t in kit.TOOLS]
+    tools = [t for kit in kits for t in kit.TOOLS]
+    if guest:
+        tools = [t for t in tools if t["name"] in GUEST_TOOLS]
+    return tools
 
 
-def dispatch_tool(name: str, args: dict, local: bool = True) -> tuple[str, bool]:
+def dispatch_tool(name: str, args: dict, local: bool = True,
+                  guest: bool = False) -> tuple[str, bool]:
+    # Checked again here rather than trusting all_tools() to have withheld it.
+    # The tool list is built per turn from a request the client shapes; this is
+    # the point where the work would actually happen, so this is where a guest
+    # has to be stopped for the refusal to mean anything.
+    if guest and name not in GUEST_TOOLS:
+        return "Not available on a guest account.", True
     kit = TOOL_OWNER.get(name)
     if kit is None:
         return f"No such tool: {name}", True
@@ -121,6 +156,11 @@ PASSIVE_TOOLS = {
     "add_note", "list_notes",
     # listing price alerts just reads them back; setting/clearing stays gated.
     "list_price_alerts",
+    # Same split for alarms: list is a read, and silencing one that is ringing
+    # right now is the most explicitly-asked-for thing in the world — stopping
+    # to ask "may I turn your alarm off?" while it blares would be absurd.
+    # Setting and cancelling stay gated, so ARC can't quietly unset your 7am.
+    "list_alarms", "snooze_alarm", "dismiss_alarm",
 }
 # Master switch. On by default: ARC will not act without the user's say-so. Set
 # ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).
@@ -177,6 +217,10 @@ def supports_effort(model: str) -> bool:
 # so the extra headroom costs nothing on a normal turn.
 MAX_TOKENS = int(os.getenv("ARC_MAX_TOKENS", "8000"))
 
+# Ceiling on the system prompt the client may send. See the check in /api/chat
+# for why this is not 40,000 any more.
+MAX_SYSTEM_CHARS = int(os.getenv("ARC_MAX_SYSTEM_CHARS", "96000"))
+
 # How hard to think. 'low' keeps the voice loop snappy; raise to medium/high
 # only if you want more considered answers at the cost of a slower reply.
 EFFORT = os.getenv("ARC_EFFORT", "low")
@@ -194,20 +238,51 @@ MAX_TOOL_ROUNDS = int(os.getenv("ARC_MAX_TOOL_ROUNDS", "6"))
 CLOUD = bool(os.getenv("PORT"))
 PORT = int(os.getenv("PORT") or os.getenv("ARC_PORT", "8420"))
 # Loopback by default so nothing on your network can reach it. Set
-# ARC_HOST=0.0.0.0 to let other devices on your Wi-Fi (a phone) open it â€” do
-# that ONLY with ARC_PASSWORD set, or anyone on the network can use your key.
+# ARC_HOST=0.0.0.0 to let other devices on your Wi-Fi (a phone) open it â€” only
+# ever with ARC_AUTH_MODE left at google, or anyone on the network walks in.
 HOST = os.getenv("ARC_HOST", "").strip() or ("0.0.0.0" if CLOUD else "127.0.0.1")
 
 # --- access control ------------------------------------------------------
-# A public URL is found by bots within days. Without this, anyone who finds
-# the address spends your Anthropic credit.
-PASSWORD = os.getenv("ARC_PASSWORD", "").strip()
+# A public URL is found by bots within days, and behind this one sit your mail,
+# calendar, Drive, Telegram and (on the desktop) a shell. Sign-in is Google
+# OAuth against an explicit allowlist: Google proves who you are, the allowlist
+# decides whether that is anyone we accept.
+#
+#   google   the only sane mode for anything reachable off this machine
+#   open     no auth at all. Refused unless the bind is loopback, because on
+#            any other interface it hands the above to whoever finds the port.
+AUTH_MODE = (os.getenv("ARC_AUTH_MODE", "google").strip().lower() or "google")
+if AUTH_MODE not in ("google", "open"):
+    AUTH_MODE = "google"
 
-# Signs the login cookie. Set ARC_SECRET in production so sessions survive a
-# restart; otherwise we generate a throwaway one and everyone logs in again.
+# Who may sign in. Google authenticating somebody is not authorisation — this
+# is what turns "a real Google account" into "my account". Empty means nobody,
+# and we refuse to start rather than fall open.
+ALLOWED_EMAILS = {e.strip().lower() for e in
+                  os.getenv("ARC_ALLOWED_EMAILS", "theepang@gmail.com").split(",")
+                  if e.strip()}
+
+# Signing in is one question; what you may do once in is another. Anyone listed
+# here signs in normally and then gets a cut-down ARC: their own Google account
+# and public lookups, and nothing that reads or changes the OWNER's life. Being
+# listed here implies permission to sign in, so one line adds a guest.
+GUEST_EMAILS = {e.strip().lower() for e in
+                os.getenv("ARC_GUEST_EMAILS", "").split(",")
+                if e.strip()}
+ALLOWED_EMAILS |= GUEST_EMAILS
+
+# Pins the OAuth redirect_uri instead of deriving it from forwarding headers a
+# client can set. Leave empty on the desktop; set it to the funnel origin
+# (https://…ts.net) when tunnelling.
+PUBLIC_URL = os.getenv("ARC_PUBLIC_URL", "").strip().rstrip("/")
+
+# Signs the short-lived OAuth state cookie and the Google session id. Set
+# ARC_SECRET in production; otherwise we generate a throwaway one and the
+# sign-in round trip breaks across a restart.
 SECRET = os.getenv("ARC_SECRET", "").strip() or secrets.token_hex(32)
-SESSION_DAYS = int(os.getenv("ARC_SESSION_DAYS", "30"))
 COOKIE = "arc_session"
+OAUTH_COOKIE = "arc_oauth"
+OAUTH_WINDOW = 600          # seconds a half-finished sign-in stays valid
 
 # Per-visitor limits, and a whole-deployment ceiling. These are the brakes
 # that stop one bad afternoon becoming a large bill.
@@ -263,6 +338,14 @@ async def lifespan(app: FastAPI):
                 # browser via /api/alerts/due — phone push is a bonus on top.
                 await anyio.to_thread.run_sync(alerts.evaluate)
 
+                # Alarms: start any whose moment has come and reschedule the
+                # repeating ones. Runs unconditionally, like alerts and for the
+                # same reason — a ringing alarm is surfaced in the browser via
+                # /api/alarms/due whether or not a phone is configured. Cheap
+                # and offline, so it costs nothing on the cycles where nothing
+                # is due.
+                await anyio.to_thread.run_sync(alarm.evaluate)
+
                 if push.configured():
                     # Reminders coming due → phone.
                     due = await anyio.to_thread.run_sync(extras.due_for_push)
@@ -275,6 +358,20 @@ async def lifespan(app: FastAPI):
                         await anyio.to_thread.run_sync(
                             lambda m=msg: push.send(m, title="ARC market alert",
                                                     tags="chart_with_upwards_trend"))
+                    # Alarms going off → phone, at URGENT priority. Everything
+                    # else here is a notification you read when you next look;
+                    # this one has to get through a phone that is face-down and
+                    # silenced at 3am, which is exactly what ntfy's priority 5
+                    # is for. This is also the only delivery path that survives
+                    # the browser being closed, so for waking someone it is the
+                    # one that matters — which is why pending_push keeps
+                    # returning the same alarm every couple of minutes while it
+                    # rings, rather than once like everything above it.
+                    for msg in await anyio.to_thread.run_sync(alarm.pending_push):
+                        await anyio.to_thread.run_sync(
+                            lambda m=msg: push.send(m, title="ARC alarm",
+                                                    tags="alarm_clock",
+                                                    priority="urgent"))
             except Exception:
                 pass
             await asyncio.sleep(30)
@@ -291,7 +388,7 @@ async def lifespan(app: FastAPI):
 
 # With a password set we're deployed, and the auto-generated API docs would
 # hand a stranger the full shape of the service. Keep them for local work.
-_docs = None if os.getenv("ARC_PASSWORD", "").strip() else "/docs"
+_docs = "/docs" if AUTH_MODE == "open" else None
 app = FastAPI(title="ARC", lifespan=lifespan,
               docs_url=_docs, redoc_url=None,
               openapi_url=None if _docs is None else "/openapi.json")
@@ -305,28 +402,67 @@ def _sign(raw: str) -> str:
     return hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
 
 
-def make_token() -> str:
-    """A signed expiry stamp. No database, no session store."""
-    exp = str(int(time.time()) + SESSION_DAYS * 86400)
-    return f"{exp}.{_sign(exp)}"
+# Requests the HUD issues on its own timers, with nobody necessarily there.
+# They are served normally on a live session but must NOT refresh the idle
+# clock: screen-watch alone polls every four seconds, so if these counted as
+# use, a browser left open on a locked laptop would stay signed in for ever and
+# "signed in until you stop using it" would mean nothing. Everything not listed
+# here — chatting, speaking, loading the page — is taken as a person being
+# present. Default is therefore "counts as use"; a new poller has to be added
+# here deliberately.
+BACKGROUND_PATHS = {
+    "/api/health", "/api/session", "/api/reminders/due", "/api/alerts/due",
+    "/api/alarms/due",
+    "/api/calendar/upcoming", "/api/screen-watch", "/api/stocks",
+    "/api/stock-search", "/api/push/status", "/api/display",
+    # Announcing departure is the opposite of use. Without this the auth check
+    # that runs ahead of the route would refresh the idle clock on the way in,
+    # and the goodbye would read as a hello.
+    "/api/leave",
+}
 
 
-def token_valid(token: str) -> bool:
-    if not token or "." not in token:
-        return False
-    exp, sig = token.rsplit(".", 1)
-    if not hmac.compare_digest(sig, _sign(exp)):
-        return False
-    try:
-        return int(exp) > time.time()
-    except ValueError:
-        return False
+# An alarm is the one background poll that is also a promise. The idle timeout
+# exists so a browser nobody is sitting at stops being signed in; but somebody
+# who sets an alarm for 7am has said, in as many words, that this page must
+# still be able to make a noise at 7am — and it cannot do that signed out. So
+# while an alarm is actually set, the alarm poll counts as use and holds the
+# idle clock off; the moment the last one is dismissed, the clock resumes and
+# the session times out normally.
+#
+# This is a real widening of "signed in until you stop using it", which is why
+# it is one setting and easy to find. Turn it off and alarms still fire and
+# still reach the phone — they just won't ring in a tab left open overnight,
+# because that tab will have been signed out by then.
+ALARM_KEEPS_SESSION = os.getenv("ARC_ALARM_KEEPS_SESSION", "1").strip().lower()     not in ("0", "false", "no", "off")
+
+
+def current_session(request: Request, touch: bool | None = None):
+    """The live session record for this request, or None.
+
+    Every call re-checks both clocks, so a session that has outlived either is
+    gone here rather than at the next login — there is no such thing as a
+    request served on a dead session. Whether the idle clock is *refreshed*
+    depends on the path: see BACKGROUND_PATHS.
+    """
+    if AUTH_MODE == "open":
+        return {"email": "local", "created": 0, "last_seen": 0}
+    path = request.url.path
+    if touch is None:
+        touch = path not in BACKGROUND_PATHS
+        # The one exception, and only while an alarm is genuinely set — see
+        # ALARM_KEEPS_SESSION above. Checked last so it can only ever turn a
+        # background poll INTO use, never the other way round.
+        if not touch and path == "/api/alarms/due" and ALARM_KEEPS_SESSION:
+            try:
+                touch = alarm.armed()
+            except Exception:
+                touch = False
+    return session.validate(request.cookies.get(COOKIE, ""), touch=touch)
 
 
 def authed(request: Request) -> bool:
-    if not PASSWORD:          # no password set = local use, wide open
-        return True
-    return token_valid(request.cookies.get(COOKIE, ""))
+    return current_session(request) is not None
 
 
 def require_auth(request: Request):
@@ -334,58 +470,120 @@ def require_auth(request: Request):
         raise HTTPException(401, "Not signed in.")
 
 
+def is_guest(request: Request) -> bool:
+    """Whether this request belongs to a cut-down guest account.
+
+    Read from the server-side session record, never from the payload — the
+    client decides nothing about its own privilege level. Open mode is the
+    owner at their own desk by definition, so it is never a guest.
+    """
+    if not GUEST_EMAILS or AUTH_MODE == "open":
+        return False
+    rec = current_session(request)
+    return bool(rec) and (rec.get("email") or "").lower() in GUEST_EMAILS
+
+
+def deny_guest(request: Request):
+    """For routes that read or touch the owner's own data outside the tool loop.
+    The tool gate does not cover these — they are plain REST endpoints that any
+    signed-in session can call directly."""
+    if is_guest(request):
+        raise HTTPException(403, "Not available on a guest account.")
+
+
+def cookie_secure(request: Request) -> bool:
+    """Whether to mark cookies Secure.
+
+    Derived from the request, not from a PaaS-shaped env var: under cloudflared
+    or a Tailscale Funnel there is no PORT set, so anything keyed off that
+    concluded "not deployed" and shipped the auth cookie without Secure over a
+    public HTTPS origin.
+    """
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return proto == "https"
+
+
+# How long the COOKIE may live when there is no absolute cap. Not how long the
+# session lives — the server decides that, and a cookie for a session that has
+# gone idle is refused on sight. It only has to outlast a session comfortably,
+# because the cookie is written once at sign-in and never re-stamped: anything
+# near the idle window would log out someone who was still using ARC.
+#
+# Deriving it from MAX_AGE is what broke sign-in when the cap was turned off —
+# Max-Age=0 does not mean "no expiry", it tells the browser to delete the
+# cookie at once, so the redirect back from Google arrived with nothing set.
+COOKIE_MAX_AGE_UNCAPPED = 30 * 24 * 3600
+
+
+def set_session_cookie(resp, sid: str, request: Request):
+    resp.set_cookie(
+        COOKIE, sid,
+        max_age=int(session.MAX_AGE) if session.MAX_AGE else COOKIE_MAX_AGE_UNCAPPED,
+        httponly=True,                    # JavaScript can't read it
+        secure=cookie_secure(request),
+        samesite="lax",
+        path="/",
+    )
+
+
 # --------------------------------------------------------------------------
-# per-user Google: each browser gets a random signed session id, and that id
-# names a token file under google_sessions/. So two people signed into ARC link
-# their OWN Google accounts and never see each other's mail or calendar.
+# per-session Google: signing in IS linking your Google account, so one sign-in
+# yields both the session and the token file the calendar/mail tools use. The
+# file is named by the session's storage key rather than the session id itself,
+# so a directory listing is not a list of live credentials — and so a session
+# expiring can take its token with it.
 # --------------------------------------------------------------------------
 GOOGLE_DIR = DATA_DIR / "google_sessions"
 GOOGLE_DIR.mkdir(parents=True, exist_ok=True)
-SID_COOKIE = "arc_sid"
 
 
-def _sid_sign(sid: str) -> str:
-    return hmac.new(SECRET.encode(), ("sid:" + sid).encode(), hashlib.sha256).hexdigest()
-
-
-def read_sid(request: Request):
-    """The validated session id from the cookie, or None. Signed so nobody can
-    forge one and reach someone else's token."""
-    raw = request.cookies.get(SID_COOKIE, "")
-    if "." not in raw:
-        return None
-    sid, sig = raw.rsplit(".", 1)
-    if sid and hmac.compare_digest(sig, _sid_sign(sid)):
-        return sid
-    return None
-
-
-def make_sid():
-    """A fresh, unguessable session id plus its signed cookie value."""
-    sid = secrets.token_urlsafe(24)
-    return sid, f"{sid}.{_sid_sign(sid)}"
+def google_path_for_key(key: str) -> Path:
+    # sha256 hex: [0-9a-f] only, so always safe as a filename.
+    return GOOGLE_DIR / (f"{key}.json" if key else "none.json")
 
 
 def google_path(sid: str) -> Path:
-    # token_urlsafe yields only [A-Za-z0-9_-]; safe as a filename.
-    return GOOGLE_DIR / (f"{sid}.json" if sid else "none.json")
+    return google_path_for_key(session.key_for(sid) if sid else "")
+
+
+# A session's Google token dies with the session, rather than lingering on disk
+# after the access it belonged to has expired.
+session.set_evict_hook(lambda key: google_path_for_key(key).unlink(missing_ok=True))
 
 
 def apply_session_google(request: Request):
     """Point every Google call in THIS request at the signed-in browser's own
     token. Missing/unconnected sessions get a path with no file, so the Google
     tools simply read as 'not connected' — never a fallback to anyone else's."""
-    sid = read_sid(request)
+    sid = request.cookies.get(COOKIE, "") if AUTH_MODE != "open" else ""
+    if AUTH_MODE == "open" and not sid:
+        # Local dev with no session: fall back to the owner's CLI token.
+        gauth.set_active_token_path(None)
+        return None
     gauth.set_active_token_path(google_path(sid))
     return sid
 
 
 def public_base_url(request: Request) -> str:
-    """The externally-visible origin of this request, honouring the funnel's
-    forwarding headers so the OAuth redirect_uri matches what Google will call
-    back (…ts.net over the tunnel, localhost on the desktop)."""
+    """The externally-visible origin of this request, for the OAuth redirect_uri.
+
+    ARC_PUBLIC_URL wins when set. Otherwise we fall back to the funnel's
+    forwarding headers so the redirect matches what Google will call back
+    (…ts.net over the tunnel, localhost on the desktop) — but those headers are
+    client-settable, so pin ARC_PUBLIC_URL on anything public. Google rejecting
+    an unregistered redirect_uri is the backstop, not the control.
+    """
+    if PUBLIC_URL:
+        return PUBLIC_URL
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    # Only loopback is ever reached over plain http. Anything else got here
+    # through the tunnel, which is https-only — and guessing http there builds a
+    # redirect_uri that isn't the registered one, so Google refuses the sign-in
+    # outright. Don't make that hinge on a forwarding header being present.
+    bare = host.split(":")[0].lower()
+    if proto != "https" and bare not in ("localhost", "127.0.0.1", "::1", "[::1]"):
+        proto = "https"
     return f"{proto}://{host}"
 
 
@@ -438,10 +636,18 @@ def client_ip(request: Request) -> str:
     # Only believe the forwarded header when we deliberately sit behind a proxy
     # (ARC_TRUST_PROXY). Otherwise it's attacker-controlled: rotating it would
     # let one client masquerade as thousands and slip every per-IP limit.
+    #
+    # Take the LAST element, not the first. cloudflared and Tailscale APPEND the
+    # peer they saw rather than replacing the header, so the first element is
+    # whatever the client sent — spoofable, and rotating it defeated both the
+    # rate limits and the login lockout. The last element is the one our own
+    # trusted proxy wrote, and is the only entry a remote client cannot choose.
     if TRUST_PROXY:
         fwd = request.headers.get("x-forwarded-for", "")
         if fwd:
-            return fwd.split(",")[0].strip()
+            parts = [p.strip() for p in fwd.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
     return request.client.host if request.client else "unknown"
 
 
@@ -488,16 +694,29 @@ def check_rate(request: Request):
     _day["count"] += 1
 
 
+# Failed sign-ins, counted globally as well as per-IP. Per-IP alone was the
+# whole of the old defence, and it rested entirely on client_ip() being
+# truthful; a distributed attempt, or a spoofing bug like the one above, walked
+# straight past it. This ceiling does not care whose address it is.
+_login_failures_global = deque()
+GLOBAL_LOGIN_FAILURES = 60      # per ten minutes, across everyone
+
+
 def check_login_rate(request: Request):
     """
-    Stops anyone brute-forcing the password. Only *failed* attempts count, and
-    a success wipes the slate â€” otherwise everyone sharing a home or office
+    Stops anyone grinding the sign-in endpoint. Only *failed* attempts count,
+    and a success wipes the slate â€” otherwise everyone sharing a home or office
     connection gets locked out together over somebody's typo.
     """
-    ip = client_ip(request)
     now = time.time()
     sweep(now)
-    q = _logins[ip]
+
+    while _login_failures_global and now - _login_failures_global[0] > 600:
+        _login_failures_global.popleft()
+    if len(_login_failures_global) >= GLOBAL_LOGIN_FAILURES:
+        raise HTTPException(429, "Too many sign-in attempts. Wait ten minutes.")
+
+    q = _logins[client_ip(request)]
     while q and now - q[0] > 600:
         q.popleft()
     if len(q) >= 10:
@@ -505,7 +724,9 @@ def check_login_rate(request: Request):
 
 
 def note_login_failure(request: Request):
-    _logins[client_ip(request)].append(time.time())
+    now = time.time()
+    _logins[client_ip(request)].append(now)
+    _login_failures_global.append(now)
 
 
 def clear_login_failures(request: Request):
@@ -548,18 +769,15 @@ h1{font-size:30px;letter-spacing:.5em;margin:0 0 8px;font-weight:400;
 .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:0 0 28px}
 .chip{font-size:11px;letter-spacing:.03em;color:#bfe3f2;padding:7px 11px;
  border:1px solid var(--line);background:rgba(9,19,32,.5);border-radius:999px;white-space:nowrap}
-form{width:100%}
-.field{position:relative}
-input{width:100%;padding:14px 15px;background:rgba(4,7,12,.9);color:var(--ink);
- border:1px solid var(--line);font:inherit;font-size:14px;outline:none;text-align:center;
- letter-spacing:.22em;border-radius:10px;transition:border-color .15s,box-shadow .15s}
-input::placeholder{color:var(--dim);letter-spacing:.16em}
-input:focus{border-color:var(--ice);box-shadow:0 0 0 3px rgba(95,217,255,.12)}
-button{width:100%;margin-top:11px;padding:14px;background:linear-gradient(180deg,#7fe4ff,#43caf0);
- color:#04121a;border:0;font:inherit;font-size:12px;font-weight:600;letter-spacing:.2em;
- text-transform:uppercase;cursor:pointer;border-radius:10px;transition:filter .15s,transform .05s}
-button:hover{filter:brightness(1.08)}
-button:active{transform:translateY(1px)}
+.signin{display:flex;align-items:center;justify-content:center;gap:11px;width:100%;
+ padding:14px;background:linear-gradient(180deg,#7fe4ff,#43caf0);
+ color:#04121a;border:0;font:inherit;font-size:12px;font-weight:600;letter-spacing:.14em;
+ text-transform:uppercase;cursor:pointer;border-radius:10px;text-decoration:none;
+ transition:filter .15s,transform .05s}
+.signin:hover{filter:brightness(1.08)}
+.signin:active{transform:translateY(1px)}
+.signin svg{width:17px;height:17px;flex:none}
+.note{color:var(--dim);font-size:11px;line-height:1.6;margin:14px auto 0;max-width:340px;letter-spacing:.02em}
 .err{color:var(--err);font-size:12px;margin-top:13px;min-height:16px;letter-spacing:.02em}
 .trust{display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:center;margin:26px 0 0;
  color:var(--dim);font-size:10.5px;letter-spacing:.04em}
@@ -588,38 +806,50 @@ button:active{transform:translateY(1px)}
     <span class="chip">📅 Your calendar &amp; mail</span>
     <span class="chip">📈 Live markets</span>
   </div>
-  <form id="f">
-    <div class="field">
-      <input type="password" id="p" placeholder="Enter passphrase" autofocus autocomplete="current-password" aria-label="passphrase">
-    </div>
-    <button type="submit">Enter ARC</button>
-    <div class="err" id="e"></div>
-  </form>
+  <a class="signin" href="/auth/login">
+    <svg viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.8-1.6 4.6-4.5 6.4l6.9 5.3c4.1-3.8 6.6-9.4 6.6-14.9z"/>
+      <path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-7.1 5.5C8.1 41.1 15.4 46 24 46z"/>
+      <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l-7.1-5.5C2.9 17 2 20.4 2 24s.9 7 2.4 10z"/>
+      <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.5 29.9 2 24 2 15.4 2 8.1 6.9 4.4 14l7.1 5.5c1.8-5.3 6.7-8.9 12.5-8.9z"/>
+    </svg>
+    Sign in with Google
+  </a>
+  <div class="err" id="e"></div>
+  <p class="note">__SESSION_NOTE__</p>
   <div class="trust">
     <span>🔒 Self-hosted &amp; private</span>
     <span>🛡 Encrypted connection</span>
     <span>⚡ Powered by Claude</span>
-    <span>✳ No sign-up</span>
+    <span>✳ Google sign-in</span>
   </div>
   <div class="foot">Want your own ARC? <a href="mailto:theepang@gmail.com?subject=I%27d%20like%20my%20own%20ARC">Request access →</a></div>
 </div>
 <script>
-document.getElementById("f").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const e = document.getElementById("e");
-  e.textContent = "";
-  try {
-    const r = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: document.getElementById("p").value })
-    });
-    if (r.ok) { location.href = "/"; return; }
-    const d = await r.json().catch(() => ({}));
-    e.textContent = d.detail || "Incorrect passphrase.";
-  } catch (_) { e.textContent = "Could not reach the server."; }
-});
+// The callback reports failures in the query string rather than in a body,
+// because getting here is the end of a redirect chain, not a fetch.
+const REASONS = {
+  denied:   "You cancelled the Google sign-in.",
+  notyou:   "That Google account isn't allowed to use this ARC.",
+  expired:  "That sign-in took too long. Try again.",
+  error:    "Sign-in failed. Try again.",
+  timeout:  "Your session ended. Sign in again.",
+  setup:    "Google sign-in isn't configured on this server yet."
+};
+const why = new URLSearchParams(location.search).get("auth");
+if (why && REASONS[why]) document.getElementById("e").textContent = REASONS[why];
 </script></body></html>"""
+
+# Says what actually happens, which depends on whether the absolute cap is on.
+# Promising "at most N hours" with no cap configured would simply be untrue.
+_idle_mins = f"{session.IDLE_AGE / 60:g}"
+if session.MAX_AGE:
+    _session_note = (f"Sign-in is limited to the owner's Google account. You stay signed in "
+                     f"while you're using it, and at most {session.MAX_AGE / 3600:g} hours.")
+else:
+    _session_note = (f"Sign-in is limited to the owner's Google account. You stay signed in "
+                     f"while you're using it, and are signed out after {_idle_mins} minutes idle.")
+LOGIN_HTML = LOGIN_HTML.replace("__SESSION_NOTE__", _session_note)
 
 
 # The second-screen display: a glanceable dashboard meant to sit on a second
@@ -758,15 +988,23 @@ document.addEventListener("dblclick",toggleFs);
 async def health(request: Request, _=Depends(require_auth)):
     """The UI calls this on boot so it can show what's actually wired up."""
     apply_session_google(request)   # report THIS user's Google, not a shared one
+    # A guest's HUD must not advertise what the server will refuse: reporting
+    # telegram/computer as online here would light up controls that then fail.
+    guest = is_guest(request)
+    local = is_local_request(request) and not guest
     return {
         "claude": bool(ANTHROPIC_KEY),
         "calendar": gcal.connected(),
         "email": gmail.connected(),
         "contacts_drive": gextra.connected(),
-        "telegram": tg.connected(),
+        "telegram": tg.connected() and not guest,
+        "guest": guest,
         # Computer control is real only for the local desktop; over the tunnel
         # the phone gets everything else but not shell/system control.
-        "computer": pc.connected() and is_local_request(request),
+        "computer": pc.connected() and local,
+        # How many screens are attached, so the UI can offer a per-monitor
+        # choice only when there is actually a choice to make.
+        "monitors": len(pc._list_monitors()) if local else 0,
         # A natural server voice is always available now (free Edge neural TTS,
         # ElevenLabs on top when it has credit). The UI keys off this flag to
         # use server audio instead of the browser's robot voice.
@@ -790,7 +1028,11 @@ async def chat(request: Request, _=Depends(require_auth)):
     messages = payload.get("messages") or []
     system = payload.get("system") or ""
     use_search = bool(payload.get("search"))
-    see_screen = bool(payload.get("see_screen"))
+    # Either a bool (legacy: "yes, the primary") or which monitor(s) to attach —
+    # "each", "all", "primary", "2". Anything truthy but unrecognised falls
+    # through to pc.screenshot's own default.
+    see_screen_raw = payload.get("see_screen")
+    see_screen = bool(see_screen_raw)
     # Consent: only a genuine, user-authorised turn may run action tools. The
     # client sends this true only for turns the user themselves drove and ok'd;
     # background/automated calls (e.g. watch-mode glances) never set it, so they
@@ -820,14 +1062,63 @@ async def chat(request: Request, _=Depends(require_auth)):
     if total > 60_000:
         raise HTTPException(400, "Conversation is too long. Clear the log and start again.")
 
-    if not isinstance(system, str) or len(system) > 40_000:
-        raise HTTPException(400, "System prompt is missing or too long.")
+    # This guard is against an abusive caller, not against ARC's own prompt —
+    # and at 40,000 it had quietly become the latter. The HUD's SYSTEM_PROMPT is
+    # 36,292 characters on its own, and the page appends persona, memory, thread
+    # digest, timers, screen, consent, voice, lesson and speech-alternative
+    # blocks to it, with a guest preamble or the alarm summary added here. A
+    # user with accumulated memory and a lesson in progress reaches ~43,800 —
+    # so ARC would start rejecting EVERY message the moment someone had used it
+    # enough, and the symptom is simply that it stops answering.
+    #
+    # 96,000 leaves genuine room to grow while still bounding abuse. If this is
+    # ever hit again the answer is to trim the prompt, so say so out loud rather
+    # than failing with a number nobody can act on.
+    if not isinstance(system, str):
+        raise HTTPException(400, "System prompt is missing.")
+    if len(system) > MAX_SYSTEM_CHARS:
+        print(f"{C_RED}  ! system prompt {len(system)} chars "
+              f"(limit {MAX_SYSTEM_CHARS}) — the prompt needs trimming{C_OFF}")
+        raise HTTPException(400, "System prompt is too long.")
 
     # --- what ARC can actually do this turn -------------------------------
     # Computer control only for the local desktop, never over the tunnel.
-    local = is_local_request(request)
+    guest = is_guest(request)
+    # A guest is never "local", whatever the socket says. Belt and braces: it
+    # already takes a loopback peer with no forwarding headers to be local, but
+    # this way one check decides computer control, live screen and pc tools
+    # together instead of three that could drift apart.
+    local = is_local_request(request) and not guest
     apply_session_google(request)   # use THIS signed-in user's own Google account
-    tools = all_tools(local)
+    tools = all_tools(local, guest)
+    if guest:
+        # The personality prompt arrives from the client and describes the full
+        # ARC. Without this the model cheerfully offers to text someone or check
+        # the owner's notes, then hits a refusal it can't explain. Telling it the
+        # shape of the account up front is the difference between a demo that
+        # feels deliberate and one that feels broken.
+        system += (
+            "\n\nGUEST ACCOUNT — this is not your owner.\n"
+            "You are signed in as a guest. You have their own Google account "
+            "(calendar, mail, drive, contacts), plus weather, stocks, news and "
+            "web search. You do NOT have this machine, its screens, Telegram, "
+            "the owner's notes, memory, todos, reminders or phone alerts, and "
+            "you must not claim otherwise or offer to use them. If asked for "
+            "one, say plainly that it's off on a guest account and move on. "
+            "Never repeat anything you were told about the owner personally."
+        )
+    else:
+        # What alarms are set, in the turn context. Without this "is my alarm
+        # still on?" costs a tool call and a round trip, and — worse — the model
+        # answering "yes, seven o'clock" from the conversation alone would be
+        # guessing about the one thing you must never be wrong about.
+        try:
+            alarm_line = alarm.summary_line()
+        except Exception:
+            alarm_line = ""
+        if alarm_line:
+            system += "\n\n" + alarm_line
+
     # A passive glance (watch mode) just looks and reports — it must not click,
     # type, or otherwise act on the machine. no_tools strips the toolset for it.
     if bool(payload.get("no_tools")):
@@ -868,8 +1159,15 @@ async def chat(request: Request, _=Depends(require_auth)):
 
     # Live-screen: attach the current desktop screenshot so ARC sees what's on
     # screen right now, no tool call. Desktop-only; never written to disk.
+    # Defaults to EVERY monitor separately: attaching only the primary meant
+    # ARC answered confidently about the wrong screen whenever the user was
+    # working on the other one, which is worse than not seeing at all.
     if see_screen and local and pc.connected():
-        shot = pc.screenshot()
+        # A bare `true` from an older client means what it always meant: the
+        # primary. Attaching every monitor is opt-in, because it costs an image
+        # per screen on every single message.
+        which = see_screen_raw if isinstance(see_screen_raw, str) else "primary"
+        shot = pc.screenshot(which)
         if isinstance(shot, list):
             _attach_to_last_user(shot)
 
@@ -964,7 +1262,8 @@ async def chat(request: Request, _=Depends(require_auth)):
                     "is_error": True,
                 })
                 continue
-            out, failed = dispatch_tool(call.name, dict(call.input or {}), local=local)
+            out, failed = dispatch_tool(call.name, dict(call.input or {}),
+                                        local=local, guest=guest)
             used.append(call.name)
             mark = f"{C_RED}âœ—{C_OFF}" if failed else f"{C_CYAN}âœ“{C_OFF}"
             print(f"{C_DIM}  {mark} {call.name}{C_OFF} {C_DIM}{str(call.input)[:90]}{C_OFF}")
@@ -1201,6 +1500,9 @@ async def stock_search(request: Request, _=Depends(require_auth)):
 async def reminders_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any reminder whose time has come is returned once
     (then marked delivered) so ARC can announce it — even after a reload."""
+    # Returned ONCE: a guest polling this wouldn't merely see the owner's
+    # reminders, it would consume them, and the owner would never be told.
+    deny_guest(request)
     try:
         return JSONResponse({"due": extras.due_reminders()})
     except Exception:
@@ -1212,10 +1514,53 @@ async def alerts_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any price alert that has just crossed is returned
     once (then marked delivered) so ARC can speak it — even with no phone set up.
     Cheap: the network fetch happens on the server's monitor loop, not here."""
+    # Same one-shot delivery as reminders — a guest polling it eats the owner's.
+    deny_guest(request)
     try:
         return JSONResponse({"due": alerts.pending_browser()})
     except Exception:
         return JSONResponse({"due": []})
+
+
+@app.get("/api/alarms/due")
+async def alarms_due(request: Request, _=Depends(require_auth)):
+    """Whatever is ringing right now, so the page can make a noise about it.
+
+    Note what this does NOT do: consume. Reminders and price alerts are handed
+    over once and marked delivered, because they are messages. An alarm is a
+    bell — it keeps being reported until somebody stops it, so a reload (or a
+    second device) doesn't silence one. The alarm's own stop_at ends it if
+    nobody ever does."""
+    deny_guest(request)
+    try:
+        return JSONResponse({"ringing": alarm.ringing(), "next": alarm.next_up()})
+    except Exception:
+        return JSONResponse({"ringing": [], "next": None})
+
+
+@app.post("/api/alarms/snooze")
+async def alarms_snooze(request: Request, _=Depends(require_auth)):
+    """The Snooze button. Voice has snooze_alarm; this is for a hand at 7am
+    that would rather press something than form a sentence."""
+    deny_guest(request)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    try:
+        mins = int(float(body.get("minutes") or alarm.DEFAULT_SNOOZE_MIN))
+    except (TypeError, ValueError):
+        mins = alarm.DEFAULT_SNOOZE_MIN
+    return JSONResponse({"stopped": alarm.stop(snooze_minutes=max(1, min(120, mins))),
+                         "minutes": mins})
+
+
+@app.post("/api/alarms/dismiss")
+async def alarms_dismiss(request: Request, _=Depends(require_auth)):
+    """The Stop button."""
+    deny_guest(request)
+    return JSONResponse({"stopped": alarm.stop()})
 
 
 @app.get("/api/push/status")
@@ -1227,6 +1572,7 @@ async def push_status(request: Request, _=Depends(require_auth)):
 @app.post("/api/push/test")
 async def push_test(request: Request, _=Depends(require_auth)):
     """Send a test notification to the owner's phone."""
+    deny_guest(request)   # it is the OWNER's phone, whoever pressed the button
     if not push.configured():
         return JSONResponse({"ok": False, "reason": "not configured"})
     try:
@@ -1292,114 +1638,225 @@ async def screen_watch(request: Request, _=Depends(require_auth)):
         except Exception:
             pass
         return JSONResponse({"ok": True, "changed": False, "score": 0.0})
+    # Which screens to gate on — must be the same set the glance will be shown,
+    # or watch mode wakes for changes it then cannot see.
+    which = payload.get("monitor")
+    which = which if isinstance(which, str) else "each"
     try:
         import anyio
-        res = await anyio.to_thread.run_sync(pc.screen_changed)
+        res = await anyio.to_thread.run_sync(lambda: pc.screen_changed(monitor=which))
     except Exception as e:
         return JSONResponse({"ok": False, "reason": str(e)})
     return JSONResponse({"ok": True, **res})
 
 
-@app.post("/api/login")
-async def login(request: Request):
+# --- sign-in (Google OAuth) ------------------------------------------------
+#
+# One round trip does both jobs: it proves who you are (the ID token, checked
+# against ARC_ALLOWED_EMAILS) and it links the Google account the calendar and
+# mail tools then use. There is no separate "log in" and "connect Google" any
+# more, because they were always the same act.
+#
+# The in-flight state — CSRF state, OIDC nonce, PKCE verifier — rides in a
+# short-lived signed cookie rather than server memory, so a sign-in survives
+# the app restarting mid-flow and nothing accumulates for abandoned attempts.
+
+def _pack_oauth_state(state: str, nonce: str, verifier: str) -> str:
+    raw = f"{int(time.time())}:{state}:{nonce}:{verifier}"
+    return f"{raw}.{_sign(raw)}"
+
+
+def _unpack_oauth_state(cookie: str):
+    if not cookie or "." not in cookie:
+        return None
+    raw, sig = cookie.rsplit(".", 1)
+    if not hmac.compare_digest(sig, _sign(raw)):
+        return None
+    parts = raw.split(":", 3)
+    if len(parts) != 4:
+        return None
+    issued, state, nonce, verifier = parts
+    try:
+        if time.time() - int(issued) > OAUTH_WINDOW:
+            return None
+    except ValueError:
+        return None
+    return {"state": state, "nonce": nonce, "verifier": verifier}
+
+
+def _auth_fail(request: Request, reason: str, log: str = ""):
+    """Every failed sign-in leaves by this door: counted, logged once, and told
+    to the user only as much as is useful."""
+    note_login_failure(request)
+    if log:
+        print(f"{C_RED}  ! sign-in refused ({reason}): {log[:200]}{C_OFF}")
+    resp = RedirectResponse(f"/?auth={reason}", status_code=302)
+    resp.delete_cookie(OAUTH_COOKIE, path="/")
+    return resp
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request):
+    """Start the Google flow. Public by necessity — this is the front door.
+
+    It runs in open mode too. There it grants nothing (access is already
+    ungated) and only links the Google account, which is the difference
+    between an instance with a calendar and one without.
+    """
     check_login_rate(request)
-    if not PASSWORD:
-        return JSONResponse({"ok": True})
+    if not gauth.web_available():
+        return RedirectResponse("/?auth=setup", status_code=302)
 
-    payload = await read_json(request)
-    given = (payload.get("password") or "").strip()
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(64)        # PKCE, 43-128 chars
+    redirect_uri = public_base_url(request) + "/oauth/callback"
+    try:
+        url = gauth.web_auth_url(redirect_uri, state=state, nonce=nonce,
+                                 code_verifier=verifier)
+    except Exception as e:
+        return _auth_fail(request, "error", f"could not build auth url: {e}")
 
-    # constant-time compare, so timing gives nothing away
-    if not hmac.compare_digest(given, PASSWORD):
-        note_login_failure(request)
-        raise HTTPException(401, "Incorrect passphrase.")
+    resp = RedirectResponse(url, status_code=302)
+    resp.set_cookie(OAUTH_COOKIE, _pack_oauth_state(state, nonce, verifier),
+                    max_age=OAUTH_WINDOW, httponly=True,
+                    secure=cookie_secure(request), samesite="lax", path="/")
+    return resp
+
+
+@app.get("/oauth/callback")
+async def oauth_callback(request: Request):
+    """Google returns the user here. This is where authentication actually
+    happens, so it is public — requiring a session to reach the route that
+    creates one would be a closed loop."""
+    check_login_rate(request)
+
+    if request.query_params.get("error"):
+        return _auth_fail(request, "denied")
+
+    pending = _unpack_oauth_state(request.cookies.get(OAUTH_COOKIE, ""))
+    if not pending:
+        return _auth_fail(request, "expired")
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not code or not state or not hmac.compare_digest(state, pending["state"]):
+        return _auth_fail(request, "error", "state mismatch")
+
+    redirect_uri = public_base_url(request) + "/oauth/callback"
+    try:
+        import anyio
+        token_json, id_token = await anyio.to_thread.run_sync(
+            lambda: gauth.web_exchange(redirect_uri, code, pending["verifier"]))
+    except Exception as e:
+        return _auth_fail(request, "error", f"token exchange failed: {e}")
+
+    # Who Google says this is. Verified against Google's keys, our client id,
+    # and the nonce we minted — not read out of the token unchecked.
+    try:
+        claims = await anyio.to_thread.run_sync(
+            lambda: gauth.verify_id_token(id_token, pending["nonce"]))
+    except Exception as e:
+        return _auth_fail(request, "error", f"id token rejected: {e}")
+
+    email = (claims.get("email") or "").strip().lower()
+
+    # Google authenticating somebody is not authorisation. This is the line.
+    if email not in ALLOWED_EMAILS:
+        return _auth_fail(request, "notyou", f"{email} is not on the allowlist")
+
+    # Open mode has no sessions to create — this was only ever about linking the
+    # account, so the token goes to the instance's own token.json and that is
+    # the whole transaction.
+    if AUTH_MODE == "open":
+        try:
+            gauth.TOKEN.write_text(token_json, encoding="utf-8")
+        except Exception as e:
+            return _auth_fail(request, "error", f"could not store google token: {e}")
+        clear_login_failures(request)
+        print(f"{C_CYAN}  · google linked: {email}{C_OFF}")
+        resp = RedirectResponse("/?google=connected", status_code=302)
+        resp.delete_cookie(OAUTH_COOKIE, path="/")
+        return resp
+
+    sid = session.create(email, request.headers.get("user-agent", ""))
+    try:
+        google_path(sid).write_text(token_json, encoding="utf-8")
+    except Exception as e:
+        session.revoke(sid)
+        return _auth_fail(request, "error", f"could not store google token: {e}")
 
     clear_login_failures(request)
-    resp = JSONResponse({"ok": True})
-    resp.set_cookie(
-        COOKIE, make_token(),
-        max_age=SESSION_DAYS * 86400,
-        httponly=True,          # JavaScript can't read it
-        secure=CLOUD,           # HTTPS only once deployed
-        samesite="lax",
-        path="/",
-    )
+    print(f"{C_CYAN}  · signed in: {email}{C_OFF}")
+    resp = RedirectResponse("/", status_code=302)
+    set_session_cookie(resp, sid, request)
+    resp.delete_cookie(OAUTH_COOKIE, path="/")
     return resp
 
 
 @app.post("/api/logout")
-async def logout():
+async def logout(request: Request):
+    """Ends the session on the server, not merely in this browser."""
+    sid = request.cookies.get(COOKIE, "")
+    if sid:
+        session.revoke(sid)      # also deletes the session's Google token
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(COOKIE, path="/")
     return resp
 
 
-# --- per-user Google sign-in (web redirect flow) ---------------------------
+@app.post("/api/leave")
+async def leave(request: Request, _=Depends(require_auth)):
+    """The page is closing. Sent with navigator.sendBeacon on pagehide, which
+    survives the tab going away when a normal fetch would be cancelled.
 
-@app.get("/oauth/google/start")
-async def google_start(request: Request, _=Depends(require_auth)):
-    """Send the signed-in user to Google's consent screen to link THEIR account."""
-    if not gauth.web_available():
-        raise HTTPException(500, "Per-user Google isn't set up (credentials_web.json is missing).")
-    sid = read_sid(request)
-    fresh_cookie = None
-    if not sid:
-        sid, fresh_cookie = make_sid()
-    redirect_uri = public_base_url(request) + "/oauth/callback"
-    is_https = redirect_uri.startswith("https://")
-    try:
-        url = gauth.web_auth_url(redirect_uri, state=_sid_sign(sid))
-    except Exception as e:
-        raise HTTPException(500, f"Could not start Google sign-in: {e}")
-    resp = RedirectResponse(url, status_code=302)
-    if fresh_cookie:
-        resp.set_cookie(SID_COOKIE, fresh_cookie, max_age=SESSION_DAYS * 86400,
-                        httponly=True, secure=is_https, samesite="lax", path="/")
-    return resp
+    Starts the departure countdown rather than revoking outright — a refresh
+    fires pagehide too, and logging someone out for pressing F5 would be its own
+    kind of broken. Coming back within the grace window cancels it.
+    """
+    if AUTH_MODE == "open":
+        return JSONResponse({"ok": True})
+    session.mark_left(request.cookies.get(COOKIE, ""))
+    return JSONResponse({"ok": True})
 
 
-@app.get("/oauth/callback")
-async def google_callback(request: Request, _=Depends(require_auth)):
-    """Google sends the user back here with a code; trade it for this user's
-    tokens and store them under their session id."""
-    sid = read_sid(request)
-    code = request.query_params.get("code")
-    state = request.query_params.get("state")
-    if request.query_params.get("error"):
-        return RedirectResponse("/?google=denied", status_code=302)
-    if not sid or not code or not state or not hmac.compare_digest(state, _sid_sign(sid)):
-        return RedirectResponse("/?google=error", status_code=302)
-    redirect_uri = public_base_url(request) + "/oauth/callback"
-    try:
-        import anyio
-        token_json = await anyio.to_thread.run_sync(lambda: gauth.web_exchange(redirect_uri, code))
-    except Exception as e:
-        print(f"{C_RED}  ! google exchange failed: {str(e)[:200]}{C_OFF}")
-        return RedirectResponse("/?google=error", status_code=302)
-    try:
-        google_path(sid).write_text(token_json, encoding="utf-8")
-    except Exception:
-        return RedirectResponse("/?google=error", status_code=302)
-    return RedirectResponse("/?google=connected", status_code=302)
+@app.get("/api/session")
+async def session_info(request: Request, _=Depends(require_auth)):
+    """Lets the HUD warn before the absolute cap lands mid-conversation."""
+    if AUTH_MODE == "open":
+        return JSONResponse({"email": "local", "auth_mode": "open"})
+    info = session.describe(request.cookies.get(COOKIE, "")) or {}
+    return JSONResponse({**info, "auth_mode": AUTH_MODE, "guest": is_guest(request)})
 
 
 @app.get("/oauth/google/status")
 async def google_status(request: Request, _=Depends(require_auth)):
-    """What (if anything) this browser's Google account is, for the UI."""
-    sid = apply_session_google(request)   # points gauth at this session's token
-    p = google_path(sid)
-    connected = bool(sid) and p.exists()
+    """What Google account this instance carries, for the UI."""
+    sid = apply_session_google(request)   # points gauth at the right token
     email = ""
-    if connected:
-        try:
-            import anyio
-            email = await anyio.to_thread.run_sync(lambda: gauth.account_email(p))
-        except Exception:
-            email = ""
+
+    if AUTH_MODE == "open":
+        # No sessions here, so the account is the instance's own token.json —
+        # linked either through /auth/login or `python gauth.py`.
+        connected = gauth.TOKEN.exists()
+        if connected:
+            try:
+                import anyio
+                email = await anyio.to_thread.run_sync(
+                    lambda: gauth.account_email(gauth.TOKEN))
+            except Exception:
+                email = ""
+    else:
+        p = google_path(sid) if sid else None
+        connected = bool(p and p.exists())
+        # Straight from the verified ID token at sign-in — no API round trip.
+        email = (current_session(request) or {}).get("email", "") if connected else ""
+
     return JSONResponse({
         "web_available": gauth.web_available(),
         "connected": connected,
         "email": email,
+        "auth_mode": AUTH_MODE,
         "calendar": gcal.connected(),
         "gmail": gmail.connected(),
         "contacts_drive": gextra.connected(),
@@ -1407,15 +1864,22 @@ async def google_status(request: Request, _=Depends(require_auth)):
 
 
 @app.post("/oauth/google/disconnect")
-async def google_disconnect(request: Request, _=Depends(require_auth)):
-    """Unlink this browser's Google account (delete its stored token)."""
-    sid = read_sid(request)
-    if sid:
+async def google_disconnect(request: Request):
+    """In google mode the account IS the session, so unlinking means signing
+    out. In open mode there is no session — only the link to drop."""
+    if AUTH_MODE == "open":
         try:
-            google_path(sid).unlink(missing_ok=True)
+            gauth.TOKEN.unlink(missing_ok=True)
         except Exception:
             pass
-    return JSONResponse({"ok": True})
+        return JSONResponse({"ok": True, "signed_out": False})
+
+    sid = request.cookies.get(COOKIE, "")
+    if sid:
+        session.revoke(sid)
+    resp = JSONResponse({"ok": True, "signed_out": True})
+    resp.delete_cookie(COOKIE, path="/")
+    return resp
 
 
 @app.middleware("http")
@@ -1429,15 +1893,18 @@ async def require_login(request: Request, call_next):
     is covered no matter how the URL is cased or dotted. No-op when no password
     is set (local use), since authed() is then true for everyone.
     """
-    if PASSWORD and not authed(request):
+    if AUTH_MODE != "open" and not authed(request):
         path = request.url.path
         # PWA metadata and icons are not sensitive and must be fetchable so the
         # app stays installable and shows its icon even at the login screen.
         public = (
-            path in ("/api/login", "/api/logout", "/favicon.ico",
+            path in ("/api/logout", "/favicon.ico",
                      "/sw.js", "/manifest.webmanifest")
-            # Homepage, privacy policy and terms must be reachable WITHOUT the
-            # passphrase — Google's OAuth verification crawler fetches them and
+            # The sign-in round trip itself. /oauth/callback is where a session
+            # is created, so gating it on having one would be a closed loop.
+            or path in ("/auth/login", "/oauth/callback")
+            # Homepage, privacy policy and terms must be reachable WITHOUT
+            # signing in — Google's OAuth verification crawler fetches them and
             # they are the public face of the app.
             or path in ("/home", "/privacy", "/terms")
             or path.startswith("/static/icon")
@@ -1532,7 +1999,7 @@ async def index(request: Request):
 
 @app.get("/home")
 async def home_page():
-    """Public homepage — describes ARC. Reachable without the passphrase so
+    """Public homepage — describes ARC. Reachable without signing in so
     Google's OAuth verification can crawl it."""
     return FileResponse(ROOT / "static" / "home.html", headers=_NO_CACHE)
 
@@ -1560,6 +2027,7 @@ async def display_page(request: Request):
 @app.get("/api/display")
 async def api_display(request: Request, _=Depends(require_auth)):
     """Current second-screen content (the /display page polls this)."""
+    deny_guest(request)   # whatever the owner has up on their own wall screen
     return JSONResponse(display.get_board())
 
 
@@ -1634,9 +2102,62 @@ def open_window(port: int):
         webbrowser.open(url)
 
 
+def auth_preflight() -> bool:
+    """Refuse to serve rather than fall open.
+
+    An assistant that can read your mail and run your shell must never come up
+    ungated because a file was missing. Every failure here is fatal, and says
+    exactly what to do about it.
+    """
+    if AUTH_MODE == "open":
+        if HOST not in ("127.0.0.1", "::1", "localhost"):
+            print(f"\n{C_RED}  ARC_AUTH_MODE=open is only allowed on a loopback bind.{C_OFF}")
+            print(f"  {C_DIM}This instance binds {HOST}, which would hand your mail,{C_OFF}")
+            print(f"  {C_DIM}calendar and shell to anyone who finds the port.{C_OFF}")
+            print(f"  {C_DIM}Remove ARC_AUTH_MODE, or set ARC_HOST=127.0.0.1.{C_OFF}\n")
+            return False
+        print(f"{C_AMBER}  ! ARC_AUTH_MODE=open — no sign-in required (localhost only).{C_OFF}")
+        return True
+
+    if not gauth.web_available():
+        print(f"\n{C_RED}  Google sign-in is not set up — refusing to start.{C_OFF}")
+        print(f"  {C_DIM}console.cloud.google.com -> your project -> Credentials ->{C_OFF}")
+        print(f"  {C_DIM}Create credentials -> OAuth client ID -> Web application.{C_OFF}")
+        print(f"  {C_DIM}Add http://localhost:{PORT}/oauth/callback as a redirect URI,{C_OFF}")
+        print(f"  {C_DIM}download the JSON, and save it as credentials_web.json in {ROOT}{C_OFF}\n")
+        return False
+
+    if not ALLOWED_EMAILS:
+        print(f"\n{C_RED}  ARC_ALLOWED_EMAILS is empty — refusing to start.{C_OFF}")
+        print(f"  {C_DIM}Nobody could sign in, and starting without a gate is worse.{C_OFF}")
+        print(f"  {C_DIM}Set it in .env, e.g. ARC_ALLOWED_EMAILS=you@gmail.com{C_OFF}\n")
+        return False
+
+    if session.CLAMPED:
+        print(f"{C_AMBER}  ! ARC_SESSION_MAX_HOURS above {session.MAX_HOURS_CEILING:g}"
+              f" is capped at {session.MAX_HOURS_CEILING:g}.{C_OFF}")
+    if not os.getenv("ARC_SECRET"):
+        print(f"{C_AMBER}  ! ARC_SECRET is not set — a restart mid-sign-in will fail."
+              f" Set it to a random 64-hex string.{C_OFF}")
+    return True
+
+
 def banner(port: int):
     ok = lambda b: f"{C_CYAN}online{C_OFF}" if b else f"{C_AMBER}not configured{C_OFF}"
-    lock = f"{C_CYAN}passphrase{C_OFF}" if PASSWORD else f"{C_AMBER}OPEN â€” anyone can use your key{C_OFF}"
+    if AUTH_MODE == "open":
+        lock = f"{C_AMBER}OPEN â€” localhost only, no sign-in{C_OFF}"
+    else:
+        who = ", ".join(sorted(ALLOWED_EMAILS - GUEST_EMAILS))
+        span = (f"{session.MAX_AGE / 3600:g}h max, {session.IDLE_AGE / 60:g}m idle"
+                if session.MAX_AGE else
+                f"signed out after {session.IDLE_AGE / 60:g}m unused")
+        lock = f"{C_CYAN}google{C_OFF} {C_DIM}({who}; {span}){C_OFF}"
+    # Spelled out on its own line: a guest is a different kind of account, and
+    # the whole point is that it should never be mistaken for a second owner.
+    guest_line = ""
+    if GUEST_EMAILS and AUTH_MODE != "open":
+        guest_line = (f"\n  {C_DIM}guests{C_OFF}      {C_AMBER}{', '.join(sorted(GUEST_EMAILS))}{C_OFF} "
+                      f"{C_DIM}({len(GUEST_TOOLS)} tools — own google + lookups only){C_OFF}")
     print(f"""
 {C_CYAN}  ARC{C_OFF} {C_DIM}Â· ambient response core{C_OFF}
 
@@ -1646,7 +2167,7 @@ def banner(port: int):
   {C_DIM}telegram{C_OFF}    {ok(tg.connected())} {C_DIM}({'your account' if tg.connected() else 'run python tg_login.py to connect'}){C_OFF}
   {C_DIM}computer{C_OFF}    {ok(pc.connected())} {C_DIM}({'full control â€” localhost only' if pc.connected() else 'disabled (deployed)'}){C_OFF}
   {C_DIM}tools{C_OFF}       {C_CYAN}{len(all_tools())}{C_OFF} {C_DIM}live{C_OFF}
-  {C_DIM}access{C_OFF}      {lock}
+  {C_DIM}access{C_OFF}      {lock}{guest_line}
   {C_DIM}interface{C_OFF}   {C_CYAN}http://localhost:{port}{C_OFF}
 
   {C_DIM}ctrl-c to shut down{C_OFF}
@@ -1666,10 +2187,11 @@ _UVICORN_PROXY = dict(
 
 def serve_cloud():
     """Started by the hosting platform, not by you."""
-    if PASSWORD and not os.getenv("ARC_SECRET"):
-        print("  ! ARC_SECRET is not set â€” everyone will be signed out on each restart.")
-    if not PASSWORD:
-        print("  ! ARC_PASSWORD is not set. Anyone who finds this URL can spend your credit.")
+    if not auth_preflight():
+        raise SystemExit(1)
+    if not PUBLIC_URL:
+        print("  ! ARC_PUBLIC_URL is not set. Set it to this deployment's origin so the"
+              " OAuth redirect can't be steered by a forwarded header.")
     if CLOUD and not TRUST_PROXY:
         print("  ! ARC_TRUST_PROXY is not set. If a proxy/load balancer sits in front,"
               " set it so per-IP limits use the real client address.")
@@ -1694,6 +2216,9 @@ def main():
         print(f"{C_DIM}  ARC is already running on {PORT} â€” opening a window{C_OFF}")
         open_window(PORT)
         return
+
+    if not auth_preflight():
+        raise SystemExit(1)
 
     banner(PORT)
 

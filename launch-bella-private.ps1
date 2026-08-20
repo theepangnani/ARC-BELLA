@@ -1,7 +1,7 @@
 # Bella (PRIVATE) launcher — a second Bella that is yours alone.
 #
 # It runs the SAME code as the shared Bella, but on its own port (8421), with
-# its own passphrase and its own completely separate data (reminders, notes,
+# its own Google sign-in and its own completely separate data (reminders, notes,
 # price alerts, Google sign-in, app window) kept in a folder OUTSIDE the code
 # — so nothing it knows ever mixes with the shared instance your test users use.
 #
@@ -10,7 +10,7 @@
 $ErrorActionPreference = 'Stop'
 # Both derived from this script's own location, so a clone works wherever it
 # lands on a second machine. The data folder sits beside the repo, not inside
-# it — it holds a passphrase and a signed-in browser profile, and must never
+# it — it holds a signed-in browser profile and live sessions, and must never
 # be committed.
 $root = $PSScriptRoot
 $data = Join-Path (Split-Path $PSScriptRoot -Parent) 'bella-private'
@@ -41,8 +41,8 @@ function Find-Python {
 
 New-Item -ItemType Directory -Force -Path $data | Out-Null
 
-# Optional: load private overrides (ARC_PASSWORD, ARC_NTFY_TOPIC, …) from
-# bella-private\arc.env if you want them saved instead of typed each launch.
+# Optional: load private overrides (ARC_ALLOWED_EMAILS, ARC_NTFY_TOPIC, …) from
+# bella-private\arc.env.
 $envFile = Join-Path $data 'arc.env'
 if (Test-Path $envFile) {
   Get-Content $envFile | ForEach-Object {
@@ -52,13 +52,16 @@ if (Test-Path $envFile) {
   }
 }
 
-# No passphrase configured? Ask once. It is used only for this launch and never
-# written anywhere unless you choose to put it in arc.env yourself.
-if (-not $env:ARC_PASSWORD) {
-  $sec  = Read-Host 'Set a passphrase for your PRIVATE Bella' -AsSecureString
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-  $env:ARC_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+# There is no passphrase any more. Which of the two modes applies is set in
+# bella-private\arc.env, so say which one is actually in force rather than
+# assuming — a wrong hint here is worse than none.
+if ($env:ARC_AUTH_MODE -eq 'open') {
+  Write-Host "  Sign-in: none — opens straight in (this PC only)." -ForegroundColor DarkGray
+  Write-Host "  To link Google for calendar/mail, run once:" -ForegroundColor DarkGray
+  Write-Host "    `$env:ARC_DATA_DIR='$data'; python gauth.py" -ForegroundColor DarkGray
+} else {
+  Write-Host "  Sign-in: Google. If it is refused, add" -ForegroundColor DarkGray
+  Write-Host "  http://localhost:$port/oauth/callback to your Google OAuth client." -ForegroundColor DarkGray
 }
 
 $env:ARC_PORT        = "$port"

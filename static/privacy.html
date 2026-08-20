@@ -74,10 +74,11 @@ code{background:rgba(9,19,32,.8);border:1px solid var(--line);border-radius:5px;
       <ul>
         <li><strong>Google Calendar</strong> (read &amp; write) — to read your
             schedule and create or update events when you ask.</li>
-        <li><strong>Gmail</strong> (read, and compose/send) — to read and
-            summarise mail you ask about, and to draft or send messages on your
-            request. ARC is <strong>not</strong> granted permission to delete
-            mail or modify labels.</li>
+        <li><strong>Gmail</strong> (<strong>read-only</strong>) — to read and
+            summarise mail you ask about. ARC holds the
+            <code>gmail.readonly</code> scope and nothing else: it
+            <strong>cannot</strong> send, reply, draft, forward, delete, or
+            change labels. Mail is only ever an input to ARC.</li>
         <li><strong>Google Contacts</strong> (read-only) — to look up who you
             mean when you name a person.</li>
         <li><strong>Google Drive</strong> (read-only) — to find and read files
@@ -95,8 +96,8 @@ code{background:rgba(9,19,32,.8);border:1px solid var(--line);border-radius:5px;
 
   <h2>How ARC uses your data</h2>
   <p>Your data is used for one purpose: to provide the assistant features you
-     ask for — reading your calendar, summarising a message, drafting a reply,
-     answering a question about your screen, and similar tasks. That’s it.</p>
+     ask for — reading your calendar, summarising a message, answering a
+     question about your screen, and similar tasks. That’s it.</p>
 
   <h2>What ARC does <em>not</em> do</h2>
   <ul>
@@ -136,8 +137,13 @@ code{background:rgba(9,19,32,.8);border:1px solid var(--line);border-radius:5px;
      Revoking immediately ends ARC’s access to your Google data.</p>
 
   <h2>Security</h2>
-  <p>Connections are served over encrypted HTTPS. Access to an ARC instance is
-     protected by a passphrase set by the operator. Because ARC is self-hosted,
+  <p>Connections are served over encrypted HTTPS. Access to an ARC instance
+     requires signing in with Google, and is limited to an explicit list of
+     addresses chosen by the operator — authenticating with Google is not by
+     itself enough to get in. Google&rsquo;s full consent screen is shown on
+     every sign-in, and a session lasts at most four hours (and ends after
+     thirty minutes idle) before you must sign in again. Sessions are held on
+     the server and can be revoked at any time. Because ARC is self-hosted,
      your data is not pooled with other users on a central service.</p>
 
   <h2>Children</h2>

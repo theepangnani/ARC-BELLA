@@ -47,18 +47,28 @@ def _tok() -> Path:
 
 # Deliberately the narrowest set that does the job:
 #   calendar        read and write events
-#   gmail.readonly  read mail — cannot write or send
-#   gmail.compose   create/edit drafts and send them — cannot delete mail
-# Notably absent: gmail.modify, which would let ARC label, archive and bin
-# things. Nothing asked for that, so it isn't granted.
+#   gmail.readonly  read mail — and nothing else
+# Notably absent: gmail.compose (drafting and sending) and gmail.modify
+# (labelling, archiving, binning). Mail is read-only by design, so ARC cannot
+# write to the account at all, and nothing it reads can be mailed back out.
 CAL_SCOPES = ["https://www.googleapis.com/auth/calendar"]
-MAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.compose",
-]
+
+# Read only. gmail.compose was granted once, which let ARC create drafts and
+# send them; it is deliberately gone. Nothing can now leave the mail account,
+# so the two-step draft-then-send dance and its send caps are gone with it —
+# there is no send to cap. This also collapses the worst prompt-injection path
+# in the product: mail could previously be both the injection vector and the
+# exfiltration channel, and now it is only the former.
+MAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 CONTACTS_SCOPES = ["https://www.googleapis.com/auth/contacts.readonly"]
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-SCOPES = CAL_SCOPES + MAIL_SCOPES + CONTACTS_SCOPES + DRIVE_SCOPES
+
+# Identity. Google is not just linked here, it is who you sign in AS — so the
+# consent screen has to return an ID token we can verify and read an address
+# from. One sign-in covers both: proving who you are, and granting the tools.
+IDENTITY_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+
+SCOPES = IDENTITY_SCOPES + CAL_SCOPES + MAIL_SCOPES + CONTACTS_SCOPES + DRIVE_SCOPES
 
 
 class NotConnected(Exception):
@@ -169,29 +179,87 @@ def web_available() -> bool:
     return WEB_CREDENTIALS.exists()
 
 
-def _web_flow(redirect_uri, state=None):
+def web_client_id() -> str:
+    """The web OAuth client id — the audience an ID token must be issued for."""
+    import json
+    data = json.loads(WEB_CREDENTIALS.read_text(encoding="utf-8"))
+    return (data.get("web") or data.get("installed") or {}).get("client_id", "")
+
+
+def _web_flow(redirect_uri, state=None, code_verifier=None):
     from google_auth_oauthlib.flow import Flow
-    return Flow.from_client_secrets_file(
+    flow = Flow.from_client_secrets_file(
         str(WEB_CREDENTIALS), scopes=SCOPES, redirect_uri=redirect_uri, state=state
     )
+    # PKCE. Without this, an authorization code intercepted on the redirect
+    # (a shared machine, a logged URL) can be redeemed by whoever holds it.
+    # With it, redemption also needs the verifier, which never leaves us.
+    flow.autogenerate_code_verifier = False
+    flow.code_verifier = code_verifier
+    return flow
 
 
-def web_auth_url(redirect_uri, state):
-    """The Google consent URL to send the user's browser to. offline+consent so
-    we always get a refresh token back, even on a repeat sign-in."""
-    flow = _web_flow(redirect_uri, state)
+def web_auth_url(redirect_uri, state, nonce, code_verifier):
+    """The Google consent URL to send the user's browser to.
+
+    prompt=consent is deliberate and is the "authenticate every single time"
+    requirement: the full permission screen appears on every sign-in rather
+    than Google silently waving a returning user through. offline keeps a
+    refresh token coming back so the tools still work for the session's life.
+    """
+    flow = _web_flow(redirect_uri, state, code_verifier)
     url, _ = flow.authorization_url(
-        access_type="offline", include_granted_scopes="true", prompt="consent"
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+        nonce=nonce,
     )
     return url
 
 
-def web_exchange(redirect_uri, code) -> str:
-    """Trade the callback code for tokens; returns the token JSON to store for
-    this user's session."""
-    flow = _web_flow(redirect_uri)
+def web_exchange(redirect_uri, code, code_verifier=None):
+    """Trade the callback code for tokens.
+
+    Returns (token_json, id_token). The ID token is what proves *who* signed
+    in; the credentials JSON is what the calendar/mail tools use afterwards.
+    """
+    flow = _web_flow(redirect_uri, code_verifier=code_verifier)
     flow.fetch_token(code=code)
-    return flow.credentials.to_json()
+    creds = flow.credentials
+    return creds.to_json(), getattr(creds, "id_token", None)
+
+
+class NotAuthorised(Exception):
+    """Google authenticated somebody, but not somebody we accept."""
+
+
+def verify_id_token(token: str, nonce: str) -> dict:
+    """Verify Google's ID token and return its claims.
+
+    Checks the signature against Google's published keys, the audience (this
+    app's client id), the issuer, and expiry. We then check the nonce we
+    generated — which is what stops an ID token captured from another sign-in
+    being replayed here — and that Google actually vouches for the address.
+    """
+    from google.oauth2 import id_token as google_id_token
+    from google.auth.transport import requests as google_requests
+
+    if not token:
+        raise NotAuthorised("Google returned no ID token.")
+
+    claims = google_id_token.verify_oauth2_token(
+        token, google_requests.Request(), web_client_id(), clock_skew_in_seconds=10
+    )
+
+    if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        raise NotAuthorised("ID token came from an unexpected issuer.")
+    if not nonce or claims.get("nonce") != nonce:
+        raise NotAuthorised("ID token nonce did not match this sign-in.")
+    if not claims.get("email"):
+        raise NotAuthorised("ID token carried no email address.")
+    if not claims.get("email_verified"):
+        raise NotAuthorised("That Google address is not verified.")
+    return claims
 
 
 def account_email(token_path) -> str:
