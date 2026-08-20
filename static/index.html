@@ -4518,12 +4518,17 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // just after the speaking lock drops, which then lands in the follow-up
   // window as if the user had said it. A substring test is no use here —
   // the recogniser drops and mangles words, so "your left screen, or ask"
-  // comes back as "left screen or ask". Score word OVERLAP instead, and only
+  // comes back as "left screen or ask". Compare word RUNS instead, and only
   // for utterances long enough that agreement can't be coincidence.
   function echoWords(s) {
-    // Apostrophes go too, so "that's" and "thats" compare equal — the
-    // recogniser is inconsistent about them and ARC's text always has them.
-    return (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ")
+    // Apostrophes are DELETED rather than turned into separators, so ARC's
+    // "that's" and the recogniser's "thats" both become one token and compare
+    // equal. Splitting on them instead — which is what the punctuation rule
+    // below does to everything else — turned "that's" into "that" + "s" on
+    // ARC's side only, and broke the run at exactly the words the recogniser
+    // is most inconsistent about.
+    return (s || "").toLowerCase().replace(/['’`]/g, "")
+      .replace(/[^a-z0-9 ]/g, " ")
       .split(/\s+/).filter(Boolean);
   }
 
