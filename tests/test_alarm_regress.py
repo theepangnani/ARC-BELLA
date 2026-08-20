@@ -17,7 +17,7 @@ import alarm  # noqa: E402
 
 ok = True
 
-RUN_PY = r"c:\dev\arc-voice-assistant\arc\run.py"
+RUN_PY = ARC / "run.py"
 
 
 def check(label, got, want):
