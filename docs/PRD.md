@@ -112,7 +112,7 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 - **Spend meter** — per-day token accounting surfaced live in the HUD as
   `SPEND TODAY`, with a hard `ARC_DAILY_COST_CAP`.
 
-### 3.3 Tools (50 across 11 modules, plus one server-side)
+### 3.3 Tools (67 across 14 modules, plus one server-side)
 
 | Module | Tools |
 |---|---|
@@ -120,7 +120,7 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 | `gmail` | `search_email`, `read_email` *(read-only)* |
 | `gextra` | `find_contact`, `find_drive`, `read_drive` *(read-only)* |
 | `tg` | `tg_list_chats`, `tg_read_chat`, `tg_draft_message`, `tg_send_pending` |
-| `pc` | `open_app`, `open_website`, `find_files`, `read_file`, `open_file`, `system_control`, `brightness`, `wifi`, `power_mode`, `screenshot`, `list_monitors`, `media`, `clipboard`, `keyboard`, `mouse_control`, `prepare_command`, `run_prepared` |
+| `pc` | `open_app`, `list_apps`, `list_windows`, `focus_window`, `close_window`, `message_app`, `open_website`, `find_files`, `read_file`, `open_file`, `system_control`, `brightness`, `wifi`, `power_mode`, `screenshot`, `list_monitors`, `media`, `clipboard`, `keyboard`, `mouse_control`, `prepare_command`, `run_prepared` |
 | `extras` | `weather`, `add_todo`, `list_todos`, `complete_todo`, `set_reminder`, `list_reminders`, `cancel_reminder`, `stock`, `news` |
 | `media` | `youtube`, `spotify` |
 | `display` | `show_on_display`, `clear_display` |
@@ -128,6 +128,8 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 | `push` | `notify_phone` |
 | `alerts` | `set_price_alert`, `list_price_alerts`, `clear_price_alert` |
 | `alarm` | `set_alarm`, `list_alarms`, `cancel_alarm`, `snooze_alarm`, `dismiss_alarm` |
+| `market` | `market_outlook`, `market_compare` |
+| `automation` | `auto_click`, `hold_key`, `key_macro`, `stop_automation`, `automation_status` |
 
 Plus `web_search`, which runs on Anthropic's side rather than ours.
 
@@ -475,6 +477,34 @@ answer for anything suspicious.
   real Chrome/Edge, which is also why this is not an Electron `.exe`.
 - **Offline operation.** Reasoning is a rented API.
 - **Purchases or anything irreversible without a human yes.**
+
+### 3.6 Market analysis, and what it refuses to be
+
+`market_outlook` answers "where is this going" with the only honest thing there
+is: a **random walk with the instrument's own realised volatility**, giving a
+probability band for a horizon. The central estimate is today's price, because
+that is what the evidence supports; the information is in the width of the
+band. Trend, momentum and RSI are reported as description of the past.
+
+Three refusals are product requirements, not tone:
+
+| # | Requirement | Where it is held |
+|---|---|---|
+| M1 | Never a price target, and never "it will". | Tool output carries the caveat; the system prompt forbids the phrasing; `tests/test_market.py` greps the output for forecast and advice language |
+| M2 | Never a buy or sell recommendation, however hard the user pushes. | System prompt: "it is their money and their call", and ARC says it is not qualified |
+| M3 | The uncertainty is spoken, not buried. | The odds are part of the sentence — "about two thirds of the time between X and Y" — rather than a disclaimer appended after a confident number |
+
+This is also where the persona and the feature meet: §3.7's calibration rules
+are what make M1–M3 natural rather than a special case ARC has to remember.
+
+### 3.7 Calibration
+
+ARC is asked to be excellent across the board and quiet about it. "Humble" here
+means **calibrated**, not timid: give the real answer at full strength, let
+stated confidence track the evidence, never bluff a name or a number, do not
+hedge what is certain, and treat "I don't know" as a complete answer. The
+failure this prevents is the expensive one — a confident wrong answer, which is
+worse than no answer because it gets acted on.
 
 ## 7. Known gaps
 

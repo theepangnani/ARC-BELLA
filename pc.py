@@ -23,12 +23,14 @@ import os
 import re
 import sys
 import time
+import json
 import shlex
 import shutil
 import subprocess
 import datetime as dt
 import itertools
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).parent.resolve()
 RAN_LOG = ROOT / "ran-by-arc.log"
@@ -141,6 +143,19 @@ def open_app(name: str) -> str:
                 "don't pass to the system. If you meant a real app, say its plain name.")
 
     if IS_WIN:
+        # The installed-app index first: it knows the real name and the launch
+        # id, so "spotify" opens Spotify and "code" opens Visual Studio Code
+        # rather than failing on a name that was never going to resolve. It also
+        # reaches Store apps, which `start` cannot.
+        hit = _match_app(name)
+        if hit:
+            real, appid = hit
+            try:
+                subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{appid}"])
+                return f"Opened {real}." if real.lower() != name.lower() \
+                    else f"Opened {name}."
+            except Exception:
+                pass                          # fall through to the old resolver
         # `start "" <name>` asks the shell to resolve it the way the Run box does.
         r = _run(f'start "" "{name}"', shell=True, timeout=15)
         if r.returncode == 0:
@@ -149,7 +164,8 @@ def open_app(name: str) -> str:
             subprocess.Popen(name, shell=True)
             return f"Asked Windows to open {name}."
         except Exception as e:
-            return f"Couldn't open {name}: {e}"
+            return (f"Couldn't open {name}: {e}. Ask me what's installed if you're "
+                    f"not sure of the name.")
 
     if IS_MAC:
         # `open -a` finds apps by their display name in /Applications.
@@ -174,6 +190,251 @@ def open_app(name: str) -> str:
         return f"Couldn't find an app called '{name}' on this system."
     except Exception as e:
         return f"Couldn't open {name}: {e}"
+
+
+# --- what is actually installed --------------------------------------------
+#
+# `start "" "Discord"` only works when the name happens to match a shortcut or a
+# PATH binary exactly, which is why half of "open X" came back as "couldn't find
+# it". Windows already keeps the real list — the one the Start menu searches,
+# Store apps included — and Get-StartApps hands it over with a launch id for
+# each. So ARC can know what is on this machine instead of guessing at names.
+
+_APP_CACHE = {"at": 0.0, "apps": []}
+_APP_CACHE_TTL = 600          # installing something new is not a per-call event
+
+
+def _start_apps(force: bool = False):
+    """[(name, appid), ...] of everything the Start menu can launch."""
+    if not IS_WIN:
+        return []
+    now = time.time()
+    if not force and _APP_CACHE["apps"] and now - _APP_CACHE["at"] < _APP_CACHE_TTL:
+        return _APP_CACHE["apps"]
+    r = _ps("Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress",
+            timeout=25)
+    apps = []
+    try:
+        data = json.loads((r.stdout or "").strip() or "[]")
+        if isinstance(data, dict):
+            data = [data]
+        for item in data:
+            name = (item.get("Name") or "").strip()
+            appid = (item.get("AppID") or "").strip()
+            if name and appid:
+                apps.append((name, appid))
+    except Exception:
+        pass
+    if apps:
+        _APP_CACHE.update(at=now, apps=apps)
+    return apps
+
+
+def _match_app(name: str):
+    """The installed app a spoken name most likely meant, or None.
+
+    Exact, then prefix, then substring, then all-words-present — in that order.
+    Shortest name wins a tie, which is how "Spotify" beats "Spotify Web Helper";
+    the short one is what a person means.
+    """
+    want = (name or "").strip().lower()
+    if not want:
+        return None
+    apps = _start_apps()
+    if not apps:
+        return None
+    words = [w for w in want.split() if w]
+
+    def pick(cands):
+        return min(cands, key=lambda a: len(a[0])) if cands else None
+
+    return (pick([a for a in apps if a[0].lower() == want])
+            or pick([a for a in apps if a[0].lower().startswith(want)])
+            or pick([a for a in apps if want in a[0].lower()])
+            or pick([a for a in apps if all(w in a[0].lower() for w in words)]))
+
+
+def list_apps(filter: str = "", limit: int = 40) -> str:
+    """What is installed on this machine, optionally filtered."""
+    if not IS_WIN:
+        return _unsupported("list installed apps")
+    apps = _start_apps()
+    if not apps:
+        return "I couldn't read the installed app list on this machine."
+    q = (filter or "").strip().lower()
+    names = sorted({n for n, _ in apps if not q or q in n.lower()})
+    # Windows lists dozens of control-panel entries by executable name; nobody
+    # means those by "what apps have I got".
+    names = [n for n in names if not n.lower().endswith(".exe")]
+    try:
+        lim = max(1, min(int(limit or 40), 80))
+    except (TypeError, ValueError):
+        lim = 40
+    if not names:
+        return f"Nothing installed matches '{filter}'."
+    shown = names[:lim]
+    more = len(names) - len(shown)
+    return (f"{len(names)} app(s){' matching ' + repr(q) if q else ''}: "
+            + ", ".join(shown) + (f", and {more} more." if more else "."))
+
+
+# --- windows that are open right now ---------------------------------------
+
+def _windows():
+    """[(hwnd, title), ...] for visible, titled top-level windows."""
+    if not IS_WIN:
+        return []
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    out = []
+    CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, _):
+        if not u.IsWindowVisible(hwnd):
+            return True
+        n = u.GetWindowTextLengthW(hwnd)
+        if n <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(n + 1)
+        u.GetWindowTextW(hwnd, buf, n + 1)
+        title = buf.value.strip()
+        if title:
+            out.append((hwnd, title))
+        return True
+
+    try:
+        u.EnumWindows(CB(cb), 0)
+    except Exception:
+        return []
+    return out
+
+
+def _match_window(title: str):
+    want = (title or "").strip().lower()
+    if not want:
+        return None
+    wins = _windows()
+    for test in (lambda t: t.lower() == want,
+                 lambda t: t.lower().startswith(want),
+                 lambda t: want in t.lower()):
+        hit = [w for w in wins if test(w[1])]
+        if hit:
+            return hit[0]
+    return None
+
+
+def list_windows() -> str:
+    """What is open right now — the answer to "what have I got running"."""
+    if not IS_WIN:
+        return _unsupported("list open windows")
+    wins = _windows()
+    if not wins:
+        return "Nothing with a window is open."
+    # Long document titles read terribly aloud.
+    titles = [t if len(t) <= 60 else t[:57] + "..." for _, t in wins]
+    extra = f", and {len(titles) - 20} more." if len(titles) > 20 else "."
+    return f"{len(titles)} open: " + ", ".join(titles[:20]) + extra
+
+
+def focus_window(title: str) -> str:
+    """Bring a window to the front. Fuzzy on the title."""
+    if not IS_WIN:
+        return _unsupported("switch windows")
+    hit = _match_window(title)
+    if not hit:
+        return f"I don't see a window matching '{title}'."
+    import ctypes
+    u = ctypes.windll.user32
+    hwnd, name = hit
+    try:
+        u.ShowWindow(hwnd, 9)            # SW_RESTORE, in case it is minimised
+        u.SetForegroundWindow(hwnd)
+    except Exception as e:
+        return f"Couldn't switch to {name}: {e}"
+    return f"Switched to {name}."
+
+
+def close_window(title: str) -> str:
+    """Ask a window to close — the same thing clicking its X does.
+
+    WM_CLOSE, never TerminateProcess: the app runs its own shutdown, so an
+    editor with unsaved work prompts instead of losing it. If something refuses
+    to go, that is the app's decision and ARC reports it rather than escalating
+    to a kill.
+    """
+    if not IS_WIN:
+        return _unsupported("close windows")
+    hit = _match_window(title)
+    if not hit:
+        return f"I don't see a window matching '{title}'."
+    import ctypes
+    u = ctypes.windll.user32
+    hwnd, name = hit
+    try:
+        u.PostMessageW(hwnd, 0x0010, 0, 0)      # WM_CLOSE
+    except Exception as e:
+        return f"Couldn't close {name}: {e}"
+    return f"Asked {name} to close. If it has unsaved work it will ask you first."
+
+
+# --- messaging apps, the honest way ----------------------------------------
+#
+# WhatsApp, Instagram and SMS have no personal API worth the name: WhatsApp is
+# Business-only, Instagram has no messaging API for personal accounts, and
+# anything that appears to work is an unofficial client that gets accounts
+# banned. What IS officially supported is a deep link that OPENS the app with
+# the message already typed — so ARC drafts and the human presses send.
+#
+# Which is the same shape as the Telegram rule ARC already follows: the last
+# step belongs to the person, because a wrong send cannot be unsent.
+
+_MSG_APPS = {
+    "whatsapp":  "https://wa.me/{to}?text={text}",
+    "sms":       "sms:{to}?body={text}",
+    "text":      "sms:{to}?body={text}",
+    "telegram":  "https://t.me/{to}?text={text}",
+    "signal":    "https://signal.me/#p/{to}",
+    "instagram": "https://instagram.com/{to}",
+    "email":     "mailto:{to}?body={text}",
+    "mail":      "mailto:{to}?body={text}",
+}
+
+
+def message_app(app: str, to: str = "", text: str = "") -> str:
+    """Open a messaging app with the message ready, for the user to send."""
+    if not (IS_WIN or IS_MAC):
+        return _unsupported("open a messaging app")
+    key = (app or "").strip().lower().replace(" ", "")
+    if key not in _MSG_APPS:
+        return (f"I can pre-fill WhatsApp, SMS, Telegram and email, and open Signal "
+                f"or Instagram. I don't know '{app}'.")
+    dest = (to or "").strip()
+    body = (text or "").strip()
+
+    if key in ("whatsapp", "sms", "text"):
+        # wa.me and sms: both want digits, country code included.
+        digits = re.sub(r"[^0-9+]", "", dest).lstrip("+")
+        if not digits:
+            return (f"{app} needs a phone number with the country code — "
+                    f"'{dest}' isn't one. Their contact card will have it.")
+        dest = digits
+    if key == "instagram" and body:
+        return ("Instagram has no way to pre-fill a message from outside the app — "
+                "there is no personal API for it. I can open their profile and you "
+                "type it, if that helps.")
+    if not dest:
+        return f"Who is it going to? {app} needs a number or a username."
+
+    url = _MSG_APPS[key].format(to=quote(dest, safe=""), text=quote(body, safe=""))
+    try:
+        _open_default(url)
+    except Exception as e:
+        return f"Couldn't open {app}: {e}"
+    if body:
+        return (f"Opened {app} with the message ready. Read it and press send — "
+                f"I deliberately can't send it for you.")
+    return f"Opened {app}."
 
 
 def open_website(url: str) -> str:
@@ -931,8 +1192,17 @@ _VK = {
     "backspace": 0x08, "delete": 0x2E, "space": 0x20, "up": 0x26, "down": 0x28,
     "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23, "pageup": 0x21,
     "pagedown": 0x22, "win": 0x5B,
-    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f11": 0x7A,
+    "shift": 0x10, "ctrl": 0x11, "control": 0x11, "alt": 0x12,
 }
+# Letters and digits, and the words people say for them. Typing a letter goes
+# through the Unicode path, but HOLDING one — W to walk forward, shift to
+# sprint — needs the virtual key, so a keyboard without a-z and 0-9 in it
+# cannot do the one thing games are made of.
+_VK.update({chr(c).lower(): c for c in range(ord("A"), ord("Z") + 1)})
+_VK.update({chr(c): c for c in range(ord("0"), ord("9") + 1)})
+_VK.update({w: 0x30 + i for i, w in enumerate(
+    ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"])})
+_VK.update({f"f{i}": 0x6F + i for i in range(1, 13)})       # f1 - f12
 
 
 def keyboard(text: str = "", key: str = "") -> str:
@@ -1078,8 +1348,45 @@ def run_prepared(command_id: str) -> str:
 
 TOOLS = [
     {"name": "open_app",
-     "description": "Open an application on the user's computer by name, e.g. 'Spotify', 'Notepad', 'Chrome'.",
+     "description": ("Open an application on the user's computer by name, e.g. 'Spotify', "
+                     "'Notepad', 'Chrome', 'WhatsApp'. Matches against what is actually "
+                     "installed, so a rough name is fine — 'code' finds Visual Studio "
+                     "Code. Store apps work too."),
      "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "list_apps",
+     "description": ("What applications are installed on this computer. Use for 'what apps "
+                     "do I have', 'is Discord installed', 'what can you open'. Optional "
+                     "filter matches part of a name."),
+     "input_schema": {"type": "object", "properties": {
+         "filter": {"type": "string"}, "limit": {"type": "integer"}}, "required": []}},
+    {"name": "list_windows",
+     "description": ("What is open right now, by window title. Use for 'what have I got "
+                     "open', 'what am I running', or before switching to something."),
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "focus_window",
+     "description": ("Bring an open window to the front. Use for 'switch to Chrome', 'go "
+                     "back to my document', 'bring up Spotify'. Matching is fuzzy on the "
+                     "title, so a fragment works."),
+     "input_schema": {"type": "object", "properties": {"title": {"type": "string"}},
+                      "required": ["title"]}},
+    {"name": "close_window",
+     "description": ("Close an open window, the same as clicking its X — the app can still "
+                     "prompt about unsaved work. Use for 'close Chrome', 'shut that down'. "
+                     "Confirm with the user first if anything might be unsaved."),
+     "input_schema": {"type": "object", "properties": {"title": {"type": "string"}},
+                      "required": ["title"]}},
+    {"name": "message_app",
+     "description": (
+         "Open a messaging app with a message already typed in, for the USER to press "
+         "send. Use for 'WhatsApp mum that I'm running late', 'text Dad', 'email Sam "
+         "this'. Apps: whatsapp, sms, telegram, email, signal, instagram. WhatsApp and "
+         "SMS need a phone number with country code; Telegram and Instagram take a "
+         "username. You CANNOT send it yourself — no personal API exists for WhatsApp "
+         "or Instagram, and pretending otherwise would be a lie. Say plainly that it is "
+         "ready and they press send."),
+     "input_schema": {"type": "object", "properties": {
+         "app": {"type": "string"}, "to": {"type": "string"}, "text": {"type": "string"}},
+         "required": ["app"]}},
     {"name": "open_website",
      "description": "Open a website in the user's browser. Accepts a URL or a bare domain like 'youtube.com'.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
@@ -1169,6 +1476,9 @@ TOOLS = [
 
 _DISPATCH = {
     "open_app": open_app, "open_website": open_website,
+    "list_apps": list_apps, "list_windows": list_windows,
+    "focus_window": focus_window, "close_window": close_window,
+    "message_app": message_app,
     "find_files": find_files, "read_file": read_file, "open_file": open_file,
     "system_control": system_control, "brightness": brightness,
     "wifi": wifi, "power_mode": power_mode, "mouse_control": mouse_control,

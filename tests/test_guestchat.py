@@ -117,7 +117,12 @@ with TestClient(run.app) as client:
         # scratch data dir with no token linked -- so 3 tools here is the test
         # environment, not the guest tier. run.GUEST_TOOLS is the contract.
         truthy("    public lookups are there", "weather" in names)
-        truthy("    the guest tier still names 13 tools", len(run.GUEST_TOOLS) == 13)
+        # Pinned on purpose: the guest tier growing should be a decision, not
+        # a side effect of adding a tool somewhere. 13 -> 15 when market_outlook
+        # and market_compare were added, which are public prices and arithmetic.
+        check("    the guest tier names 15 tools", len(run.GUEST_TOOLS), 15)
+        truthy("    and the two additions are the market ones",
+               {"market_outlook", "market_compare"} <= run.GUEST_TOOLS)
         # Every tool offered must be one a guest may actually run, or the model
         # will pick one and hit a refusal it cannot explain.
         bad = [n for n in names if n and n not in run.GUEST_TOOLS]

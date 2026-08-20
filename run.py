@@ -82,8 +82,10 @@ import push
 # pc (computer control) and media only report connected() when NOT deployed.
 import alerts
 import alarm
+import market
+import automation
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
-            alerts, alarm)
+            alerts, alarm, market, automation)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -106,6 +108,10 @@ GUEST_TOOLS = {
     "find_contact", "find_drive", "read_drive",
     # Public lookups. No owner data involved in any of them.
     "weather", "stock", "news", "web_search",
+    # Market analysis: public prices in, arithmetic out. Nothing of the
+    # owner's is touched, and the honesty is in the tool's own output rather
+    # than in who is asking.
+    "market_outlook", "market_compare",
 }
 
 
@@ -114,7 +120,8 @@ def all_tools(local: bool = True, guest: bool = False):
     mail should produce calendar tools, not tools that fail on contact. Computer
     control is offered only to the local desktop, never to a remote (tunnelled)
     caller, so the model isn't tempted to try what it can't do from the phone."""
-    kits = [kit for kit in TOOLKITS if kit.connected() and (local or kit is not pc)]
+    kits = [kit for kit in TOOLKITS
+            if kit.connected() and (local or kit not in (pc, automation))]
     tools = [t for kit in kits for t in kit.TOOLS]
     if guest:
         tools = [t for t in tools if t["name"] in GUEST_TOOLS]
@@ -134,6 +141,10 @@ def dispatch_tool(name: str, args: dict, local: bool = True,
         return f"No such tool: {name}", True
     if kit is pc:
         return pc.run_tool(name, args, local=local)
+    if kit is automation and not local:
+        return ("Auto-clicking and key macros drive the mouse and keyboard of the "
+                "machine ARC runs on, so they only work from the desktop app — not "
+                "over the phone connection.", True)
     return kit.run_tool(name, args)
 
 
@@ -161,6 +172,14 @@ PASSIVE_TOOLS = {
     # to ask "may I turn your alarm off?" while it blares would be absurd.
     # Setting and cancelling stay gated, so ARC can't quietly unset your 7am.
     "list_alarms", "snooze_alarm", "dismiss_alarm",
+    # Looking at what is installed or open changes nothing.
+    "list_apps", "list_windows",
+    # Market analysis is arithmetic on public prices.
+    "market_outlook", "market_compare",
+    # STOPPING must never need permission. An auto-clicker you have to authorise
+    # ARC to switch off is not a feature, it is a hostage situation. Starting one
+    # is gated; ending one is not, and neither is asking what is running.
+    "stop_automation", "automation_status",
 }
 # Master switch. On by default: ARC will not act without the user's say-so. Set
 # ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).

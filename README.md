@@ -411,13 +411,43 @@ No setup — both work out of the box.
 **Localhost only, and off by default on anything deployed** — the banner shows
 `computer  disabled (deployed)` when a `PORT` is set. Bella can:
 
-- **Open apps and websites** — *"open Spotify"*, *"open youtube.com"*
+- **Open apps and websites** — *"open Spotify"*, *"open youtube.com"*. It reads
+  the real installed-app list off Windows, so a rough name is enough: *"open
+  code"* finds Visual Studio Code, and Store apps work too. Ask *"what apps do
+  I have"* and it will tell you.
+- **Switch and close windows** — *"what have I got open"*, *"switch to Chrome"*,
+  *"close that"*. Closing is the same as clicking the X, so anything with
+  unsaved work still gets to ask you first.
+- **Pre-fill a message** — *"WhatsApp mum that I'm running late"* opens WhatsApp
+  with the message typed and waiting. **You press send** — see below.
+- **Click and hold keys on repeat** — an auto-clicker and key macros, for games
+  and anything tedious. Everything is bounded and *"stop"* always works.
 - **Find and read files** — under your home folder by default; widen with
   `ARC_FILE_ROOTS` (semicolon-separated). Reads outside the allowed roots are
   refused.
 - **Control the machine** — lock, sleep, volume up/down, mute
 - **See your screens** — every monitor, not just the main one
 - **Run any shell command** — *this is the sharp one.*
+
+### Auto-clicker and key macros
+
+*"Auto click twice a second for two minutes."* *"Hold W for ten seconds."*
+*"Press one two three over and over."*
+
+Three rules, all about the same thing — that a program driving your mouse must
+never be something you have to fight to switch off:
+
+- **Everything is bounded.** Every run has a duration and a count, both capped
+  (`ARC_AUTOMATION_MAX_SECONDS`, default 10 minutes; max 40 events a second).
+  There is no "until I say stop" mode that outlives the conversation.
+- **Stop is instant and never needs permission.** It is one of the few tools
+  that skips the consent gate entirely, because an auto-clicker you have to
+  authorise ARC to switch off is not a feature.
+- **One at a time**, so *"stop"* is never ambiguous about what it stops.
+
+A held key is always released, even if the run is cut short. And worth knowing:
+plenty of online games ban input automation. ARC mentions it once and then
+leaves it with you.
 
 ### Seeing your screens
 
@@ -454,14 +484,54 @@ leave file access scoped to your home folder.
 
 ### What about Instagram, WhatsApp, SMS?
 
-Not possible, and not for want of trying. Instagram has no API for a personal
-account (only Business/Creator, and even then only your own posts and business
-DMs — never your feed or private messages); the personal-media API was retired
-at the end of 2024. WhatsApp has no personal-account API. Windows exposes no
-API for SMS or iMessage. The only way to reach any of these is scraping or
-fake-client automation, which violates their terms and gets accounts banned —
-so ARC doesn't. Telegram is the one mainstream messenger that publishes a
-client API and permits exactly this.
+**ARC can write the message. It cannot send it, and it will tell you so.**
+
+*"WhatsApp mum that I'm running late"* opens WhatsApp with the message already
+typed in; you read it and press send. Same for SMS, Telegram and email. That
+last step is yours by design — it is the same rule ARC follows for Telegram,
+because a wrong send cannot be unsent.
+
+The reason it stops there is not caution, it is that there is no legitimate
+alternative. Instagram has no API for a personal account (only Business and
+Creator, and even then only your own posts and business DMs — never your feed
+or private messages); the personal-media API was retired at the end of 2024.
+WhatsApp has no personal-account API. Windows exposes no API for SMS or
+iMessage. Everything that claims to send for you is scraping or a fake client,
+which violates their terms and gets accounts banned — so ARC doesn't. What it
+uses instead is each app's own published click-to-chat link, which is supported
+and cannot get you banned.
+
+Telegram is the exception: it publishes a real client API, so ARC genuinely
+sends there — after reading the message back to you and getting a yes.
+
+## Markets — analysis, not fortune telling
+
+*"Where's Nvidia going?"* is a fair question with no honest confident answer.
+What ARC gives you instead is the thing that is actually knowable:
+
+> NVDA is at 217.56. Up five percent over the month, twenty-four over the year.
+> In an uptrend, above both its fifty and two-hundred day averages. Movement is
+> jumpy, about thirty-eight percent annualised. Over the next month the honest
+> central estimate is roughly where it is now; about two thirds of the time it
+> lands between 195 and 243, and about nineteen times in twenty between 174 and
+> 272.
+
+That is a **random walk with the stock's own volatility**, deliberately. The
+centre of the band is today's price, because that is what the evidence
+supports; everything useful is in the *width* of the band. Trend, momentum and
+RSI are reported as description — what has happened — never as forecast.
+
+What it will not do, at any amount of pushing:
+
+- **Give a price target.** Nobody can, and a number stated confidently is worse
+  than no number, because someone might act on it.
+- **Say a stock "will" anything.**
+- **Tell you to buy or sell.** It gives you the analysis and says plainly that
+  it is your money and it is not qualified.
+
+`market_compare` puts several side by side on the same measures. Price alerts
+(below) are the other half of this: analysis tells you where things stand, an
+alert tells you the moment something moves.
 
 ## Alarms
 
