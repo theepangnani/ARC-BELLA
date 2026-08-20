@@ -130,5 +130,55 @@ c.truthy("  stoppable", "STOPPING IS INSTANT AND ALWAYS AVAILABLE" in src)
 c.truthy("  the held key is released in a finally", "finally:" in src
          and "KEYEVENTF_KEYUP" in src)
 
+print("\nThe button on the panel talks to real routes:")
+from starlette.testclient import TestClient   # noqa: E402
+import session                                # noqa: E402
+
+# TestClient's peer address is "testclient", never 127.0.0.1, so the real
+# is_local_request can only ever answer False here. Stand in the half of the
+# rule a test CAN exercise — the forwarding header, which is what actually
+# separates the desktop app from the tunnel — and leave the loopback check to
+# the machine it was written for.
+_real_local = run.is_local_request
+run.is_local_request = lambda r: not (r.headers.get("x-forwarded-for")
+                                      or r.headers.get("cf-connecting-ip"))
+
+with TestClient(run.app) as client:
+    sid = session.create("owner@example.com", "desktop")
+    C = {run.COOKIE: sid}
+    r = client.get("/api/automation/status", cookies=C)
+    c("  status answers", r.status_code, 200)
+    c("  and says nothing is running", r.json().get("running"), False)
+
+    r = client.post("/api/automation/click", cookies=C, json={"rate": 2, "seconds": 2})
+    c("  a click run starts", r.status_code, 200)
+    c.truthy("  and reports the rate back", "2" in r.json().get("status", ""))
+    c.truthy("  status now says it is running",
+             client.get("/api/automation/status", cookies=C).json().get("running"))
+    r = client.post("/api/automation/stop", cookies=C)
+    c("  stop answers", r.status_code, 200)
+    c("  and it really stopped", automation.running(), False)
+
+    # Starting needs the desktop; stopping must work from anywhere. A stop that
+    # can fail because you picked up your phone is not a stop.
+    hdr = {"x-forwarded-for": "203.0.113.9"}
+    r = client.post("/api/automation/click", cookies=C, json={}, headers=hdr)
+    c("  a remote caller cannot START one", r.status_code, 403)
+    r = client.post("/api/automation/stop", cookies=C, headers=hdr)
+    c("  but CAN stop one", r.status_code, 200)
+
+    g = session.create("guest@example.com", "phone")
+    G = {run.COOKIE: g}
+    for path, method in [("/api/automation/status", "get"), ("/api/automation/stop", "post"),
+                         ("/api/automation/click", "post")]:
+        got = getattr(client, method)(path, cookies=G).status_code
+        c("  guest refused %-26s" % path, got, 403)
+
+    # The poll behind the button is a timer, not a person at the keyboard.
+    c.truthy("  its status poll does not hold a session open",
+             "/api/automation/status" in run.BACKGROUND_PATHS)
+    session.revoke_all()
+run.is_local_request = _real_local
+
 quiet()
 c.done()

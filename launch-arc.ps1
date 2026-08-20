@@ -1,4 +1,4 @@
-# ARC / Bella launcher.
+﻿# ARC / Bella launcher.
 # One click: start the server if it isn't running, then open the app window.
 # Never starts a second server (which would grab a different port and pop a
 # duplicate window) — if the core is already up, it just opens a fresh window.

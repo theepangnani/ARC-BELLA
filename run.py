@@ -459,7 +459,7 @@ def _sign(raw: str) -> str:
 # here deliberately.
 BACKGROUND_PATHS = {
     "/api/health", "/api/session", "/api/reminders/due", "/api/alerts/due",
-    "/api/alarms/due",
+    "/api/alarms/due", "/api/automation/status",
     "/api/calendar/upcoming", "/api/screen-watch", "/api/stocks",
     "/api/stock-search", "/api/push/status", "/api/display",
     # Announcing departure is the opposite of use. Without this the auth check
@@ -1664,6 +1664,45 @@ async def alarms_dismiss(request: Request, _=Depends(require_auth)):
     """The Stop button."""
     deny_guest(request)
     return JSONResponse({"stopped": alarm.stop()})
+
+
+@app.get("/api/automation/status")
+async def automation_status_route(request: Request, _=Depends(require_auth)):
+    """What the auto-clicker is doing, for the button to reflect."""
+    deny_guest(request)
+    return JSONResponse({"running": automation.running(),
+                         "status": automation.automation_status()})
+
+
+@app.post("/api/automation/stop")
+async def automation_stop_route(request: Request, _=Depends(require_auth)):
+    """Stop whatever is repeating.
+
+    Deliberately NOT gated on the request being local. Everything that STARTS
+    input automation is desktop-only, but stopping it must work from wherever
+    you happen to be holding a screen — the whole point of a stop is that it is
+    never the thing that fails.
+    """
+    deny_guest(request)
+    return JSONResponse({"stopped": automation.stop_automation()})
+
+
+@app.post("/api/automation/click")
+async def automation_click_route(request: Request, _=Depends(require_auth)):
+    """The Start clicking button.
+
+    A direct route rather than a trip through the model: the pointer is already
+    where the user wants it, and a round trip through Claude to press a button
+    they have already pressed would be both slower and less predictable. The
+    same bounds apply either way — automation.py caps the rate and the
+    duration, so nothing here can ask for more than the tool allows.
+    """
+    deny_guest(request)
+    if not is_local_request(request):
+        raise HTTPException(403, "Auto-clicking only works from the desktop app.")
+    payload = await request.json() if await request.body() else {}
+    return JSONResponse({"status": automation.auto_click(
+        rate=payload.get("rate", 5), seconds=payload.get("seconds", 120))})
 
 
 @app.get("/api/push/status")

@@ -1,4 +1,4 @@
-# Bella (PRIVATE) launcher — a second Bella that is yours alone.
+﻿# Bella (PRIVATE) launcher — a second Bella that is yours alone.
 #
 # It runs the SAME code as the shared Bella, but on its own port (8421), with
 # its own Google sign-in and its own completely separate data (reminders, notes,

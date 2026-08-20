@@ -261,6 +261,30 @@ alerts are still unset.
 
 ---
 
+## Modes — Work, Relax, Business
+
+Three buttons at the top of the panel, or just say *"work mode"*. Each one
+flips a handful of settings **and** changes how ARC writes, because a work mode
+that still tells jokes is only a label:
+
+| Mode | What changes | How it writes |
+|---|---|---|
+| **Work** | Butler persona, night off, chirps off, Auto thinking, Smart brain | One or two sentences. No jokes unless you start them, no checking in, no raising mail or calendar unasked. If you're stuck: one concrete next step, not a pep talk |
+| **Relax** | Friend persona, night mode on, chirps on, Fast thinking and brain | Warmer, slower, tangents welcome. Won't bring up work, deadlines or unread mail unless you ask — and if something genuinely urgent is waiting, says so once and lets it go |
+| **Business** | Butler persona, night off, chirps off, Deep thinking, Smart brain | Assumes anything it says may be forwarded to a client. Formal, no slang, drafts that can be sent as-is, figures with their source, and it flags what it isn't sure of rather than smoothing over it |
+
+Pressing the active one turns it off — a mode you can only leave by picking
+another mode is a trap. It deliberately **isn't** remembered across restarts: a
+mode is about what you're doing right now, and coming back tomorrow in
+yesterday's business mode is a small daily annoyance for nothing.
+
+## The panel folds
+
+Every group heading — *How ARC behaves*, *Auto-clicker*, *This screen* — folds
+its section away and brings it back, and what you folded is remembered. Nothing
+is destroyed by folding; the controls stay wired, one click away. It's how a
+panel with seven groups stays a panel rather than a wall.
+
 ## Room mode
 
 For when several people are present. Browsers give no way to tell who is
@@ -444,6 +468,14 @@ never be something you have to fight to switch off:
   that skips the consent gate entirely, because an auto-clicker you have to
   authorise ARC to switch off is not a feature.
 - **One at a time**, so *"stop"* is never ambiguous about what it stops.
+
+There is a button for it too, under **Auto-clicker** in the panel: pick a rate
+and a duration, press *Start clicking*, and you get three seconds to put the
+pointer where you want it. The same button turns into **STOP**. It goes
+straight to the server rather than through the model — the pointer is already
+where you want it, and a round trip through Claude to press a button you have
+already pressed would be slower and less predictable. The same caps apply
+either way.
 
 A held key is always released, even if the run is cut short. And worth knowing:
 plenty of online games ban input automation. ARC mentions it once and then

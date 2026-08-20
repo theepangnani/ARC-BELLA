@@ -3,10 +3,11 @@
 
 Fifteen identical full-width buttons stacked in one column is a wall: nothing
 looks more important than anything else, so nothing is findable. They are in
-five labelled groups now. What a test can hold onto is that the grouping did
+seven labelled, foldable groups now. What a test can hold onto is that the grouping did
 not lose a control or unwire one — every button must still exist exactly once
-and still be reached by the script — and that spacing comes from one place
-rather than from fifteen separate margins that drift apart.
+and still be reached by the script — that spacing comes from one place rather
+than from fifteen separate margins that drift apart, and that each group folds
+away and comes back with what was folded remembered.
 
 What it cannot check is whether it looks right. That needs eyes on a screen.
 """
@@ -37,17 +38,21 @@ for i in CONTROLS:
     c("  %-16s present once and wired" % i, (once, wired), (True, True))
 
 print("\nThey are in labelled groups rather than one column:")
-c("  five groups", page.count('class="cgroup"'), 5)
-c("  each with a heading", page.count('class="chead"'), 5)
+c("  seven groups", page.count('class="cgroup"'), 7)
+c("  each with a heading", page.count('class="chead"'), 7)
 for head in ["How ARC behaves", "What ARC can see", "Your account",
              "This screen", "If something stops working"]:
     c.truthy("  %r" % head, ">%s<" % head in page)
 
-# The controls that belong together should be inside the same group.
-groups = re.findall(r'<div class="cgroup">(.*?)</div>\s*\n\s*\n', page, re.S)
-c("  the groups parse out", len(groups), 5)
-if len(groups) == 5:
-    behave, see, account, screen, fix = groups
+# The controls that belong together should be inside the same group. Keyed by
+# the group's name rather than its position, so reordering the panel is not a
+# test failure — only losing or misfiling a control is.
+groups = dict(re.findall(r'<div class="cgroup" data-group="([a-z]+)">(.*?)\n      </div>',
+                         page, re.S))
+c("  the groups parse out", len(groups), 7)
+if len(groups) == 7:
+    behave, see, account, fix = (groups["behaves"], groups["see"],
+                                 groups["account"], groups["fix"])
     c.truthy("  the safety switch leads the behaviour group", "consentBtn" in behave)
     c.truthy("  the screen-watchers are together",
              "liveScreenBtn" in see and "watchBtn" in see and "cameraBtn" in see)
@@ -95,5 +100,55 @@ c.truthy("  straight about not being the qualified person",
 # The old character is not replaced, only extended.
 c.truthy("  the butler survives", "unflappable British butler" in page)
 c.truthy("  so does the warmth", "=== YOU GENUINELY CARE ===" in page)
+
+print("\nEvery group folds away and comes back:")
+c("  seven groups now", page.count('class="cgroup"'), 7)
+c("  each is named, so a fold is remembered by what it is",
+  page.count('class="cgroup" data-group='), 7)
+c.truthy("  the heading is the control", '.cgroup .chead {' in css and "cursor: pointer" in css)
+c.truthy("  folding hides the contents, not the heading",
+         ".cgroup.folded > *:not(.chead) { display: none; }" in css)
+c.truthy("  and the marker flips to a plus", '.cgroup.folded .chead::after { content: "+"; }' in css)
+c.truthy("  what is folded is remembered", 'arc.folded' in body)
+c.truthy("  reachable by keyboard too", 'head.setAttribute("role", "button")' in body
+         and 'e.key === "Enter"' in body)
+c.truthy("  and announced as expanded or not", 'aria-expanded' in body)
+c.truthy("  nothing is destroyed by folding — the wiring runs regardless",
+         "function wireFolding()" in body and "wireFolding();" in body)
+
+print("\nWork, Relax and Business:")
+c("  three buttons", page.count('class="modes"'), 1)
+for m in ["work", "relax", "business"]:
+    c.truthy('  data-mode="%s"' % m, 'data-mode="%s"' % m in page)
+    c.truthy("  MODES has %s" % m, "    %s: {" % m in body)
+c.truthy("  a mode changes how ARC WRITES, not just the switches",
+         "function modeBlock()" in body and
+         "personaBlock() + modeBlock() + SYSTEM_PROMPT" in body)
+MODEBLOCK = body[body.index("const MODES = {"):body.index("let modeNow")]
+for setting in ["persona:", "night:", "cues:", "think:", "brain:", "prompt:", "hint:"]:
+    c("  each of the three sets %-9s" % setting, MODEBLOCK.count(setting), 3)
+c.truthy("  pressing the active one turns it off",
+         "modeNow === b.dataset.mode ? \"\" : b.dataset.mode" in body)
+c.truthy("  ...which the comment explains", "A mode you cannot" in body)
+# A mode is about right now. Coming back tomorrow in yesterday's business mode
+# would be a small daily annoyance for nothing.
+c("  it is NOT remembered across restarts",
+  'localStorage.setItem("arc.mode"' in body, False)
+c.truthy("  it can be switched by voice too", "[[mode: work]]" in page)
+c.truthy("  ...and the directive is handled",
+         r"mode\s*:\s*(work|relax|business" in body)
+c.truthy("  the switches are flipped through the real functions",
+         "applyPersona(m.persona, false)" in body and "applyThink(m.think)" in body)
+
+print("\nThe auto-clicker has a button now, not just a voice command:")
+for i in ["clickBtn", "clickRate", "clickFor", "clickStat"]:
+    c.truthy("  %s exists" % i, 'id="%s"' % i in page)
+c.truthy("  it counts down first, so the pointer can be placed",
+         "Starting in 3" in body)
+c.truthy("  the same button stops it", 'clickBtn.textContent = running ? "STOP"' in body)
+c.truthy("  and it is loud when running", "#clickBtn.on" in css and "--rose" in css)
+c.truthy("  it reflects a run started by voice",
+         "clickStatus().then(d => { if (d && d.running)" in body)
+c.truthy("  polling stops when the run does", "clearInterval(clickPoll)" in body)
 
 c.done()

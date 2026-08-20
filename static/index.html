@@ -388,7 +388,45 @@
     font-family: var(--mono); font-size: 9px; letter-spacing: .22em;
     text-transform: uppercase; color: var(--cyan-dim); opacity: .75;
     margin-bottom: 1px;
+    /* The heading IS the fold control — a whole-width target, because a 9px
+       chevron is not something anyone can hit on a phone. */
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; user-select: none; padding: 3px 0;
   }
+  .cgroup .chead:hover { opacity: 1; color: var(--accent); }
+  .cgroup .chead::after {
+    content: "3";              /* en dash when open, + when folded */
+    font-size: 12px; line-height: 1; opacity: .8; transition: transform .15s;
+  }
+  .cgroup.folded .chead::after { content: "+"; }
+  /* Folded: the heading stays, everything under it goes. Nothing is destroyed
+     and nothing moves — the panel just gets its space back. */
+  .cgroup.folded > *:not(.chead) { display: none; }
+  .cgroup.folded { gap: 0; padding-bottom: 2px; }
+
+  /* Modes: one row, three states, and "none of them" is also a state. */
+  .modes { display: flex; gap: 6px; }
+  .modes button {
+    flex: 1; padding: 11px 4px; font-size: 9px; letter-spacing: .12em;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  .modes button:hover { color: var(--ice); }
+  .modes button.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+  .modes button.on[data-mode="relax"] { background: #8affd4; border-color: #8affd4; }
+  .modes button.on[data-mode="business"] { background: #ffb454; border-color: #ffb454; }
+  .modehint { font-family: var(--mono); font-size: 9.5px; color: var(--cyan-dim);
+              line-height: 1.5; opacity: .85; }
+
+  /* Auto-clicker. The stop button is deliberately the loud one. */
+  #clickBtn { width: 100%; }
+  #clickBtn.on { color: var(--void); background: var(--rose, #ff7a8a); border-color: var(--rose, #ff7a8a); }
+  .clickrow { display: flex; gap: 6px; align-items: center; }
+  .clickrow select {
+    flex: 1; background: rgba(4,7,12,.85); color: var(--ice); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10.5px; padding: 8px 6px;
+  }
+  .clickstat { font-family: var(--mono); font-size: 9.5px; color: var(--cyan-dim);
+               min-height: 13px; }
   /* The few buttons here that use the generic style are otherwise as wide as
      their own text, which is what made the column look ragged. */
   .cgroup > button { width: 100%; text-align: center; }
@@ -1288,7 +1326,17 @@
         <input type="checkbox" id="cuesOn" checked>
       </label>
 
-      <div class="cgroup">
+      <div class="cgroup" data-group="mode">
+        <div class="chead">Mode</div>
+        <div class="modes">
+          <button type="button" data-mode="work" title="Heads-down. Short, factual answers, no chatter, no jokes unless you start them.">Work</button>
+          <button type="button" data-mode="relax" title="Off the clock. Warmer and slower, humour welcome, and it won't bring up work unless you do.">Relax</button>
+          <button type="button" data-mode="business" title="Assume anything said may be repeated to a client. Formal, sourced, and it flags what it isn't sure of.">Business</button>
+        </div>
+        <div class="modehint" id="modeHint">No mode — ARC as usual.</div>
+      </div>
+
+      <div class="cgroup" data-group="behaves">
         <div class="chead">How ARC behaves</div>
         <button id="consentBtn" title="When on, ARC never acts on its own — it asks before opening apps, typing, changing settings, playing media, running commands, or sending anything. It can always look things up. Nothing background (like watch mode) can ever act.">🔒 Ask before acting: on</button>
         <button id="personaBtn" title="Switch ARC's personality: composed butler, warm best friend, or upbeat coach">Personality: ARC</button>
@@ -1297,7 +1345,7 @@
         <button id="voiceGuessBtn" title="Let ARC estimate whether the speaker sounds like an adult man, an adult woman, or a child, from vocal pitch. Rough and often wrong — it never affects how you are addressed, and ARC only mentions it if you ask.">Guess speaker: off</button>
       </div>
 
-      <div class="cgroup">
+      <div class="cgroup" data-group="see">
         <div class="chead">What ARC can see</div>
         <button id="liveScreenBtn" title="Let ARC see your current screen with every message (desktop only). Nothing is saved.">Live screen: off</button>
         <button id="watchBtn" title="Watch mode: ARC keeps an eye on your screen and only speaks up when something meaningful changes (desktop only). Nothing is saved.">Watch screen: off</button>
@@ -1305,20 +1353,40 @@
         <button id="displayBtn" title="Open ARC's second-screen dashboard — a big clock, live markets, and whatever you ask ARC to show. Drag it to your second monitor and press F for full screen.">🖥 Open second screen</button>
       </div>
 
-      <div class="cgroup">
+      <div class="cgroup" data-group="gaming">
+        <div class="chead">Auto-clicker</div>
+        <div class="clickrow">
+          <select id="clickRate" title="Clicks per second">
+            <option value="2">2 / sec</option>
+            <option value="5" selected>5 / sec</option>
+            <option value="10">10 / sec</option>
+            <option value="20">20 / sec</option>
+          </select>
+          <select id="clickFor" title="How long to keep clicking">
+            <option value="30">30 sec</option>
+            <option value="120" selected>2 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+          </select>
+        </div>
+        <button type="button" id="clickBtn" title="Click repeatedly wherever the pointer is. Put the pointer where you want it first — it starts after a short countdown. Press again, or say stop, to end it.">Start clicking</button>
+        <div class="clickstat" id="clickStat"></div>
+      </div>
+
+      <div class="cgroup" data-group="account">
         <div class="chead">Your account</div>
         <button id="googleBtn" title="Connect your own Google account so ARC reads YOUR Gmail, Calendar and Drive — not anyone else's.">Connect Google</button>
         <div id="googleStatus" class="gstatus"></div>
       </div>
 
-      <div class="cgroup">
+      <div class="cgroup" data-group="screen">
         <div class="chead">This screen</div>
         <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
         <button id="fullscreenBtn" title="Toggle full-screen (or press F)">⛶ Full screen</button>
         <button id="resetPanelsBtn" title="Snap the weather and stock panels back to their default spots">Reset panels</button>
       </div>
 
-      <div class="cgroup">
+      <div class="cgroup" data-group="fix">
         <div class="chead">If something stops working</div>
         <button id="micFixBtn" title="Re-request the microphone and rebuild voice recognition from scratch">Reconnect mic</button>
         <button id="reconnectBtn" title="Reconnect to ARC after a dropped connection — restores the neural voice, rechecks the server, and rebuilds voice input in one tap">Reconnect ARC</button>
@@ -1505,6 +1573,7 @@ Everything you say goes through a speech synthesiser. This shapes everything:
 - PLAY MUSIC AND VIDEOS, via the youtube and spotify tools. When the user says to play a song, artist, or video, or "put something on", use them — they open YouTube or the Spotify app to what was asked. Say what you're putting on. Be honest that you're opening it rather than claiming fine control you don't have: you cannot pause, skip, or change the volume of Spotify or YouTube (that would need those platforms' APIs). You CAN change the computer's own volume with the system control tool.
 - WEATHER, via a weather tool. Use it for any weather question rather than guessing or searching — it's current and exact. Say temperatures as whole numbers spoken naturally.
 - STOCKS, via a stock tool — a live price and today's move for a ticker. Convert company names to tickers yourself (Apple → AAPL, Bitcoin → BTC-USD). Use it for "what's Tesla at", "how's the market", "price of Nvidia".
+- MODES — Work, Relax and Business, which the user can also press on the panel. Each one changes how you write and flips a few of their settings. To switch, end your reply with [[mode: work]], [[mode: relax]], [[mode: business]] or [[mode: off]]. Use when they say "work mode", "I'm working", "put me in business mode", "let's relax", "mode off", "back to normal". The marker is stripped before speech, so ALSO say it in words — "Work mode, sir." What each means: WORK is heads-down, short and factual, no chatter; RELAX is warmer and slower with humour welcome and no work talk unless asked; BUSINESS assumes anything said may be forwarded to a client, so formal, sourced, and explicit about what is uncertain. Switching a mode is not an action on their machine and needs no permission.
 - THE MARKETS PANEL on their screen — you can add or remove the tickers shown there. To add one, end your reply with [[market: add <ticker or name>]]; to remove one, [[market: remove <ticker or name>]]. Use when they say "add Tesla to my markets/stocks", "watch Nvidia", "put Bitcoin on my markets", "take Apple off my markets", "remove Bitcoin". You may pass a company name or a ticker — the panel resolves it (Apple → AAPL). The marker is stripped before anything is spoken, so ALSO confirm in words — "Added Tesla to your markets, sir." This just curates their panel; it is not a change to their computer, so no permission is needed.
 - NEWS, via a news tool — top headlines, optionally on a topic. Use it for "what's the news", "any news on X". Read two or three headlines aloud, briefly, not the whole list.
 - A TO-DO LIST, via the list tools. When the user says to add something to their list, remind them of a task, or asks what's on their list, use these. Keep it separate from what you remember: the list is for tasks to tick off, memory is for durable facts about them. Tick items off when they say they're done.
@@ -1674,6 +1743,70 @@ You are an upbeat, motivating coach in the user's corner.
     const saved = localStorage.getItem("arc.persona");
     if (saved && PERSONAS[saved]) personaMode = saved;
   } catch (_) {}
+  /* ---------------- modes ----------------
+     Work, Relax and Business are not three more toggles: each one flips a
+     handful of the switches below AND changes how ARC writes, because "work
+     mode" that still tells jokes is just a label. None of them is also a
+     state — pressing the active one turns it off and hands every switch back.
+
+     Deliberately NOT saved across restarts. A mode is about what you are doing
+     right now; coming back tomorrow in yesterday's business mode would be a
+     small daily annoyance for no benefit. */
+  const MODES = {
+    work: {
+      label: "Work",
+      hint: "Heads-down. Short and factual, no chatter.",
+      persona: "arc", night: false, cues: false, think: "auto", brain: "smart",
+      prompt: "=== WORK MODE ===\nThe user is working and wants their attention back. Answer in one or two sentences unless asked for more. No jokes unless they joke first, no small talk, no checking in. Do not raise mail, calendar or news unless asked. If they are stuck, give one concrete next step rather than encouragement. When the answer is a number or a fact, lead with it.\n\n"
+    },
+    relax: {
+      label: "Relax",
+      hint: "Off the clock. Warmer, slower, humour welcome.",
+      persona: "friend", night: true, cues: true, think: "off", brain: "fast",
+      prompt: "=== RELAX MODE ===\nThey are off the clock. Be warmer and less clipped; take the scenic route if it suits. Humour is welcome and so is a tangent. Do NOT bring up work, deadlines, unread mail or anything on their calendar unless they ask — if something genuinely urgent is waiting, say so once, briefly, and let it go. Company matters more than efficiency here.\n\n"
+    },
+    business: {
+      label: "Business",
+      hint: "Assume it may be repeated to a client.",
+      persona: "arc", night: false, cues: false, think: "always", brain: "smart",
+      prompt: "=== BUSINESS MODE ===\nAssume anything you say may be forwarded to a client, a colleague or a regulator. Formal register: no slang, no contractions where they would look casual in writing, no jokes. Anything you draft should be sendable as it stands. Give figures with their source and date. Where you are not certain, say so explicitly rather than smoothing it over — an unflagged guess in this mode is the worst thing you can produce. Never invent a name, a number, a date or a citation.\n\n"
+    },
+  };
+  let modeNow = "";
+
+  function modeBlock() {
+    const m = MODES[modeNow];
+    return m ? m.prompt : "";
+  }
+
+  function applyMode(name, announce) {
+    const m = MODES[name];
+    modeNow = m ? name : "";
+    document.querySelectorAll(".modes button").forEach(b =>
+      b.classList.toggle("on", !!m && b.dataset.mode === name));
+    const hint = $("modeHint");
+    if (hint) hint.textContent = m ? m.hint : "No mode — ARC as usual.";
+    if (!m) {
+      if (announce) addEntry("sys", "SYSTEM", "Mode off.");
+      return;
+    }
+    // Flip the switches the mode implies, through the same functions the
+    // buttons use, so nothing gets into a state the buttons cannot undo.
+    try { applyPersona(m.persona, false); } catch (_) {}
+    try { applyNight(m.night); } catch (_) {}
+    if (el.cuesOn) el.cuesOn.checked = m.cues;
+    try { applyThink(m.think); } catch (_) {}
+    try {
+      window.__arcModel = m.brain;
+      window.__brainUserSet = true;   // a mode IS an explicit choice
+      applyModel(false);
+    } catch (_) {}
+    if (announce) {
+      addEntry("sys", "SYSTEM", m.label + " mode. " + m.hint);
+      if (state.booted) speak(m.label + " mode.");
+    }
+  }
+
   function personaBlock() {
     const p = PERSONAS[personaMode];
     return p && p.override ? p.override + "\n\n" : "";
@@ -2423,6 +2556,16 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
       }
       return "";
     });
+
+    // [[mode: work|relax|business|off]] — the same three buttons, by voice.
+    // Client-side like the markets panel: it changes this screen and how ARC
+    // writes, not the machine, so it is not an "action" needing permission.
+    out = out.replace(/\[\[\s*mode\s*:\s*(work|relax|business|off|none)\s*\]\]/gi,
+      (_, name) => {
+        try { applyMode(/^(off|none)$/i.test(name) ? "" : name.toLowerCase(), false); }
+        catch (_) {}
+        return "";
+      });
 
     // Fence left open — the model forgot the terminator. Take the rest of the
     // reply rather than reading a raw directive and a wall of code out loud.
@@ -4899,7 +5042,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: pending,
-          system: personaBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + voiceBlock() + learnBlock() + altBlock(alts),
+          system: personaBlock() + modeBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + voiceBlock() + learnBlock() + altBlock(alts),
           // Only a genuine, user-approved turn may act. Background calls never set this.
           allow_actions: authorize,
           // Send the mode, not a local guess. The server turns anything but
@@ -5549,6 +5692,132 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     applyModel(true);
   });
   applyModel(false);   // reflect the saved choice on the button + readout
+
+  /* ---------------- folding panels ----------------
+     Seven labelled groups is better than one wall of buttons, but it is still
+     a long column. Each heading folds its own group away, and what is folded
+     is remembered — so the two sections someone actually uses stay open and
+     the rest get out of the way. Nothing is destroyed by folding; the controls
+     are still there, still wired, one click away. */
+  const FOLD_KEY = "arc.folded";
+
+  function foldedSet() {
+    try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || "[]")); }
+    catch (_) { return new Set(); }
+  }
+
+  function saveFolded(set) {
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify(Array.from(set))); } catch (_) {}
+  }
+
+  function wireFolding() {
+    const folded = foldedSet();
+    document.querySelectorAll(".cgroup").forEach(g => {
+      const name = g.dataset.group || "";
+      const head = g.querySelector(".chead");
+      if (!head) return;
+      if (folded.has(name)) g.classList.add("folded");
+      // Keyboard reachable, and announced as what it is.
+      head.setAttribute("role", "button");
+      head.setAttribute("tabindex", "0");
+      const toggle = () => {
+        const now = g.classList.toggle("folded");
+        const set = foldedSet();
+        if (now) set.add(name); else set.delete(name);
+        saveFolded(set);
+        head.setAttribute("aria-expanded", now ? "false" : "true");
+      };
+      head.setAttribute("aria-expanded", g.classList.contains("folded") ? "false" : "true");
+      head.addEventListener("click", toggle);
+      head.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
+    });
+  }
+  wireFolding();
+
+  document.querySelectorAll(".modes button").forEach(b => {
+    b.addEventListener("click", () => {
+      // Pressing the one that is already on turns it off. A mode you cannot
+      // leave without picking another mode is a trap.
+      applyMode(modeNow === b.dataset.mode ? "" : b.dataset.mode, true);
+    });
+  });
+  applyMode("", false);
+
+  /* ---------------- the auto-clicker, as a button ----------------
+     It is a voice tool first, but "start clicking" is exactly the thing you
+     want to press rather than say — usually because the pointer is already
+     where you need it and talking would move your attention. Hence: pick a
+     rate, pick a duration, press once. It counts down first so there is time
+     to put the pointer where it belongs, and the same button stops it. */
+  const clickBtn = $("clickBtn"), clickStat = $("clickStat");
+  let clickPoll = null, clickArming = null;
+
+  function paintClick(running, text) {
+    if (!clickBtn) return;
+    clickBtn.classList.toggle("on", !!running);
+    clickBtn.textContent = running ? "STOP" : "Start clicking";
+    if (clickStat) clickStat.textContent = text || "";
+  }
+
+  async function clickStatus() {
+    try {
+      const r = await fetch("/api/automation/status");
+      if (!r.ok) return null;
+      return await r.json();
+    } catch (_) { return null; }
+  }
+
+  function watchClick() {
+    clearInterval(clickPoll);
+    clickPoll = setInterval(async () => {
+      const d = await clickStatus();
+      if (!d || !d.running) {
+        clearInterval(clickPoll); clickPoll = null;
+        paintClick(false, d ? "Finished." : "");
+        return;
+      }
+      paintClick(true, d.status || "Running.");
+    }, 1000);
+  }
+
+  async function stopClicking(quiet) {
+    clearTimeout(clickArming); clickArming = null;
+    clearInterval(clickPoll); clickPoll = null;
+    try { await fetch("/api/automation/stop", { method: "POST" }); } catch (_) {}
+    paintClick(false, quiet ? "" : "Stopped.");
+  }
+
+  if (clickBtn) clickBtn.addEventListener("click", async () => {
+    if (clickBtn.classList.contains("on")) { stopClicking(); return; }
+    const rate = parseFloat(($("clickRate") || {}).value || 5);
+    const secs = parseFloat(($("clickFor") || {}).value || 120);
+    // Three seconds to get the pointer where it needs to be. Starting the
+    // instant the button is pressed would only ever click this button.
+    paintClick(true, "Starting in 3… put the pointer where you want it.");
+    let left = 3;
+    clickArming = setInterval(async () => {
+      left--;
+      if (left > 0) { paintClick(true, "Starting in " + left + "…"); return; }
+      clearInterval(clickArming); clickArming = null;
+      try {
+        const r = await fetch("/api/automation/click", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rate: rate, seconds: secs })
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) { paintClick(false, d.detail || d.error || "Couldn't start."); return; }
+        paintClick(true, d.status || "Clicking. Press STOP to end it.");
+        watchClick();
+      } catch (e) {
+        paintClick(false, "Couldn't reach ARC.");
+      }
+    }, 1000);
+  });
+
+  // If a voice command started one, the button should already say STOP.
+  clickStatus().then(d => { if (d && d.running) { paintClick(true, d.status); watchClick(); } });
 
   const cameraBtn = document.getElementById("cameraBtn");
   if (cameraBtn) cameraBtn.addEventListener("click", async () => {
