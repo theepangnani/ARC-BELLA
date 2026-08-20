@@ -13,6 +13,7 @@ import io
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _harness import ARC, HUD, sandbox   # noqa: E402
@@ -58,9 +59,16 @@ for f in GDIR.glob("*.json"):
 print("A never-expiring session must not mean a never-ending pile of them:")
 check("the cap is on by default", session.MAX_PER_ACCOUNT, 8)
 sids = []
+base = time.time() - 1000
 for i in range(12):
     s = session.create("owner@example.com", "device %d" % i)
     token_for(s)
+    # Give each one a distinct idle clock, in order. Twelve sign-ins in a tight
+    # loop land inside the same clock tick on a fast machine, and sessions that
+    # tie on last_seen are dropped in whatever order their storage keys sort —
+    # so without this the assertions below are testing a hash, not
+    # least-recently-used. CI found that; this machine never would have.
+    session._sessions[session.key_for(s)]["last_seen"] = base + i
     sids.append(s)
 check("12 sign-ins -> 8 live sessions", session.count(), 8)
 check("the newest survived", bool(session.validate(sids[-1], touch=False)), True)
