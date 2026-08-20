@@ -688,7 +688,7 @@ See [DEPLOY.md](DEPLOY.md). The short version:
 
 **Sign-in is Google OAuth, and every route is behind it** — the page, the chat
 endpoint, the voice endpoint, the health check, the second screen. There is no
-no passphrase.
+passphrase any more.
 
 | Setting | Default | What it does |
 |---|---|---|

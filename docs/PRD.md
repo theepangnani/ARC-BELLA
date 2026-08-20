@@ -480,10 +480,10 @@ answer for anything suspicious.
 
 | Gap | Detail | Tracked |
 |---|---|---|
-| **`DEPLOY.md` does not exist** | Linked from the README's deployment section | #4 |
+| ~~**`DEPLOY.md` does not exist**~~ | Closed. Written: tunnel, redirect URIs, consent-screen publishing status, what to verify, and the failures that have actually happened | #4 |
 | ~~**No test suite**~~ | Closed. `tests/` holds 21 suites — sessions, guests, alarms, echo suppression, the mobile pass, and a parse check over the inline JavaScript — run on Windows in CI. Still untested: anything needing a real microphone, a second monitor or a phone (see `tests/manual/`) | #5 |
-| **Undeclared runtime dependencies** | `pycaw`, `mss` and the input libraries are imported by `pc.py` but absent from `requirements.txt`, so computer control silently degrades on a fresh install | #5 |
-| **Duplicated dependency** | `edge-tts` appears twice in `requirements.txt` | #5 |
+| ~~**Undeclared runtime dependencies**~~ | Closed, and the gap was narrower than recorded: `pc.py` uses `ctypes` and `PIL` for input and capture, not `mss` or `pyautogui`. Only `pycaw` was missing, now declared with a `sys_platform == "win32"` marker so Linux installs skip it | #5 |
+| ~~**Duplicated dependency**~~ | Closed in "Tidy requirements.txt"; `edge-tts` appears once | #5 |
 | **Unpinned dependencies** | All use `>=`, with no lockfile | #5 |
 | **Consent gate is client-enforced** | `allow_actions` is a boolean the caller sends, and the whole system prompt arrives from the browser | #3 |
 | **No security headers** | No CSP, HSTS, X-Frame-Options or X-Content-Type-Options anywhere | #2 |
