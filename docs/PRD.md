@@ -486,7 +486,7 @@ answer for anything suspicious.
 | ~~**Duplicated dependency**~~ | Closed in "Tidy requirements.txt"; `edge-tts` appears once | #5 |
 | **Unpinned dependencies** | All use `>=`, with no lockfile | #5 |
 | **Consent gate is client-enforced** | `allow_actions` is a boolean the caller sends, and the whole system prompt arrives from the browser | #3 |
-| **No security headers** | No CSP, HSTS, X-Frame-Options or X-Content-Type-Options anywhere | #2 |
+| ~~**No security headers**~~ | Closed. CSP, nosniff, frame denial, referrer and permissions policy on every response, HSTS over HTTPS; `ARC_SECURITY_HEADERS=0` disables. `'unsafe-inline'` for script stays — the HUD is one inline file with no build step — so the policy's value is in `connect-src`, `img-src` and `frame-ancestors`, not in script control | #2 |
 | **No streaming** | `/api/chat` is request/response with a 25 s client abort | — |
 | **Half-built multi-user** | Google identity is per-session; notes, reminders, alerts, display, Telegram and computer control are global | — |
 | **Second screen expires** | `/display` sits behind the session gate. Now moot for the owner, whose session has no clock (A4c), but it returns for anyone who sets `ARC_OWNER_SESSION_UNLIMITED=0` | — |

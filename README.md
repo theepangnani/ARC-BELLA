@@ -703,6 +703,7 @@ passphrase any more.
 | `ARC_PUBLIC_URL` | *(empty)* | The origin Google redirects back to. Pin it on anything public. |
 | `ARC_SECRET` | *(random)* | Signs the short-lived sign-in cookie. Set it, or a restart mid-sign-in fails. |
 | `ARC_AUTH_MODE` | `google` | `open` disables sign-in entirely, and is refused unless the bind is loopback. |
+| `ARC_SECURITY_HEADERS` | `1` | CSP, nosniff, frame denial, referrer and permissions policy on every response; HSTS when the request came over HTTPS. `0` turns the lot off, which is the escape hatch if a policy ever breaks the page. |
 
 **Staying signed in.** ARC works like logging off rather than like a parking
 meter. There's no four-hour guillotine mid-conversation.

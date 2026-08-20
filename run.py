@@ -2001,6 +2001,74 @@ async def require_login(request: Request, call_next):
     return await call_next(request)
 
 
+# --------------------------------------------------------------------------
+# security headers
+# --------------------------------------------------------------------------
+# Derived from what the page actually loads rather than copied from a checklist:
+# Google Fonts for the two typefaces, and two public APIs the browser calls
+# directly — reverse geocoding and the weather forecast. Everything else is
+# same-origin by design, which is the whole reason the proxy exists.
+#
+# 'unsafe-inline' for scripts is not a concession, it is the architecture: the
+# HUD is one file with a quarter of a megabyte of inline JavaScript and no
+# build step. What the policy still buys with it there: no script may be LOADED
+# from anywhere else, no data may be SENT anywhere else, the page cannot be
+# framed, and a prompt injection that talks ARC into emitting a tracking pixel
+# or a beacon has nowhere to send it. There are no <img> tags anywhere in ARC —
+# the interface is CSS gradients and SVG — so img-src can stay shut.
+#
+# tests/test_headers.py reads the external origins back out of index.html and
+# fails if one of them is not allowed here, so adding an API to the page and
+# forgetting this file is a failing test rather than a silent dead feature.
+CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "media-src 'self' data: blob:",
+    "connect-src 'self' https://api.open-meteo.com https://api.bigdatacloud.net",
+    "worker-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "object-src 'none'",
+])
+
+# Only features ARC does not use. Microphone, camera, geolocation and autoplay
+# are deliberately absent: listing a feature restricts it, and getting that
+# wrong here would take the microphone out with no error anyone could read.
+PERMISSIONS_POLICY = ("payment=(), usb=(), serial=(), bluetooth=(), midi=(), "
+                      "xr-spatial-tracking=(), local-fonts=()")
+
+SECURITY_HEADERS = os.getenv("ARC_SECURITY_HEADERS", "1").strip().lower() \
+    not in ("0", "false", "no", "off")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Defined after require_login so it wraps it, and a 401 is protected too.
+
+    If something here ever breaks the page, ARC_SECURITY_HEADERS=0 turns the
+    lot off in one line rather than leaving anyone editing a policy string
+    under pressure.
+    """
+    resp = await call_next(request)
+    if not SECURITY_HEADERS:
+        return resp
+    h = resp.headers
+    h.setdefault("Content-Security-Policy", CSP)
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")           # for anything pre-CSP
+    h.setdefault("Referrer-Policy", "same-origin")
+    h.setdefault("Permissions-Policy", PERMISSIONS_POLICY)
+    # Only over HTTPS. Sent on a plain-HTTP localhost it is ignored at best,
+    # and at worst pins a browser to a scheme the desktop instance never uses.
+    if cookie_secure(request):
+        h.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return resp
+
+
 @app.get("/sw.js")
 async def service_worker():
     # Served from root, not /static, so the worker's scope covers the whole app.
