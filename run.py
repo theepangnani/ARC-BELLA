@@ -1120,6 +1120,56 @@ async def health(request: Request, _=Depends(require_auth)):
     }
 
 
+def _claude_error(e) -> HTTPException:
+    """Turn a provider error into something a person can act on.
+
+    What used to reach the transcript was the raw payload — a Python dict of
+    type, error, type again, message and request_id, wrapped in "Link failure".
+    Everything needed to fix it was in there, buried in punctuation, and the one
+    sentence that mattered ("your credit balance is too low") read like a crash.
+
+    The full text still goes to the server log. What the user gets is the thing
+    to do about it.
+    """
+    status = getattr(e, "status_code", 500) or 500
+    raw = str(getattr(e, "message", "") or e)
+    low = raw.lower()
+    print(f"{C_RED}  ! anthropic {status}: {raw[:300]}{C_OFF}")
+
+    if "credit balance" in low or "insufficient" in low:
+        # Not a fault, and not something ARC can retry its way out of.
+        return HTTPException(402, "Your Anthropic account is out of credit, so I "
+                                  "can't think until it's topped up. Add credit at "
+                                  "console.anthropic.com under Plans & Billing, "
+                                  "then say anything to try again.")
+    if status == 401 or "authentication" in low or "invalid x-api-key" in low:
+        return HTTPException(401, "The Anthropic API key is missing or invalid. "
+                                  "Check ANTHROPIC_API_KEY in your .env and restart me.")
+    if status == 403:
+        return HTTPException(403, "This Anthropic key isn't permitted to use that "
+                                  "model. Try the other brain, or check the key's "
+                                  "access in the console.")
+    if status == 404 and "model" in low:
+        return HTTPException(404, "That model doesn't exist for this key. Switch "
+                                  "brains, or check ARC_MODEL in your .env.")
+    if status == 413 or "too large" in low or "prompt is too long" in low:
+        return HTTPException(413, "That was too much to send in one go — usually a "
+                                  "very long screen capture or conversation. Clear "
+                                  "the transcript and try again.")
+    if status == 429:
+        return HTTPException(429, "Anthropic is rate-limiting this key. Give it a "
+                                  "moment and try again.")
+    if status == 529 or "overloaded" in low:
+        return HTTPException(529, "Anthropic is overloaded at the moment. Try again "
+                                  "in a few seconds.")
+    if status >= 500:
+        return HTTPException(502, "Anthropic had a problem at their end. Not you, "
+                                  "not me — try again shortly.")
+    # Anything unrecognised: one line of theirs, trimmed, rather than the payload.
+    first = raw.split("{")[0].strip() or raw[:160]
+    return HTTPException(status, f"Anthropic refused that request: {first[:200]}")
+
+
 @app.post("/api/chat")
 async def chat(request: Request, _=Depends(require_auth)):
     """Proxy to the Messages API. The key never reaches the browser."""
@@ -1315,8 +1365,7 @@ async def chat(request: Request, _=Depends(require_auth)):
         except anthropic.RateLimitError:
             raise HTTPException(429, "Rate limited by the Anthropic API. Try again shortly.")
         except anthropic.APIStatusError as e:
-            print(f"{C_RED}  ! anthropic {e.status_code}: {str(e.message)[:300]}{C_OFF}")
-            raise HTTPException(e.status_code, str(e.message)[:400])
+            raise _claude_error(e)
 
         u = resp.usage
         tokens_in += getattr(u, "input_tokens", 0) or 0
@@ -1464,7 +1513,7 @@ async def summarize(request: Request, _=Depends(require_auth)):
     except anthropic.RateLimitError:
         raise HTTPException(429, "Rate limited by the Anthropic API.")
     except anthropic.APIStatusError as e:
-        raise HTTPException(e.status_code, str(e.message)[:400])
+        raise _claude_error(e)
 
     u = resp.usage
     _day["tok_in"] += getattr(u, "input_tokens", 0) or 0

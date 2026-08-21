@@ -5071,9 +5071,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
 
     if (!res.ok) {
-      let msg = "HTTP " + res.status;
-      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch (_) {}
-      throw new Error(msg);
+      let msg = "HTTP " + res.status, said = false;
+      try { const e = await res.json(); if (e.detail) { msg = e.detail; said = true; } } catch (_) {}
+      const err = new Error(msg);
+      // The server already wrote a sentence meant for a person — out of credit,
+      // key invalid, model gone. Marked so it is shown as-is instead of being
+      // dressed up as a link failure, which is what buried it before.
+      err.fromServer = said;
+      err.status = res.status;
+      throw err;
     }
 
     const data = await res.json();
@@ -5192,11 +5198,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // server" — usually a momentary drop (server restart, network blip). Say
       // that plainly instead of leaking the raw error.
       const net = /failed to fetch|networkerror|load failed/i.test(err.message || "");
+      const plain = err.fromServer && err.message;
       addEntry("err", "SYSTEM", net
         ? "Couldn't reach ARC — the connection dropped for a moment. Try again."
-        : "Link failure — " + err.message);
+        : plain ? err.message : "Link failure — " + err.message);
       setMode("standby");
-      speak("I'm afraid the link is down, sir.");
+      // Say the real reason. "The link is down" when the truth is "your credit
+      // ran out" sends someone to check their wifi.
+      speak(plain && err.message.length < 260 ? err.message
+                                              : "I'm afraid the link is down, sir.");
     } finally {
       inFlight = false;
     }
