@@ -285,6 +285,43 @@ its section away and brings it back, and what you folded is remembered. Nothing
 is destroyed by folding; the controls stay wired, one click away. It's how a
 panel with seven groups stays a panel rather than a wall.
 
+## Languages
+
+ARC listens, answers and speaks in **any of 142 locales** — around 75 languages
+— not just English. Pick one under **Language** in the panel, or leave it on
+*Auto* and it follows whatever your device is set to.
+
+Three things have to agree for that to work, and all three follow the one
+setting:
+
+- **What the recogniser listens for.** This is the important one. A recogniser
+  set to English hands back English-shaped nonsense for every other language
+  and never reports an error, so the only symptom is an assistant that doesn't
+  understand you.
+- **What voice answers.** The voice list is fetched from Microsoft at runtime —
+  322 neural voices at the time of writing — so the picker only ever offers
+  something that will actually speak, and a new voice appears without anyone
+  editing a list. A hand-written table would have been a list of guesses, and a
+  wrong guess is text-to-speech that fails the moment somebody talks.
+- **What language ARC writes in.** It's told the language by name, and told to
+  match you if you switch mid-conversation.
+
+**If you use ElevenLabs**, note that one voice is one accent whatever the model
+claims. When the language isn't the one your ElevenLabs voice speaks, ARC uses
+the free Edge voice for that language instead — a different voice is better
+than a wrong one. Set `ARC_ELEVEN_LANG` if your ElevenLabs voice isn't English.
+
+**Right-to-left** (Arabic, Hebrew, Persian, Urdu) is handled per line, so mixed
+conversations read correctly. Fonts fall back to what your OS already ships for
+each script, so Tamil, Chinese and Devanagari render rather than showing empty
+boxes.
+
+**Stopping ARC** doesn't require English: add your own words under *Stop words*
+in the panel, comma separated. They're not translated for you, because a list
+of guesses at "stop" in seventy languages would be wrong somewhere and wrong
+here means the interruption doesn't land. Tapping the ring always works, in
+every language.
+
 ## Room mode
 
 For when several people are present. Browsers give no way to tell who is

@@ -27,9 +27,17 @@ c = Check()
 print("%d suites, plus the harness and the runner\n" % len(suites))
 c.truthy("there are suites to check", suites)
 
-# An absolute path is machine-specific by definition. URLs are fine; a colon
-# after a single letter, or a leading /home//Users, is not.
-ABS = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]|(?<![\w/])/(?:home|Users)/")
+# An absolute path is machine-specific by definition.
+#
+# The shape matters: a drive letter, a separator, a name, and ANOTHER separator
+# — c:\dev\arc, C:/Users/x. One separator is not enough, because a regex like
+# "as e:\s*" has exactly that and is not a path. The first version of this
+# check tried to strip raw-string regexes out of the source before scanning,
+# which was worse than the problem: `r"` matched inside the word "mapper" and
+# ate everything up to the next quote, exposing the regex it meant to hide and
+# reporting a hit that was never there.
+ABS = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][A-Za-z0-9_.\- ]+[\\/]"
+                 r"|(?<![\w/])/(?:home|Users)/[A-Za-z0-9_.\-]")
 
 print("No suite hard-codes a path off this machine:")
 # This file is exempt from its own rule, and has to be: it cannot hunt for

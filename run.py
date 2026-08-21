@@ -84,6 +84,7 @@ import alerts
 import alarm
 import market
 import automation
+import voices
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
@@ -198,6 +199,11 @@ ELEVEN_VOICE = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
 # en-GB-SoniaNeural is a natural British female. Others: en-GB-LibbyNeural,
 # en-GB-RyanNeural (male), en-US-AriaNeural. Set ARC_TTS_VOICE to change.
 TTS_VOICE = os.getenv("ARC_TTS_VOICE", "en-GB-SoniaNeural").strip()
+
+# Which language the configured ElevenLabs voice actually sounds like. Its
+# model is multilingual but its mouth is not: an English voice reading Tamil
+# is worse than a Tamil voice reading Tamil, so anything else goes to Edge.
+ELEVEN_LANG = os.getenv("ARC_ELEVEN_LANG", "en").strip().lower().split("-")[0]
 # Whether to try ElevenLabs before the free Edge voice. Off by default: once its
 # free quota is spent, attempting it just adds a 2-3s failed round-trip to every
 # reply. Turn on only if the ElevenLabs account has credit.
@@ -461,7 +467,7 @@ BACKGROUND_PATHS = {
     "/api/health", "/api/session", "/api/reminders/due", "/api/alerts/due",
     "/api/alarms/due", "/api/automation/status",
     "/api/calendar/upcoming", "/api/screen-watch", "/api/stocks",
-    "/api/stock-search", "/api/push/status", "/api/display",
+    "/api/stock-search", "/api/push/status", "/api/display", "/api/voices",
     # Announcing departure is the opposite of use. Without this the auth check
     # that runs ahead of the route would refresh the idle clock on the way in,
     # and the goodbye would read as a hello.
@@ -1523,11 +1529,20 @@ async def summarize(request: Request, _=Depends(require_auth)):
     return JSONResponse({"note": new_note or note, "cost_today": round(_day_cost(), 4)})
 
 
-async def _eleven_tts(http, text: str):
+async def _eleven_tts(http, text: str, lang: str = ""):
     """ElevenLabs audio, or None if it's not configured / out of quota / errors.
     Kept as a nicety: if the key has credit its voice is used; the moment it
-    doesn't, we fall through to the free Edge voice instead of going silent."""
+    doesn't, we fall through to the free Edge voice instead of going silent.
+
+    The turbo model is multilingual, but one ElevenLabs voice is one accent —
+    it will read Tamil in an English mouth. So when a language is set and it is
+    not the voice's own, this stands aside and lets Edge answer, where there is
+    a native voice for the language. Better a different voice than a wrong one.
+    """
     if not (ELEVEN_KEY and ELEVEN_VOICE):
+        return None
+    base = (lang or "").split("-")[0].lower()
+    if base and base != ELEVEN_LANG:
         return None
     try:
         r = await http.post(
@@ -1536,7 +1551,8 @@ async def _eleven_tts(http, text: str):
             headers={"xi-api-key": ELEVEN_KEY, "content-type": "application/json"},
             json={
                 "text": text,
-                "model_id": "eleven_turbo_v2_5",
+                "model_id": "eleven_turbo_v2_5",   # multilingual: ~32 languages
+                "language_code": base or None,
                 "voice_settings": {
                     "stability": 0.45, "similarity_boost": 0.8,
                     "style": 0.15, "use_speaker_boost": True,
@@ -1551,17 +1567,23 @@ async def _eleven_tts(http, text: str):
     return r.content
 
 
-# Voices the picker offers. Whitelisted so a client can't pass arbitrary values.
-EDGE_VOICES = {
-    "en-GB-SoniaNeural", "en-GB-LibbyNeural", "en-GB-RyanNeural",
-    "en-US-AriaNeural", "en-US-JennyNeural", "en-US-GuyNeural",
-    "en-AU-NatashaNeural", "en-IE-EmilyNeural",
-}
+async def _edge_tts(text: str, voice: str = "", lang: str = ""):
+    """Microsoft Edge neural voice. Free, no key, no quota — the default.
 
+    The voice is still whitelisted, but the whitelist is now everything
+    Microsoft actually publishes (see voices.py) rather than eight English
+    names — so ARC can answer in any of a hundred-odd languages, and a client
+    still cannot pass an arbitrary string.
 
-async def _edge_tts(text: str, voice: str = ""):
-    """Microsoft Edge neural voice. Free, no key, no quota — the default."""
-    v = voice if voice in EDGE_VOICES else TTS_VOICE
+    With no voice but a language, the language decides. That is what makes
+    replying in Tamil sound like Tamil rather than an English voice reading
+    Tamil letters aloud.
+    """
+    v = voice if voices.is_valid(voice) else ""
+    if not v and lang:
+        v = voices.for_lang(lang)
+    if not v:
+        v = TTS_VOICE
     comm = edge_tts.Communicate(text, v)
     audio = bytearray()
     async for chunk in comm.stream():
@@ -1578,6 +1600,7 @@ async def tts(request: Request, _=Depends(require_auth)):
     payload = await read_json(request)
     text = (payload.get("text") or "").strip()
     voice = (payload.get("voice") or "").strip()
+    lang = (payload.get("lang") or "").strip()
     if not text:
         raise HTTPException(400, "No text supplied.")
     if len(text) > 5000:
@@ -1589,15 +1612,31 @@ async def tts(request: Request, _=Depends(require_auth)):
     # has credit; otherwise go straight to Edge (honouring the picked voice).
     audio = None
     if PREFER_ELEVEN:
-        audio = await _eleven_tts(request.app.state.http, text)
+        audio = await _eleven_tts(request.app.state.http, text, lang)
     if audio is None:
         try:
-            audio = await _edge_tts(text, voice)
+            audio = await _edge_tts(text, voice, lang)
         except Exception as e:
             raise HTTPException(502, f"Text-to-speech failed: {str(e)[:200]}")
     if not audio:
         raise HTTPException(502, "Text-to-speech produced no audio.")
     return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.get("/api/voices")
+async def voices_list(request: Request, _=Depends(require_auth)):
+    """Every language ARC can hear and speak, and the voices in each.
+
+    Served rather than hard-coded in the page so the picker can only ever offer
+    what will actually work — and so a new neural voice appears in ARC without
+    anyone editing a list.
+    """
+    locale = (request.query_params.get("locale") or "").strip()
+    if locale:
+        return JSONResponse({"locale": locale,
+                             "voices": voices.voices_for(locale)})
+    return JSONResponse({"languages": voices.languages(),
+                         "default": TTS_VOICE})
 
 
 @app.get("/api/stocks")

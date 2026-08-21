@@ -9,9 +9,15 @@ happened, and from the server side everything looks perfect while it does.
 
 `python -m compileall` covers the Python half. This is the other half.
 
-Parser, in order of preference: esprima if installed (pip install -r
-requirements-dev.txt), else `node --check`, else say clearly that nothing was
-checked rather than reporting a pass nobody earned.
+Parser, in order of preference: `node --check` if node is on PATH, else esprima
+(pip install -r requirements-dev.txt), else say clearly that nothing was checked
+rather than reporting a pass nobody earned.
+
+node leads because esprima is from 2017 and rejects unicode property escapes —
+`\\p{L}` — which is how the echo checks are written now so they work in scripts
+other than Latin. Where only esprima is present the block is re-parsed with
+those escapes neutralised, so everything else is still genuinely checked and
+the gap is named rather than papered over.
 """
 import io
 import os
@@ -59,16 +65,36 @@ def parse_node(src):
         os.unlink(path)
 
 
+# node first, esprima second. esprima is from 2017 and rejects anything newer
+# than ES2017 — including \p{L} unicode property escapes, which is how the
+# echo checks are written now so they work in scripts other than Latin. A
+# parser that calls valid code invalid is worse than no parser, so where node
+# exists it wins.
 parser = None
 try:
-    import esprima                                   # noqa: F401
-    parser, how = parse_esprima, "esprima"
-except ImportError:
+    subprocess.run(["node", "--version"], capture_output=True, check=True)
+    parser, how = parse_node, "node --check"
+except Exception:
     try:
-        subprocess.run(["node", "--version"], capture_output=True, check=True)
-        parser, how = parse_node, "node --check"
-    except Exception:
+        import esprima                               # noqa: F401
+        parser, how = parse_esprima, "esprima"
+    except ImportError:
         how = None
+
+
+# Constructs esprima cannot parse but every browser ARC supports can. Used only
+# to explain an esprima failure, never to excuse node's.
+ES_NEWER = ("Invalid regular expression", "Unexpected token )")
+
+# \p{L}, \p{N}, \P{Lu} ... — swapped out so the rest of the block can still
+# be parsed by a 2017 parser.
+NEUTRALISE = re.compile(r"\\[pP]\{[A-Za-z_]+\}")
+
+
+def modern_only(src, msg):
+    """Is this esprima being old rather than the code being wrong?"""
+    BS = chr(92)
+    return how == "esprima" and any(m in msg for m in ES_NEWER) and (BS + "p{") in src
 
 if parser is None:
     print("\n  SKIPPED — no JavaScript parser available.")
@@ -77,12 +103,30 @@ if parser is None:
     c.done()
 
 print("  parsed with %s\n" % how)
+unconfirmed = 0
 for start, src in blocks:
     try:
         parser(src)
         c.truthy("block at line %-5d parses (%d chars)" % (line_of(start), len(src)), True)
     except Exception as e:
-        c("block at line %d parses" % line_of(start), str(e), "")
+        if modern_only(src, str(e)):
+            # Parse a copy with the property escapes swapped for a plain class.
+            # Everything ELSE in the block is then genuinely checked — a stray
+            # bracket three thousand lines later still fails here, which is the
+            # whole point of the suite. Only the escapes go unverified.
+            try:
+                parser(NEUTRALISE.sub("a-zA-Z0-9", src))
+                unconfirmed += 1
+            except Exception as e2:
+                c("block at line %d parses (escapes neutralised)" % line_of(start),
+                  str(e2), "")
+                continue
+            print("  NOTE  block at line %d uses unicode property escapes, which "
+                  "esprima (2017) cannot parse.\n        NOT CONFIRMED here — "
+                  "install node, or trust CI, which runs node.\n        It said: %s"
+                  % (line_of(start), str(e)[:80]))
+        else:
+            c("block at line %d parses" % line_of(start), str(e), "")
 
 # Cheap structural checks the parser cannot make, because both of these are
 # valid JavaScript that happens to be wrong.
@@ -99,5 +143,9 @@ c.truthy("the boot entry point survives",
 c.truthy("  and still asks for the mic before any await",
          body.index("const micOK = await initAudio();")
          < body.index("await new Promise(r => setTimeout(r, 340));"))
+
+if unconfirmed:
+    print("\n%d block(s) could not be confirmed by this parser. That is a gap, not a"
+          " pass;\nCI runs node, which closes it." % unconfirmed)
 
 c.done()

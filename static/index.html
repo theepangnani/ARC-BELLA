@@ -34,8 +34,20 @@
 
     --accent: var(--cyan);
 
-    --display: "Rajdhani", "Oswald", "Helvetica Neue", sans-serif;
-    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    /* Rajdhani and IBM Plex Mono between them cover Latin, Cyrillic and Greek
+       and nothing else — so Tamil, Arabic, Chinese, Hebrew, Devanagari and the
+       rest arrived as rows of empty boxes, which reads as "ARC is broken"
+       rather than "this font has no Tamil". The fallbacks below are the fonts
+       Windows, macOS, Android and iOS already ship for those scripts, so the
+       text renders everywhere without downloading anything. Order matters:
+       the display faces first, so English still looks like ARC. */
+    --fallback: "Segoe UI", "Nirmala UI", "Noto Sans", "Noto Sans Tamil",
+                "Noto Sans Arabic", "Noto Sans Hebrew", "Noto Sans Devanagari",
+                "Noto Sans Thai", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic",
+                "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    --display: "Rajdhani", "Oswald", "Helvetica Neue", var(--fallback);
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, "Noto Sans Mono",
+            var(--fallback);
 
     --amp: 0;
   }
@@ -1136,14 +1148,7 @@
 
       <label class="ctl" for="neuralVoice">ARC voice</label>
       <select id="neuralVoice">
-        <option value="en-GB-SoniaNeural">British female — Sonia</option>
-        <option value="en-GB-LibbyNeural">British female — Libby</option>
-        <option value="en-GB-RyanNeural">British male — Ryan</option>
-        <option value="en-US-AriaNeural">American female — Aria</option>
-        <option value="en-US-JennyNeural">American female — Jenny</option>
-        <option value="en-US-GuyNeural">American male — Guy</option>
-        <option value="en-AU-NatashaNeural">Australian female — Natasha</option>
-        <option value="en-IE-EmilyNeural">Irish female — Emily</option>
+        <option value="">Best voice for the language</option>
       </select>
 
       <label class="ctl" for="voiceSel">Browser voice (fallback)</label>
@@ -1265,7 +1270,7 @@
       </div>
     </div>
 
-    <div class="live" id="live"></div>
+    <div class="live" id="live" dir="auto"></div>
     <!-- Input meter: shows whether ARC is actually hearing you. Real mic level
          on desktop; driven by the recogniser's own events on mobile (where the
          mic is handed to the recogniser and there's no separate analyser). -->
@@ -1279,9 +1284,9 @@
   <div class="col">
     <div class="panel" style="display:flex;flex-direction:column;flex:1;">
       <h2>Transcript</h2>
-      <div class="log" id="log"></div>
+      <div class="log" id="log" dir="auto"></div>
       <div class="composer">
-        <input type="text" id="typed" placeholder="Type a command…" autocomplete="off">
+        <input type="text" id="typed" placeholder="Type a command…" autocomplete="off" dir="auto">
         <button id="sendBtn">Send</button>
       </div>
     </div>
@@ -1334,6 +1339,18 @@
           <button type="button" data-mode="business" title="Assume anything said may be repeated to a client. Formal, sourced, and it flags what it isn't sure of.">Business</button>
         </div>
         <div class="modehint" id="modeHint">No mode — ARC as usual.</div>
+      </div>
+
+      <div class="cgroup" data-group="language">
+        <div class="chead">Language</div>
+        <select id="langSel" title="What ARC listens for and answers in. Auto follows this device's own language.">
+          <option value="auto">Auto — follow this device</option>
+        </select>
+        <div class="modehint" id="langHint">Listening in your device's language.</div>
+        <label class="ctl" for="stopWords" style="margin-top:4px">Stop words</label>
+        <input type="text" id="stopWords" dir="auto" autocomplete="off"
+               placeholder="basta, arrête, நிறுத்து"
+               title="Words that make ARC stop talking, in your language. Comma separated. The English ones always work, and tapping the ring works in any language.">
       </div>
 
       <div class="cgroup" data-group="behaves">
@@ -1522,6 +1539,7 @@ Everything you say goes through a speech synthesiser. This shapes everything:
 - If something is genuinely a list, speak it as prose: "Three things — first ..., then ..., and finally ...". Never more than three items aloud unless asked.
 - No preamble, no "let me check", no restating the question. Answer, then stop.
 - Spell out only when asked, and then slowly, letter by letter.
+- ANSWER IN THE LANGUAGE YOU ARE SPOKEN TO IN. If they write or speak in Tamil, Spanish, Arabic or anything else, reply in that language — fluently, as a native speaker of it would, not as a translation. Match a switch mid-conversation immediately. Never apologise for your command of a language, never offer to switch to English, and never pad a reply with English words the language has its own words for. Every rule above about being spoken aloud still applies: numbers, dates, times and units written as they are READ ALOUD in THAT language, not in English and not as digits.
 
 === WHAT YOU CAN ACTUALLY DO ===
 - Answer from knowledge, reason things through, explain, summarise, draft wording, do arithmetic and unit conversion, translate, plan, brainstorm.
@@ -3195,7 +3213,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     d.className = "entry " + kind;
     const t = new Date().toTimeString().slice(0, 8);
     d.innerHTML = `<span class="who">${who} · ${t}</span><div class="body"></div>`;
-    d.querySelector(".body").textContent = text;
+    const bodyEl = d.querySelector(".body");
+    bodyEl.textContent = text;
+    // Arabic, Hebrew, Persian and Urdu read right to left, and a transcript
+    // that forces them left is not a style choice — it is unreadable. dir=auto
+    // decides per line from its first strong character, which also gets mixed
+    // conversations right without anyone declaring a language.
+    bodyEl.setAttribute("dir", "auto");
     el.log.appendChild(d);
     // An unbounded transcript is the quiet killer of very long sessions: the
     // page gets heavier with every exchange until the whole tab crawls.
@@ -3207,6 +3231,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // notices off a display meant to be read from across a room.
     if (speakerMode && el.spkLine && kind !== "sys") {
       el.spkLine.textContent = text;
+      el.spkLine.setAttribute("dir", "auto");
     }
   }
 
@@ -3282,15 +3307,111 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   try { selectedVoice = localStorage.getItem("arc.voice") || ""; } catch (_) {}
   const neuralVoiceSel = document.getElementById("neuralVoice");
   if (neuralVoiceSel) {
-    if (selectedVoice) neuralVoiceSel.value = selectedVoice;
-    selectedVoice = neuralVoiceSel.value;   // default to the first option
     neuralVoiceSel.addEventListener("change", () => {
       selectedVoice = neuralVoiceSel.value;
       try { localStorage.setItem("arc.voice", selectedVoice); } catch (_) {}
       // Speak a short sample so the choice is audible immediately.
-      if (state.engine === "elevenlabs") speak("This is how I'll sound.");
+      if (state.booted) speak(SAMPLE_LINE());
     });
   }
+
+  /* The language and voice pickers are filled from the server, not from a list
+     in this file: the server asks Microsoft what voices exist, so the pickers
+     can only ever offer something that will actually speak. 142 locales at the
+     time of writing, and a new one appears here without anyone editing HTML. */
+  const langSel = document.getElementById("langSel");
+  const langHint = document.getElementById("langHint");
+  let LANGS = [];
+
+  function SAMPLE_LINE() {
+    // Said in whatever language is selected, so the sample is a real test of it.
+    const b = langBase();
+    return ({ en: "This is how I'll sound.", fr: "Voici ma voix.",
+              es: "Así es como sonaré.", de: "So klinge ich.",
+              hi: "मैं ऐसी सुनाई दूंगी।",
+              ta: "நான் இப்படிதான் ஒலிக்கிறேன்." }[b]) || "This is how I'll sound.";
+  }
+
+  async function fillVoices(locale) {
+    if (!neuralVoiceSel) return;
+    const keep = selectedVoice;
+    neuralVoiceSel.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = ""; auto.textContent = "Best voice for this language";
+    neuralVoiceSel.appendChild(auto);
+    try {
+      const r = await fetch("/api/voices?locale=" + encodeURIComponent(locale));
+      const d = await r.json();
+      (d.voices || []).forEach(v => {
+        const o = document.createElement("option");
+        o.value = v.short;
+        o.textContent = v.name + (v.gender ? " — " + v.gender.toLowerCase() : "");
+        neuralVoiceSel.appendChild(o);
+      });
+    } catch (_) {}
+    // Keep the chosen voice only if it belongs to the language now selected;
+    // an English voice reading Tamil is exactly what this is meant to end.
+    const still = Array.from(neuralVoiceSel.options).some(o => o.value === keep);
+    neuralVoiceSel.value = still ? keep : "";
+    selectedVoice = neuralVoiceSel.value;
+    try { localStorage.setItem("arc.voice", selectedVoice); } catch (_) {}
+  }
+
+  function paintLangHint() {
+    if (!langHint) return;
+    const tag = speechLang();
+    langHint.textContent = (langPref === "auto")
+      ? "Auto — following this device: " + langName(tag) + "."
+      : "Listening and answering in " + langName(tag) + ".";
+  }
+
+  async function fillLanguages() {
+    if (!langSel) return;
+    try {
+      const d = await (await fetch("/api/voices")).json();
+      LANGS = d.languages || [];
+    } catch (_) { LANGS = []; }
+    LANGS.forEach(l => {
+      const o = document.createElement("option");
+      o.value = l.locale; o.textContent = l.label;
+      langSel.appendChild(o);
+    });
+    // A saved choice that the server no longer offers falls back to auto rather
+    // than leaving the picker showing something that will not work.
+    langSel.value = LANGS.some(l => l.locale === langPref) ? langPref : "auto";
+    if (langSel.value === "auto") langPref = "auto";
+    paintLangHint();
+    await fillVoices(speechLang());
+  }
+
+  const stopWordsInput = document.getElementById("stopWords");
+  if (stopWordsInput) {
+    try { stopWordsInput.value = localStorage.getItem("arc.stopwords") || ""; } catch (_) {}
+    stopWordsInput.addEventListener("change", () => {
+      const raw = stopWordsInput.value || "";
+      try { localStorage.setItem("arc.stopwords", raw); } catch (_) {}
+      stopWords = raw.split(",").map(w => w.trim().toLowerCase()).filter(Boolean);
+      addEntry("sys", "SYSTEM", stopWords.length
+        ? "Stop words: " + stopWords.join(", ") + "."
+        : "Stop words cleared — the English ones still work.");
+    });
+  }
+
+  if (langSel) langSel.addEventListener("change", async () => {
+    langPref = langSel.value || "auto";
+    try { localStorage.setItem("arc.lang", langPref); } catch (_) {}
+    paintLangHint();
+    await fillVoices(speechLang());
+    // The recogniser's language is fixed when it is built, so it has to be
+    // rebuilt. Without this, ARC keeps listening in the old language and the
+    // only symptom is that it stops understanding anybody.
+    try { rebuildRecognition(); } catch (_) {}
+    document.documentElement.lang = speechLang();
+    if (state.booted) speak(SAMPLE_LINE());
+  });
+
+  fillLanguages();
+  try { document.documentElement.lang = speechLang(); } catch (_) {}
 
   // Grab a single frame from the camera (rear camera on a phone), as a JPEG
   // data URL. Opens the camera only for the instant of capture, then releases
@@ -3647,6 +3768,50 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   requestAnimationFrame(renderLoop);
 
   /* ---------------- speech recognition ---------------- */
+  /* ---------------- language ----------------
+     ARC used to listen in en-US and speak with one of eight English voices, so
+     anyone whose first language is not English got an assistant that could not
+     hear them. Three things have to agree for that to work: what the recogniser
+     listens FOR, what voice answers, and what language the model writes in. All
+     three follow this one setting.
+
+     "Auto" means the browser's own language, which is almost always the right
+     answer and needs nobody to configure anything. */
+  let langPref = "auto";
+  try { langPref = localStorage.getItem("arc.lang") || "auto"; } catch (_) {}
+
+  function speechLang() {
+    if (langPref && langPref !== "auto") return langPref;
+    // navigator.language is already a BCP-47 tag — "ta-IN", "fr-CA", "en-GB".
+    return (navigator.language || navigator.userLanguage || "en-GB");
+  }
+
+  function langBase() { return speechLang().split("-")[0].toLowerCase(); }
+
+  /* The name of the language, in that language where the browser can manage it
+     — "Tamil", "français", "日本語". Told to the model rather than a bare
+     tag, because "answer in ta-IN" is an instruction about a code and "answer
+     in Tamil" is an instruction about a language. */
+  function langName(tag) {
+    try {
+      const dn = new Intl.DisplayNames([tag], { type: "language" });
+      return dn.of(tag) || tag;
+    } catch (_) { return tag; }
+  }
+
+  function langBlock() {
+    const tag = speechLang();
+    const base = tag.split("-")[0].toLowerCase();
+    if (base === "en") return "";     // the prompt is already written in English
+    return "=== LANGUAGE ===\nThe user is speaking " + langName(tag) + " (" + tag +
+      "). Answer in " + langName(tag) + ", every time, unless they write to you in " +
+      "another language — then match whatever they just used. Everything about how " +
+      "you speak still applies: numbers, dates and times written the way they are " +
+      "READ ALOUD in that language, no markdown, no symbols. Do not apologise for " +
+      "your " + langName(tag) + ", do not offer to switch to English, and do not " +
+      "mix English words in where the language has its own.\n\n";
+  }
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   state.recogSupported = !!SR;
 
@@ -3656,7 +3821,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     r.continuous = true;
     r.interimResults = true;
     r.maxAlternatives = 4;   // keep the runners-up; they often hold the real words
-    r.lang = "en-US";
+    // Not en-US. This is the single line that decides whether ARC can hear
+    // somebody at all: a recogniser set to English hands back English-shaped
+    // nonsense for every other language, and it never reports an error.
+    r.lang = speechLang();
 
     r.onresult = (ev) => {
       recogAlive();
@@ -4256,20 +4424,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const out = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
-      const bare = w.toLowerCase().replace(/[^a-z0-9']/g, "");
-      const next = words[i + 1] ? words[i + 1].toLowerCase().replace(/[^a-z0-9']/g, "") : "";
+      const bare = w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+      const next = words[i + 1] ? words[i + 1].toLowerCase().replace(/[^\p{L}\p{N}']/gu, "") : "";
 
       // stutter: a short fragment that is the start of the word after it
       // ("wha what", "th the", "wea weather")
       if (bare && next && bare !== next && next.startsWith(bare) && bare.length <= 3) continue;
 
       // doubled word — only collapse ones that are never meaningfully repeated
-      const prev = out.length ? out[out.length - 1].toLowerCase().replace(/[^a-z0-9']/g, "") : "";
+      const prev = out.length ? out[out.length - 1].toLowerCase().replace(/[^\p{L}\p{N}']/gu, "") : "";
       if (bare && bare === prev && SAFE_DUPES.has(bare)) continue;
 
       // the same word three or more times running is always a stutter
       if (bare && bare === prev && out.length > 1) {
-        const prev2 = out[out.length - 2].toLowerCase().replace(/[^a-z0-9']/g, "");
+        const prev2 = out[out.length - 2].toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
         if (prev2 === bare) continue;
       }
 
@@ -4277,7 +4445,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
 
     // strip filler from the front, but never leave nothing behind
-    while (out.length > 1 && LEAD_FILLER.has(out[0].toLowerCase().replace(/[^a-z0-9']/g, ""))) {
+    while (out.length > 1 && LEAD_FILLER.has(out[0].toLowerCase().replace(/[^\p{L}\p{N}']/gu, ""))) {
       out.shift();
     }
 
@@ -4299,7 +4467,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   ]);
 
   function isNoise(text, confidence) {
-    const clean = (text || "").toLowerCase().replace(/[^a-z0-9'\s-]/g, " ").trim();
+    // \p{L}\p{N}, not a-z0-9: with the old rule every Tamil, Arabic, Chinese,
+    // Greek and Hebrew utterance normalised to an empty string, and an empty
+    // string is treated as a cough — so ARC dropped every single thing said to
+    // it in those languages, silently, before the model ever saw it.
+    const clean = (text || "").toLowerCase().replace(/[^\p{L}\p{N}'\s-]/gu, " ").trim();
     if (!clean) return true;
     const words = clean.split(/\s+/).filter(Boolean);
     if (!words.length) return true;
@@ -4324,7 +4496,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // let it through no matter what the gate thinks.
   let lastRejected = "", lastRejectedAt = 0;
   function insistedOn(text) {
-    const key = (text || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+    const key = (text || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").trim();
     if (!key) return false;
     const repeat = key === lastRejected && Date.now() - lastRejectedAt < 30000;
     lastRejected = key;
@@ -4483,8 +4655,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     state.speakingLock = true;
     speakingText = (text || "").toLowerCase().replace(/[.,!?;:'’]/g, "");
     // Whole reply, word-normalised, kept for the after-the-fact echo check.
+    // \p{L}\p{N} rather than a-z0-9: the old rule deleted every Tamil, Arabic,
+    // Greek and Chinese character, so in those languages every word normalised
+    // to nothing, the overlap check always scored zero, and ARC happily
+    // answered its own voice coming back off the speakers.
     lastSpokenText = (text || "").toLowerCase()
-      .replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
+      .replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
     // Keep the mic open through the reply so "stop" lands, where that is safe
     // to do; otherwise close it as before so ARC cannot hear itself.
     // Android routes audio to the EARPIECE, quietly, whenever it thinks a call
@@ -4559,7 +4735,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: t, voice: selectedVoice }),
+            body: JSON.stringify({ text: t, voice: selectedVoice, lang: speechLang() }),
             signal: tctrl.signal
           });
           clearTimeout(td);
@@ -4702,10 +4878,28 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     return false;
   }
 
+  /* Stop words in the user's own language, because the moment you need to cut
+     ARC off is the worst possible moment to have to reach for English.
+
+     Typed in rather than translated by me: a list of my guesses at "stop" in
+     seventy languages would be wrong somewhere, and wrong here means the
+     interruption does not land. Whoever speaks the language types the word.
+     Tapping the ring always works regardless, in every language. */
+  let stopWords = [];
+  try {
+    stopWords = (localStorage.getItem("arc.stopwords") || "")
+      .split(",").map(w => w.trim().toLowerCase()).filter(Boolean);
+  } catch (_) {}
+
   function isStopPhrase(text) {
-    const t = (text || "").toLowerCase()
+    const raw = (text || "").toLowerCase()
       .replace(/['’]/g, "")
       .replace(/[.,!?;:]/g, " ")
+      .replace(/\s+/g, " ").trim();
+    // The user's own words are matched BEFORE the tidying below, which strips
+    // filler on the assumption that the filler is English.
+    if (raw && stopWords.some(w => raw === w || raw.endsWith(" " + w))) return true;
+    const t = raw
       .replace(/\b(bella|arc|sir|please|now|just|hey|ok|okay|yeah|yep|alright|all right)\b/g, " ")
       .replace(/\s+/g, " ").trim();
     if (!t || t.split(" ").length > 4) return false;
@@ -4735,7 +4929,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // ARC's side only, and broke the run at exactly the words the recogniser
     // is most inconsistent about.
     return (s || "").toLowerCase().replace(/['’`]/g, "")
-      .replace(/[^a-z0-9 ]/g, " ")
+      .replace(/[^\p{L}\p{N} ]/gu, " ")
       .split(/\s+/).filter(Boolean);
   }
 
@@ -4870,7 +5064,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     speakingText = (text || "").toLowerCase().replace(/[.,!?;:'’]/g, "");
     // Whole reply, word-normalised, kept for the after-the-fact echo check.
     lastSpokenText = (text || "").toLowerCase()
-      .replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
+      .replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
     // Same narrow exception as the neural path: open only for a dismissal.
     // Android routes audio to the EARPIECE, quietly, whenever it thinks a call
     // is in progress — and an open microphone is what makes it think so. A web
@@ -5042,7 +5236,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: pending,
-          system: personaBlock() + modeBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + voiceBlock() + learnBlock() + altBlock(alts),
+          system: personaBlock() + modeBlock() + langBlock() + SYSTEM_PROMPT + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + voiceBlock() + learnBlock() + altBlock(alts),
           // Only a genuine, user-approved turn may act. Background calls never set this.
           allow_actions: authorize,
           // Send the mode, not a local guess. The server turns anything but

@@ -3,7 +3,7 @@
 
 Fifteen identical full-width buttons stacked in one column is a wall: nothing
 looks more important than anything else, so nothing is findable. They are in
-seven labelled, foldable groups now. What a test can hold onto is that the grouping did
+eight labelled, foldable groups now. What a test can hold onto is that the grouping did
 not lose a control or unwire one — every button must still exist exactly once
 and still be reached by the script — that spacing comes from one place rather
 than from fifteen separate margins that drift apart, and that each group folds
@@ -38,9 +38,9 @@ for i in CONTROLS:
     c("  %-16s present once and wired" % i, (once, wired), (True, True))
 
 print("\nThey are in labelled groups rather than one column:")
-c("  seven groups", page.count('class="cgroup"'), 7)
-c("  each with a heading", page.count('class="chead"'), 7)
-for head in ["How ARC behaves", "What ARC can see", "Your account",
+c("  eight groups", page.count('class="cgroup"'), 8)
+c("  each with a heading", page.count('class="chead"'), 8)
+for head in ["Language", "How ARC behaves", "What ARC can see", "Your account",
              "This screen", "If something stops working"]:
     c.truthy("  %r" % head, ">%s<" % head in page)
 
@@ -49,8 +49,8 @@ for head in ["How ARC behaves", "What ARC can see", "Your account",
 # test failure — only losing or misfiling a control is.
 groups = dict(re.findall(r'<div class="cgroup" data-group="([a-z]+)">(.*?)\n      </div>',
                          page, re.S))
-c("  the groups parse out", len(groups), 7)
-if len(groups) == 7:
+c("  the groups parse out", len(groups), 8)
+if len(groups) == 8:
     behave, see, account, fix = (groups["behaves"], groups["see"],
                                  groups["account"], groups["fix"])
     c.truthy("  the safety switch leads the behaviour group", "consentBtn" in behave)
@@ -102,9 +102,9 @@ c.truthy("  the butler survives", "unflappable British butler" in page)
 c.truthy("  so does the warmth", "=== YOU GENUINELY CARE ===" in page)
 
 print("\nEvery group folds away and comes back:")
-c("  seven groups now", page.count('class="cgroup"'), 7)
+c("  eight groups now", page.count('class="cgroup"'), 8)
 c("  each is named, so a fold is remembered by what it is",
-  page.count('class="cgroup" data-group='), 7)
+  page.count('class="cgroup" data-group='), 8)
 c.truthy("  the heading is the control", '.cgroup .chead {' in css and "cursor: pointer" in css)
 c.truthy("  folding hides the contents, not the heading",
          ".cgroup.folded > *:not(.chead) { display: none; }" in css)
@@ -123,7 +123,7 @@ for m in ["work", "relax", "business"]:
     c.truthy("  MODES has %s" % m, "    %s: {" % m in body)
 c.truthy("  a mode changes how ARC WRITES, not just the switches",
          "function modeBlock()" in body and
-         "personaBlock() + modeBlock() + SYSTEM_PROMPT" in body)
+         "personaBlock() + modeBlock() + langBlock() + SYSTEM_PROMPT" in body)
 MODEBLOCK = body[body.index("const MODES = {"):body.index("let modeNow")]
 for setting in ["persona:", "night:", "cues:", "think:", "brain:", "prompt:", "hint:"]:
     c("  each of the three sets %-9s" % setting, MODEBLOCK.count(setting), 3)

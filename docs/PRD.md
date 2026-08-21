@@ -131,6 +131,8 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 | `market` | `market_outlook`, `market_compare` |
 | `automation` | `auto_click`, `hold_key`, `key_macro`, `stop_automation`, `automation_status` |
 
+Plus `voices.py`, which is not a toolkit — it is the catalogue of every neural voice Microsoft publishes, fetched and cached, so §3.6b can promise a language without anyone hand-writing a voice table.
+
 Plus `web_search`, which runs on Anthropic's side rather than ours.
 
 **Capability presence is derived, not configured.** `all_tools()`
@@ -496,6 +498,27 @@ Three refusals are product requirements, not tone:
 
 This is also where the persona and the feature meet: §3.7's calibration rules
 are what make M1–M3 natural rather than a special case ARC has to remember.
+
+### 3.6b Languages
+
+ARC is not an English product with translations bolted on: the recogniser, the
+voice and the model all follow one setting, and the default follows the
+device. 142 locales, ~75 languages.
+
+| # | Requirement | Where it is held |
+|---|---|---|
+| L1 | The recogniser listens in the user's language. Getting this wrong is invisible — it returns confident nonsense and never errors. | `r.lang = speechLang()`, rebuilt on change |
+| L2 | The voice speaks that language natively, never an English voice reading foreign letters. | `voices.for_lang()`; ElevenLabs stands aside when the language is not its voice's |
+| L3 | The catalogue is fetched from Microsoft, never hand-written. A hand-written voice table is a list of guesses, and a wrong guess is TTS that fails when somebody speaks. | `voices.py`, cached a week, falls back to the original eight |
+| L4 | The model answers in the language, matches a mid-conversation switch, and reads numbers and dates the way that language reads them. | `langBlock()` + the SPOKEN ALOUD rules |
+| L5 | Text renders and reads the right way round in every script. | OS font fallbacks; `dir="auto"` per line |
+| L6 | Nothing in the speech pipeline assumes Latin script. | `\p{L}\p{N}` throughout — see below |
+
+L6 is the one that bit hardest. Seven filters normalised text with `[^a-z0-9]`,
+and in Tamil, Arabic, Chinese, Greek or Hebrew every one of them produced an
+empty string. The worst was the noise gate, where empty means "that was a
+cough": **every word spoken in those languages was dropped before the model
+ever saw it**. Echo detection was dead the same way, on both speech paths.
 
 ### 3.7 Calibration
 
