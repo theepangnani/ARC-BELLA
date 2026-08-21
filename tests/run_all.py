@@ -51,8 +51,14 @@ def main(argv):
         good = r.returncode == 0
         if not good:
             failed.append((name, r))
-        # One line each while it runs; the detail only for what broke.
-        print("%s %-*s  %5.1fs" % ("PASS " if good else "FAIL ", width, name, secs))
+        # One line each while it runs; the detail only for what broke — except
+        # a suite that says outright it could not check something, which is a
+        # gap and must not be invisible behind a green PASS.
+        note = ""
+        if good and "could not be confirmed" in (r.stdout or ""):
+            note = "   (something unconfirmed — see its own output)"
+        print("%s %-*s  %5.1fs%s"
+              % ("PASS " if good else "FAIL ", width, name, secs, note))
 
     print("\n" + "-" * (width + 20))
     if failed:
