@@ -3,7 +3,7 @@
 **Product:** ARC (Ambient Response Core), in-product persona **Bella**
 **Repository:** `theepangnani/ARC-BELLA`
 **Status:** Live, single-owner, self-hosted
-**Last updated:** 2026-08-15
+**Last updated:** 2026-08-23
 
 > This document describes what ARC is and what it is meant to be. The
 > [README](../README.md) is the setup guide; this is the scope, the reasoning,
@@ -112,7 +112,7 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 - **Spend meter** — per-day token accounting surfaced live in the HUD as
   `SPEND TODAY`, with a hard `ARC_DAILY_COST_CAP`.
 
-### 3.3 Tools (67 across 14 modules, plus one server-side)
+### 3.3 Tools (69 across 15 modules, plus one server-side)
 
 | Module | Tools |
 |---|---|
@@ -130,6 +130,7 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 | `alarm` | `set_alarm`, `list_alarms`, `cancel_alarm`, `snooze_alarm`, `dismiss_alarm` |
 | `market` | `market_outlook`, `market_compare` |
 | `automation` | `auto_click`, `hold_key`, `key_macro`, `stop_automation`, `automation_status` |
+| `selfheal` | `self_check`, `self_repair` |
 
 Plus `voices.py`, which is not a toolkit — it is the catalogue of every neural voice Microsoft publishes, fetched and cached, so §3.6b can promise a language without anyone hand-writing a voice table.
 
@@ -230,6 +231,12 @@ wake someone":
 - **The ring does not depend on boot.** Every other poll starts after the
   Initialize gate; a page sitting at that gate is precisely the page that has
   been open all night, so the alarm poll starts at page load instead.
+- **The ring does not depend on the loop staying alive.** Every one of the
+  rules above assumes the 30-second loop is still running, and until §3.10
+  nothing checked. A task that raises finishes and is easy to spot; a task
+  wedged inside a call that never returns is indistinguishable from a healthy
+  one from the outside. So the loop now reports a heartbeat each cycle and a
+  separate watchdog restarts it when that stops — see §3.10.
 
 **Speaker mode** turns a phone from a hand-held HUD into a put-down appliance.
 Its substance is the **Screen Wake Lock**, re-acquired on `visibilitychange`
@@ -309,6 +316,66 @@ code rather than speak it, one new idea per turn, the learner does the typing,
 every turn ends in a task, check understanding by prediction rather than
 "does that make sense?", hints before answers, and screenshot their actual
 work before responding to it.
+
+### 3.10 Self-repair
+
+Everything in §3.6 is a promise made to somebody who then walked away. The
+failure mode that matters is therefore not an error — it is silence: a loop
+that stopped, a data file that will not parse, a voice catalogue that fell back
+to English. None of those announce themselves, and each looks exactly like
+nothing happening.
+
+`selfheal.py` is the answer, in three parts.
+
+**Notice.** `check()` returns findings at three levels (`ok` / `warn` /
+`broken`) over: the background loop's heartbeat, every personal data file,
+whether backups exist and how old they are, disk space, audit-log size, a
+stuck auto-clicker, live sessions, the voice catalogue, the Anthropic key, the
+Google links, and optional libraries. Each finding carries either the id of a
+repair or nothing, and "nothing" is the interesting case.
+
+**Repair, with a copy taken first.** Snapshots run every six hours and at boot:
+six kept per file, and **only ever taken from a file that parses**, so damage
+can never overwrite the copy needed to undo it. Restores walk back to the
+newest snapshot that *reads*, rather than trusting the newest. A damaged file
+is renamed into `backups/`, never deleted.
+
+Two repairs happen without being asked, and only two. At **boot**, a damaged
+file is set aside and restored — boot is the one moment nothing is mid-write,
+which is what makes an unparseable file unambiguous there and merely suspicious
+later. And a **stalled background loop is restarted** by a watchdog task that
+deliberately lives outside the loop it supervises. Everything else waits to be
+asked, twice: the panel button checks on the first press and repairs on the
+second, and only what the first press printed on screen.
+
+**Refuse, out loud.** The boundaries are the design, not an omission:
+
+| It will not | Because |
+|---|---|
+| Edit its own source | Code that rewrites itself cannot be reviewed; "it repaired itself" and "it broke itself unreadably" look identical from outside |
+| Touch `.env`, `credentials*.json`, `token.json` | Nothing whose job is tidying data files should hold write access to the secrets |
+| Install or download anything | A repair that fetches code off the internet is a supply chain |
+| Roll back `sessions.json` | Restoring an old copy resurrects sign-ins somebody revoked; a damaged store is emptied instead |
+| Delete anything a person wrote | The damaged copy may be nine tenths intact, and that judgement is the owner's |
+| Free disk by deleting files | Nobody wants that initiative from an assistant |
+
+An empty Anthropic balance, a full disk, an expired Google refresh token and a
+missing library are reported with the specific action for the user and **no
+repair offered** — the alternative is fixing something adjacent and reporting
+success, which is the failure mode this whole section exists to prevent.
+
+`self_check` is passive (no consent gate); `self_repair` is an action and is
+gated, and neither is offered to guests. `GET /api/selfcheck` and
+`POST /api/selfrepair` exist as routes as well as tools, because the moment you
+most want to ask "what is wrong with you" is the moment the model may be the
+thing that is wrong. Every repair, asked-for or automatic, appends to
+`repairs.log`.
+
+The prevention half shipped with it: `notes.py` and `extras.py` truncated their
+files before rewriting them, so an interruption left half a file that every
+loader read as *empty* — and the next save then overwrote the remains. Both now
+write to one side and `os.replace()` into position, matching `alerts.py`,
+`alarm.py` and `session.py`.
 
 ## 4. Architecture
 
@@ -534,7 +601,7 @@ worse than no answer because it gets acted on.
 | Gap | Detail | Tracked |
 |---|---|---|
 | ~~**`DEPLOY.md` does not exist**~~ | Closed. Written: tunnel, redirect URIs, consent-screen publishing status, what to verify, and the failures that have actually happened | #4 |
-| ~~**No test suite**~~ | Closed. `tests/` holds 21 suites — sessions, guests, alarms, echo suppression, the mobile pass, and a parse check over the inline JavaScript — run on Windows in CI. Still untested: anything needing a real microphone, a second monitor or a phone (see `tests/manual/`) | #5 |
+| ~~**No test suite**~~ | Closed. `tests/` holds 30 suites — sessions, guests, alarms, echo suppression, the mobile pass, and a parse check over the inline JavaScript — run on Windows in CI. Still untested: anything needing a real microphone, a second monitor or a phone (see `tests/manual/`) | #5 |
 | ~~**Undeclared runtime dependencies**~~ | Closed, and the gap was narrower than recorded: `pc.py` uses `ctypes` and `PIL` for input and capture, not `mss` or `pyautogui`. Only `pycaw` was missing, now declared with a `sys_platform == "win32"` marker so Linux installs skip it | #5 |
 | ~~**Duplicated dependency**~~ | Closed in "Tidy requirements.txt"; `edge-tts` appears once | #5 |
 | **Unpinned dependencies** | All use `>=`, with no lockfile | #5 |
@@ -543,6 +610,8 @@ worse than no answer because it gets acted on.
 | **No streaming** | `/api/chat` is request/response with a 25 s client abort | — |
 | **Half-built multi-user** | Google identity is per-session; notes, reminders, alerts, display, Telegram and computer control are global | — |
 | **Second screen expires** | `/display` sits behind the session gate. Now moot for the owner, whose session has no clock (A4c), but it returns for anyone who sets `ARC_OWNER_SESSION_UNLIMITED=0` | — |
+| **A restarted loop can leak its predecessor's thread** | If the old background loop is wedged inside a call that never returns, cancelling its task does not free the thread underneath — Python offers no way to. The replacement runs regardless, so alarms resume; the stuck thread ends when it ends. The watchdog gives up after three restarts that complete no cycle, rather than repeating for ever | §3.10 |
+| **Second Bella not covered by the boot repair** | `selfheal` reads `ARC_DATA_DIR`, so each instance repairs its own files. Correct, but it means a private Bella that is never started is never checked or backed up | — |
 | **Private instance needs its own redirect URI** | Bella on 8421 cannot sign in until `http://localhost:8421/oauth/callback` is registered in the Google console | — |
 
 ## 8. Roadmap

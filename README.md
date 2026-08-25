@@ -702,6 +702,66 @@ A timer lives in the page, so it stops when the page does — fine for tea, not
 for waking up. Anything you must not miss should be an **alarm** (above) or a
 reminder, both of which the server keeps.
 
+## Repairing itself
+
+Things that run unattended break quietly. The power goes at the wrong moment
+and `notes.json` is half a file. The background loop — the one that actually
+rings your alarms — dies at three in the morning and the alarm set for seven
+simply never goes off. No error, no message, just silence where a noise should
+have been. That is the failure you are least likely to catch, so ARC watches
+for it itself.
+
+**The loop that rings alarms says so, every thirty seconds.** A watchdog
+running *outside* it notices when it stops and restarts it, unasked, and writes
+down that it did. That one repair happens without permission on purpose: an
+alarm is a promise somebody was given, and a promise that fails silently is
+worse than one that fails loudly.
+
+**Your files get copied before anything needs restoring.** Notes, reminders,
+alarms, to-dos and price alerts are snapshotted every few hours — six copies
+kept, and only ever copied when they *parse*, so a damaged file can never
+overwrite the good copy at exactly the moment you need it.
+
+**At boot it checks, and repairs a damaged file by itself.** Boot is the one
+moment nothing is halfway through a write, so a file that won't parse is
+unambiguous. It sets the damaged one aside in `backups/` — renamed, never
+deleted — and puts back the newest copy that reads.
+
+Any other time, ask. **Check ARC** in the panel, or just say *"are you okay"* /
+*"why didn't my alarm go off"*. It reports in a sentence, and repairs only on a
+second press:
+
+> Broken: my background loop has stopped — nothing has ticked for 340 seconds.
+> While that's true, an alarm set for the morning won't ring. I can fix that
+> myself if you want.
+
+It can restore a damaged data file, restart a stopped loop, refetch the voice
+list, clear expired sign-ins, rotate oversized audit logs, and stop a stuck
+auto-clicker.
+
+**What it will not do, deliberately:**
+
+- **It never edits its own code.** Something that rewrites itself can't be
+  reviewed, and from outside, *"it repaired itself"* and *"it broke itself in a
+  way nobody can read"* are the same sentence.
+- **It never touches `.env`, `credentials*.json` or `token.json`.** Nothing
+  whose job is tidying data files should have write access to the secrets.
+- **It never installs or downloads anything.** A repair that fetches code off
+  the internet is a supply chain, not a repair.
+- **It never deletes anything you wrote without copying it first.**
+- **It doesn't roll back `sessions.json`.** Restoring an old copy would bring
+  back sign-ins somebody deliberately revoked; a damaged one is emptied
+  instead, and everyone signs in again.
+
+And it says what it *can't* fix rather than fixing something else and calling
+it done — an Anthropic balance at zero, a full disk, an expired Google
+sign-in, a missing library. Each of those gets the specific thing for you to
+do about it.
+
+Every repair, automatic or asked for, is written to `repairs.log` next to your
+data. Nothing changes files while you aren't looking without leaving a record
+of what and when.
+
 ## Staying quiet
 
 ARC can decide it wasn't being spoken to and say nothing at all. It's told to

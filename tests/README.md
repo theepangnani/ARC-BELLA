@@ -46,6 +46,7 @@ If you see that refusal, unset it — do not work around it.
 | `test_speaker` | Speaker mode: wake lock, loudspeaker routing, nothing read before it exists |
 | `test_mobile` | Notches, gesture bars, soft keyboards, and iOS being WebKit whatever the icon says |
 | `test_js_syntax` | The 280 KB of inline JavaScript actually parses |
+| `test_selfheal` | Self-repair restores from a copy, walks past a corrupt copy, keeps the damaged file, and stops at its own source, the secrets and the sign-in store |
 
 ## Two dependencies you may want
 

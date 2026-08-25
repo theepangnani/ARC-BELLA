@@ -85,8 +85,9 @@ import alarm
 import market
 import automation
 import voices
+import selfheal
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
-            alerts, alarm, market, automation)
+            alerts, alarm, market, automation, selfheal)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -181,6 +182,11 @@ PASSIVE_TOOLS = {
     # ARC to switch off is not a feature, it is a hostage situation. Starting one
     # is gated; ending one is not, and neither is asking what is running.
     "stop_automation", "automation_status",
+    # Looking at your own health changes nothing. self_repair DOES change
+    # files, so it stays gated — "shall I fix that?" is a question worth
+    # asking, and an assistant that quietly rewrites your notes file because
+    # it decided the file looked wrong is not one anybody asked for.
+    "self_check",
 }
 # Master switch. On by default: ARC will not act without the user's say-so. Set
 # ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).
@@ -378,6 +384,18 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+    # Self-repair, before anything else reads the data files. Boot is the only
+    # moment nothing is halfway through a write, which is what makes a file
+    # that will not parse unambiguous here and merely suspicious later. Two
+    # capabilities it cannot reach on its own get handed over first.
+    selfheal.register("prune_tokens", prune_orphan_google_tokens)
+    selfheal.register("restart_monitor", lambda: restart_monitor())
+    try:
+        for line in selfheal.startup():
+            print(f"{C_DIM}  · {line}{C_OFF}")
+    except Exception as e:
+        print(f"{C_DIM}  · self-check skipped: {e}{C_OFF}")
+
     # Phone-push loop: watch for reminders coming due and push them to the owner's
     # phone even with no browser open. Only runs when ntfy is configured; a single
     # owner topic means pushes never reach a signed-in visitor. Best-effort — any
@@ -427,11 +445,62 @@ async def lifespan(app: FastAPI):
                                                     priority="urgent"))
             except Exception:
                 pass
+            # Say so, every time round. This loop is what rings alarms, and a
+            # loop that has stopped is indistinguishable from a quiet morning
+            # unless something is counting. See selfheal.watch().
+            selfheal.beat()
             await asyncio.sleep(30)
 
+    home = asyncio.get_running_loop()
+
+    def restart_monitor():
+        """Replace the background loop. Called by selfheal when it has stalled.
+
+        Cancelling first is best-effort and deliberately not awaited: the case
+        this exists for is a loop wedged inside a call that will not return, so
+        waiting for it to acknowledge the cancel would hang the very thing
+        trying to rescue it. The new task starts either way.
+
+        Scheduled onto the loop that owns it rather than created inline,
+        because a task can only be created from its own event loop and this can
+        be called from a worker thread. Creating it inline worked from the
+        watchdog and from a route, silently failed anywhere else, and the
+        failure was a coroutine that was never awaited — that is, a repair that
+        reported success and did nothing.
+        """
+        def swap():
+            old = getattr(app.state, "push_task", None)
+            if old and not old.done():
+                old.cancel()
+            app.state.push_task = asyncio.create_task(_monitor_loop())
+        selfheal.started()
+        home.call_soon_threadsafe(swap)
+        return True
+
+    async def _watchdog_loop():
+        """Watches the watcher.
+
+        Separate from the loop it supervises, which is the entire point — a
+        heartbeat check living inside the loop that stopped beating would stop
+        with it. Left on the event loop rather than given a thread of its own
+        because the work is a handful of stat calls a minute; restart_monitor
+        is safe to call from either.
+        """
+        while True:
+            await asyncio.sleep(60)
+            try:
+                for line in selfheal.watch():
+                    print(f"{C_DIM}  · {line}{C_OFF}")
+            except Exception:
+                pass
+
     # Always run: even with ntfy off, alerts still need evaluating for the browser.
+    selfheal.started()
     app.state.push_task = asyncio.create_task(_monitor_loop())
+    app.state.watchdog_task = asyncio.create_task(_watchdog_loop())
     yield
+    if app.state.watchdog_task:
+        app.state.watchdog_task.cancel()
     if app.state.push_task:
         app.state.push_task.cancel()
     await app.state.http.aclose()
@@ -1791,6 +1860,49 @@ async def automation_click_route(request: Request, _=Depends(require_auth)):
     payload = await request.json() if await request.body() else {}
     return JSONResponse({"status": automation.auto_click(
         rate=payload.get("rate", 5), seconds=payload.get("seconds", 120))})
+
+
+@app.get("/api/selfcheck")
+async def selfcheck_route(request: Request, _=Depends(require_auth)):
+    """What ARC thinks is wrong with ARC.
+
+    A route as well as a tool, because the moment you most want this is the
+    moment the model cannot answer — no credit, no key, a provider outage. A
+    button that works when the brain does not is worth more here than tidiness.
+    """
+    deny_guest(request)
+    findings = selfheal.check()
+    return JSONResponse({
+        "findings": findings,
+        "summary": selfheal.describe(findings),
+        "fixable": sorted({f["fix"] for f in findings if f["fix"] and not f["ok"]}),
+        "broken": sum(1 for f in findings if f["level"] == "broken"),
+        "warnings": sum(1 for f in findings if f["level"] == "warn"),
+        "recent": selfheal.history(10),
+    })
+
+
+@app.post("/api/selfrepair")
+async def selfrepair_route(request: Request, _=Depends(require_auth)):
+    """Fix what can be fixed. Never code, never secrets, always a copy first.
+
+    Guests are refused rather than merely limited: this rewrites the owner's
+    notes and alarms from backup and restarts the owner's background loop, and
+    none of that is a visitor's to decide.
+    """
+    deny_guest(request)
+    payload = await request.json() if await request.body() else {}
+    want = payload.get("what") or ""
+    ids = [k for k in selfheal.REPAIRS if k in want.lower()] if want.strip() else None
+    findings = selfheal.check()
+    done = selfheal.repair(ids, findings=findings)
+    after = selfheal.check()
+    return JSONResponse({
+        "done": done,
+        "findings": after,
+        "summary": selfheal.describe(after),
+        "still_broken": [f["what"] for f in after if f["level"] == "broken"],
+    })
 
 
 @app.get("/api/push/status")

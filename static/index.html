@@ -373,13 +373,23 @@
   /* Slowly rotate every glow colour through the full RGB spectrum. */
   @keyframes nightRGB { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
   @keyframes nightGlow { from { opacity: .72; } to { opacity: .95; } }
-  #micFixBtn, #reconnectBtn {
+  #micFixBtn, #reconnectBtn, #selfHealBtn {
     width: 100%; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 11px 10px; cursor: pointer;
     background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
   }
-  #micFixBtn:hover, #reconnectBtn:hover { color: var(--ice); border-color: var(--accent); }
-  #micFixBtn.working, #reconnectBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
+  #micFixBtn:hover, #reconnectBtn:hover, #selfHealBtn:hover { color: var(--ice); border-color: var(--accent); }
+  #micFixBtn.working, #reconnectBtn.working, #selfHealBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
+  /* Amber once there is something to repair, so the button stops being a
+     question and becomes an offer. Green when the answer was "nothing wrong". */
+  #selfHealBtn.armed { color: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
+  #selfHealBtn.well { color: #8affd4; border-color: #8affd4; }
+  /* The report reads as sentences, so it is left-aligned and allowed to wrap
+     on words — .gstatus breaks anywhere, which is right for an email address
+     and wrong for prose. */
+  #selfHealOut { text-align: left; word-break: normal; overflow-wrap: anywhere; font-size: 8.5px; }
+  #selfHealOut .bad { color: var(--rose); }
+  #selfHealOut .warn { color: var(--amber, #ffb020); }
   #liveScreenBtn, #watchBtn, #displayBtn {
     width: 100%; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 11px 10px; cursor: pointer;
@@ -1407,6 +1417,8 @@
         <div class="chead">If something stops working</div>
         <button id="micFixBtn" title="Re-request the microphone and rebuild voice recognition from scratch">Reconnect mic</button>
         <button id="reconnectBtn" title="Reconnect to ARC after a dropped connection — restores the neural voice, rechecks the server, and rebuilds voice input in one tap">Reconnect ARC</button>
+        <button id="selfHealBtn" title="Check ARC's own health — background loop, your notes and alarms files, backups, disk, voices. Press again to repair anything it can repair.">Check ARC</button>
+        <div id="selfHealOut" class="gstatus"></div>
       </div>
 
       <div class="assection">
@@ -1635,6 +1647,8 @@ When you have just DONE something on the computer that has a visible on-screen r
 You run on the user's own machine, and you can help them start, restart, and set you up themselves — so they never need a developer for the everyday things. Use your computer tools for this: the shell is the two-step one (prepare_command, say the command plainly, wait for a clear yes, then run_prepared), and it only works from the desktop app on the machine itself, never over the phone. If a request here needs the computer and those tools aren't offered this turn, the user is on their phone — say the setup has to be done at the machine.
 - TWO VERSIONS OF YOU EXIST, side by side, and never mix. The shared one runs on port 8420 (its launcher is launch-arc.ps1) and is the one other people can be given access to. The PRIVATE one runs on port 8421 (launcher launch-bella-private.ps1) and is the owner's alone — a light-blue-on-black look, with its own separate memory, reminders and Google sign-in. "Start Bella" or "open the shared one" means the first; "open my private one" means the second. You can run the right launcher yourself from the desktop.
 - RESTARTING FIXES MOST THINGS. If something is stuck — a tool erroring, the markets panel dead, a Google sign-in gone stale — closing the window and re-running the launcher almost always clears it. Offer to do it, and do it, from the desktop.
+- YOU CAN CHECK AND REPAIR YOURSELF, and you should offer to before you suggest restarting anything. self_check looks at the background loop (the thing that actually rings alarms and fires reminders), the user's notes/reminders/alarms/to-do files, whether those have backups, disk space, the voice list and sign-ins. self_repair fixes what is genuinely fixable: putting a damaged file back from a copy saved earlier, restarting a background loop that has stopped, refetching voices, clearing expired sign-ins, rotating oversized logs, stopping a stuck auto-clicker. Check FIRST, say what you found in a sentence, and ask before repairing anything that touches their files — then say what you actually did, including if a restored file lost the last few items.
+- WHAT SELF-REPAIR CANNOT TOUCH, and you say which one it is rather than repairing something else and calling it fixed: your own code (you never edit it, and never offer to), an Anthropic balance at zero, a full disk, an expired Google sign-in, a missing library. Those need the user, and each one has a specific thing for them to do — say that thing.
 - PHONE ALERTS, so reminders and price alerts reach them with the tab closed: they install the "ntfy" app on the phone, subscribe to a private topic they invent (something no one would guess), and then that topic goes into the .env file as ARC_NTFY_TOPIC and you restart. Walk them through it in plain steps if they ask. Once it's set, notify_phone and any fired alert land straight on the phone.
 - REACHING YOU AWAY FROM HOME: there is a permanent web address — a Tailscale Funnel link — that opens you from anywhere on the phone, behind the same Google sign-in. If they've lost it, it's saved on the machine.
 - SIGNING IN TO GOOGLE: the sign-in button links a Google account. The app is live but not yet verified by Google, so EVERYONE meets a "Google hasn't verified this app" warning on the way in — they tap "Advanced", then "go to app". That warning is expected and is not a fault; say so plainly rather than treating it as a problem. Who is actually allowed in is decided here, not by Google: the owner keeps a list of permitted addresses, so someone who gets past that warning and is then refused is simply not on the list, and only the owner can add them. Nothing about either step is something you can do from here.
@@ -4140,6 +4154,88 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       : "ARC is still unreachable — make sure it's running, then tap Reconnect ARC again.");
   }
 
+  // --- self-check / self-repair --------------------------------------------
+  //
+  // Two presses, never one. The first press only looks; the second repairs,
+  // and only what the first press already named on screen. Nothing here ever
+  // rewrites a file without the user having read what it is about to do —
+  // an assistant that silently "fixed" your notes while you were reading the
+  // panel would be indistinguishable from one that lost them.
+  //
+  // It is a plain fetch rather than a question put to the model on purpose:
+  // the moment you most want to ask "what is wrong with you" is the moment the
+  // model may be exactly what is wrong — no credit, bad key, provider down.
+  let healArmed = null;
+
+  function healLine(parent, text, cls) {
+    const d = document.createElement("div");
+    if (cls) d.className = cls;
+    d.textContent = text;              // never innerHTML: this carries paths and error text
+    parent.appendChild(d);
+    return d;
+  }
+
+  function renderHeal(box, findings) {
+    box.textContent = "";
+    const bad = findings.filter(f => f.level === "broken");
+    const warn = findings.filter(f => f.level === "warn");
+    if (!bad.length && !warn.length) {
+      healLine(box, "Everything checks out.");
+      return;
+    }
+    bad.forEach(f => healLine(box, "✗ " + f.what + " — " + f.detail, "bad"));
+    warn.forEach(f => healLine(box, "! " + f.what + " — " + f.detail, "warn"));
+  }
+
+  async function selfHeal() {
+    const btn = document.getElementById("selfHealBtn");
+    const box = document.getElementById("selfHealOut");
+    if (!btn || !box) return;
+    const repairing = btn.classList.contains("armed") && healArmed;
+    btn.classList.remove("armed", "well");
+    btn.classList.add("working");
+    btn.textContent = repairing ? "Repairing…" : "Checking…";
+    try {
+      const r = repairing
+        ? await fetch("/api/selfrepair", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}) })
+        : await fetch("/api/selfcheck");
+      if (r.status === 401) { location.reload(); return; }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      renderHeal(box, data.findings || []);
+      if (repairing) {
+        const done = data.done || [];
+        addEntry("sys", "SYSTEM", done.length
+          ? "Repaired: " + done.join("; ") + "."
+          : "Nothing needed repairing.");
+        // Anything still broken after a repair is, by definition, not
+        // something a repair can reach — so the button goes back to being a
+        // check rather than offering the same fix again.
+        healArmed = null;
+        btn.textContent = "Check ARC";
+      } else {
+        addEntry("sys", "SYSTEM", data.summary || "Checked.");
+        healArmed = (data.fixable || []).length ? data.fixable : null;
+        if (healArmed) {
+          btn.classList.add("armed");
+          btn.textContent = "Repair " + healArmed.join(", ");
+        } else {
+          btn.classList.add("well");
+          btn.textContent = "Check ARC";
+        }
+      }
+    } catch (e) {
+      box.textContent = "";
+      healLine(box, "Could not reach ARC to ask (" + e.message + ").", "bad");
+      healArmed = null;
+      btn.textContent = "Check ARC";
+    } finally {
+      btn.classList.remove("working");
+    }
+  }
+
   // 80ms normally; grows to a couple of seconds if the service keeps failing
   function restartDelay() { return Math.min(2500, 80 * Math.pow(2, recogFails)); }
 
@@ -5831,6 +5927,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   if (micFixBtn) micFixBtn.addEventListener("click", reconnectMic);
   const reconnectBtn = document.getElementById("reconnectBtn");
   if (reconnectBtn) reconnectBtn.addEventListener("click", reconnectArc);
+  const selfHealBtn = document.getElementById("selfHealBtn");
+  if (selfHealBtn) selfHealBtn.addEventListener("click", selfHeal);
 
   const personaBtn = document.getElementById("personaBtn");
   function applyPersona(mode, announce) {

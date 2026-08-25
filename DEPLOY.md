@@ -145,6 +145,24 @@ Not "the page loaded". These are the things that have silently not worked:
 
 ## When something breaks
 
+**Ask it first.** `Check ARC` in the panel, or *"are you okay"*, runs the same
+checks the server runs at boot — background loop, data files, backups, disk,
+voices, sign-ins — and names what is wrong in a sentence. It repairs only on a
+second press, and only what it just printed. What it has already done on its
+own is in `repairs.log` next to your data, with timestamps. Start there; the
+entries below are the things it deliberately cannot fix for you.
+
+**An alarm didn't ring and nothing else looks wrong.** Check `repairs.log` for
+`watchdog: restarted my background loop`. That loop is what fires alarms,
+reminders and price alerts, and before the watchdog existed it could die
+without a trace. Repeated restarts in the log mean something is wedging it —
+the server console will have the reason.
+
+**Your notes or reminders came back short.** A restore puts back the newest
+snapshot that parses, so anything added between that snapshot and the damage is
+gone. The damaged original is in `backups/` as `<name>.damaged-<timestamp>`,
+never deleted — it is usually mostly readable in a text editor.
+
 **The change you made isn't there.** Check you are talking to the process you
 think you are. A second `python run.py` fails to bind and exits silently while
 the old one keeps serving, and every symptom says your edit did nothing:

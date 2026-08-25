@@ -96,6 +96,20 @@ def weather(location: str = "", when: str = "today") -> str:
     return f"I don't have a forecast that far out for {label}."
 
 
+def _write_json(path, items):
+    """Write to one side, then move into place.
+
+    A plain write_text truncates first and fills second, so an interruption in
+    between leaves half a file. Both loaders here read a half file as an empty
+    list, which means the damage is invisible until the next save writes over
+    what was left of it. os.replace cannot land halfway, so a reader sees the
+    old file or the new one and never a torn one. Same idiom as alerts.py.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 # --- to-do list ------------------------------------------------------------
 
 def _load():
@@ -106,7 +120,7 @@ def _load():
 
 
 def _save(items):
-    TODO_FILE.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    _write_json(TODO_FILE, items)
 
 
 def add_todo(item: str) -> str:
@@ -157,7 +171,7 @@ def _load_rem():
 
 
 def _save_rem(items):
-    REMIND_FILE.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    _write_json(REMIND_FILE, items)
 
 
 def _human_delay(s):

@@ -57,10 +57,15 @@ for p in suites:
         c("  %-24s calls sandbox()" % p.name, False, True)
         continue
     at_sandbox = src.index("sandbox()")
+    # Every module that reads ARC_DATA_DIR at import time belongs in this list.
+    # One left out is a blind spot, not a pass: the suite would import it ahead
+    # of sandbox(), read the developer's real data directory, and this check
+    # would still say the order was fine.
     first_arc = min([src.index(m) for m in
                      ("\nimport run", "\nimport session", "\nimport alarm",
                       "\nimport gauth", "\nimport pc", "\nimport extras",
-                      "\nfrom starlette")
+                      "\nimport notes", "\nimport alerts", "\nimport voices",
+                      "\nimport selfheal", "\nfrom starlette")
                      if m in src] or [len(src)])
     c.truthy("  %-24s sandbox() first" % p.name, at_sandbox < first_arc)
 

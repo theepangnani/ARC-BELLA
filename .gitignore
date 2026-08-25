@@ -46,9 +46,21 @@ price_alerts.json
 
 # Alarms (personal — when you get up)
 alarms.json
-alarms.json.tmp
+
+# Half-written files, mid-save. Every data write goes to one of these and
+# is then moved into place, so one on disk means a save was interrupted.
+*.json.tmp
 
 # Security assessment: documents live, unfixed findings for an
 # internet-exposed instance. Kept local until the credentials it names are
 # rotated; publishing it to a public repo would be an attack map.
 docs/SECURITY.md
+
+# Backups of your own data, taken before any self-repair touches it
+backups/
+
+# What self-repair did, and when
+repairs.log
+
+# Cached voice catalogue (refetched weekly)
+voices.json

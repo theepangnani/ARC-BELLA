@@ -34,9 +34,16 @@ def _load() -> list:
 
 
 def _save(items) -> None:
+    # Written to one side and moved into place, the way alerts.py and alarm.py
+    # already do it. A plain write_text truncates the file first and fills it
+    # second, so a power cut in between leaves half a file — and since _load
+    # reads a half file as "no notes at all", the next note saved would
+    # overwrite the remains with a list of one. os.replace cannot land halfway.
     try:
-        NOTES.write_text(json.dumps(items[-MAX_NOTES:], ensure_ascii=False, indent=2),
-                         encoding="utf-8")
+        tmp = NOTES.with_name(NOTES.name + ".tmp")
+        tmp.write_text(json.dumps(items[-MAX_NOTES:], ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, NOTES)
     except Exception:
         pass
 

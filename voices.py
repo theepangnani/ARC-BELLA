@@ -143,6 +143,18 @@ def catalogue(refresh: bool = False):
         return _voices
 
 
+def loaded():
+    """What is in hand right now, without fetching anything. None if nothing.
+
+    catalogue() will go to the network, and on a dead one it blocks for up to
+    twenty seconds before giving up. That is fine when somebody is waiting for
+    speech and useless for a health check, which has to be able to say "the
+    voice list looks wrong" without becoming the reason the page is hanging.
+    """
+    with _lock:
+        return list(_voices) if _voices else None
+
+
 def is_valid(short: str) -> bool:
     """Whether this is a real voice. The whitelist, but earned rather than
     typed — a client still cannot pass anything Microsoft does not publish."""
