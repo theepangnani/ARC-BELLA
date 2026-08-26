@@ -724,6 +724,63 @@ anyone else can sign in:
 The page still sends the parts that genuinely vary each turn — persona, mode,
 language, the date, timers, what's on screen — and asks for the rest by name.
 
+## Memory follows you
+
+What ARC knows about you lives on the server, against the account you signed in
+with — so it is **the same on your phone and your desktop**.
+
+It used to be `localStorage`, which meant it was never one memory at all: it was
+one per device. Something you told Bella at your desk, the phone had never heard
+of; a correction on the phone left the desktop still believing the old thing.
+Nobody chose that, it is just what storing something in a browser does.
+
+Three things came with the move:
+
+- **Every fact is dated.** *"He is learning Python"* from March shouldn't outrank
+  *"he finished the course"* from August, and until now there was no way to tell
+  which came first. Both are kept and ARC weighs them by date, rather than one
+  quietly deleting the other on a guess.
+- **You can search it.** *"What do you know about me?"*, *"do you remember my
+  sister's name?"*
+- **You can correct one thing.** Before, the only control was Forget All — which
+  is not an edit, it's a demolition. **Forget** now clears every device at once,
+  which is what everyone assumed it already did.
+
+A guest's memory is their own. It is never a window into yours.
+
+## Brain: Auto
+
+The Smart/Fast switch made *you* the router, and nobody routes well — you set it
+once and forget, so either every *"what's the time"* costs Sonnet money or every
+hard question gets answered by Haiku.
+
+**Auto** picks per question. *"Stop"*, *"thanks"*, the time, the weather → Haiku.
+Anything with reasoning, comparison, code or arithmetic in it → Sonnet. Roughly
+**three times cheaper** on the turns that don't need thinking.
+
+It leans towards the expensive model on purpose: a hard question answered
+cheaply is a bad answer, and an easy one answered expensively costs a fraction
+of a penny. Those aren't comparable, so the rule is *cheap only when clearly
+easy*, never *cheap unless clearly hard*.
+
+Press the button to pin **Smart** or **Fast** and a pinned choice is never
+overruled. The readout shows which brain actually answered, because on Auto a
+fixed label would be a lie. `ARC_AUTO_MODEL=0` turns it off entirely.
+
+## Export everything
+
+**Export everything** in the panel writes one file holding your notes, alarms,
+reminders, to-dos, price alerts, standing rules, usage record and memory. Copy
+it to a stick, a phone, a drive — anywhere that isn't this machine.
+
+That's the point. Self-repair keeps snapshots in `backups/`, which is on **the
+same disk as everything it protects**. A bad write, a corrupt file, a bad repair
+— all survivable. The disk dying is not, and it takes the copies with it.
+
+**No keys, tokens or sign-ins go in it** — the same exclusion list the snapshots
+honour — which is exactly what makes it safe to move around. A file it can't
+read is named in the result rather than silently left out.
+
 ## Repairing itself
 
 Things that run unattended break quietly. The power goes at the wrong moment

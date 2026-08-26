@@ -112,7 +112,7 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 - **Spend meter** — per-day token accounting surfaced live in the HUD as
   `SPEND TODAY`, with a hard `ARC_DAILY_COST_CAP`.
 
-### 3.3 Tools (69 across 15 modules, plus one server-side)
+### 3.3 Tools (76 across 18 modules, plus one server-side)
 
 | Module | Tools |
 |---|---|
@@ -130,7 +130,10 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 | `alarm` | `set_alarm`, `list_alarms`, `cancel_alarm`, `snooze_alarm`, `dismiss_alarm` |
 | `market` | `market_outlook`, `market_compare` |
 | `automation` | `auto_click`, `hold_key`, `key_macro`, `stop_automation`, `automation_status` |
-| `selfheal` | `self_check`, `self_repair` |
+| `selfheal` | `self_check`, `self_repair`, `export_everything` |
+| `stats` | `usage_report` |
+| `triggers` | `add_trigger`, `list_triggers`, `clear_trigger` |
+| `memory` | `list_memory`, `forget` |
 
 Plus `voices.py`, which is not a toolkit — it is the catalogue of every neural voice Microsoft publishes, fetched and cached, so §3.6b can promise a language without anyone hand-writing a voice table.
 
@@ -653,7 +656,7 @@ worse than no answer because it gets acted on.
 | **Consent gate is client-enforced** | `allow_actions` is still a boolean the caller sends. The system prompt half of this is CLOSED: the rulebook lives in `prompts/*.md` server-side, the client may only append, and its contribution is capped at 24,000 chars | #3 |
 | ~~**No security headers**~~ | Closed. CSP, nosniff, frame denial, referrer and permissions policy on every response, HSTS over HTTPS; `ARC_SECURITY_HEADERS=0` disables. `'unsafe-inline'` for script stays — the HUD is one inline file with no build step — so the policy's value is in `connect-src`, `img-src` and `frame-ancestors`, not in script control | #2 |
 | **No streaming** | `/api/chat` is request/response with a 25 s client abort | — |
-| **Half-built multi-user** | Google identity is per-session; notes, reminders, alerts, display, Telegram and computer control are global | — |
+| **Half-built multi-user** | Google identity is per-session, and **memory is now per-account too**; notes, reminders, alerts, display, Telegram and computer control are still global | — |
 | **Second screen expires** | `/display` sits behind the session gate. Now moot for the owner, whose session has no clock (A4c), but it returns for anyone who sets `ARC_OWNER_SESSION_UNLIMITED=0` | — |
 | **A restarted loop can leak its predecessor's thread** | If the old background loop is wedged inside a call that never returns, cancelling its task does not free the thread underneath — Python offers no way to. The replacement runs regardless, so alarms resume; the stuck thread ends when it ends. The watchdog gives up after three restarts that complete no cycle, rather than repeating for ever | §3.10 |
 | **Second Bella not covered by the boot repair** | `selfheal` reads `ARC_DATA_DIR`, so each instance repairs its own files. Correct, but it means a private Bella that is never started is never checked or backed up | — |
