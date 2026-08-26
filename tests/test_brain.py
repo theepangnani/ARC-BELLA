@@ -125,6 +125,67 @@ c("  an image always gets the better one",
 c("  and nothing to judge is not treated as easy",
   router.why([])[0], "smart")
 
+# ------------------------------------------------------------- the deep brain
+print("\nThere is a deeper brain, and it is never reached by accident:")
+c.truthy("  the switch offers it", "deep" in run.MODEL_CHOICES)
+c.truthy("  it is Opus", "opus" in run.MODEL_CHOICES["deep"])
+# The whole reason Auto exists is to spend less. Auto reaching for the dearest
+# model on its own would defeat it, so why() must never return "deep" at all.
+picks = {router.why([{"role": "user", "content": t}])[0] for t in EASY + HARD}
+c("  auto can only ever return smart or fast", picks <= {"smart", "fast"}, True)
+c("  ...asked for directly, it is honoured",
+  router.pick("deep", [{"role": "user", "content": "stop"}])[:1], ("deep",))
+c.truthy("  and the reason is written down", "NEVER CHOSEN AUTOMATICALLY" in
+         io.open(ARC / "run.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- what it costs
+print("\nEach model is costed at its own price, not at the default's:")
+c("  haiku, with its date suffix", run.prices_for("claude-haiku-4-5-20251001"), (1.0, 5.0))
+c("  sonnet 5", run.prices_for("claude-sonnet-5"), (3.0, 15.0))
+c("  opus 5", run.prices_for("claude-opus-5"), (5.0, 25.0))
+c("  and opus 4.8 is not read as opus 5", run.prices_for("claude-opus-4-8"), (5.0, 25.0))
+# A model ARC has never heard of must not be free. The daily cap is what stops
+# a runaway loop draining a card, and a loop costing $0.00 is never capped.
+c("  an unknown model falls back to the configured pair, never to zero",
+  run.prices_for("claude-something-new-9"), (run.PRICE_IN, run.PRICE_OUT))
+c("  ...and to nothing at all for a missing one", run.prices_for(None),
+  (run.PRICE_IN, run.PRICE_OUT))
+
+haiku = run.turn_cost("claude-haiku-4-5-20251001", tok_in=10000, tok_out=1000)
+sonnet = run.turn_cost("claude-sonnet-5", tok_in=10000, tok_out=1000)
+opus = run.turn_cost("claude-opus-5", tok_in=10000, tok_out=1000)
+c("  the same turn costs 3x more on sonnet than haiku", round(sonnet / haiku, 2), 3.0)
+c("  and 5x more on opus", round(opus / haiku, 2), 5.0)
+c.truthy("  a cache read is a tenth of an input token",
+         round(run.turn_cost("claude-sonnet-5", cache_read=1_000_000)
+               / run.turn_cost("claude-sonnet-5", tok_in=1_000_000), 3) == 0.1)
+c.truthy("  the flat-rate mistake is recorded", "three times what it actually cost" in
+         io.open(ARC / "run.py", encoding="utf-8").read())
+
+print("\nThe day's spend accumulates per turn, and resets with the day:")
+
+
+class _Peer:
+    host = "127.0.0.1"
+
+
+class _Req:
+    headers = {}
+    client = _Peer()
+
+
+# Left behind, yesterday's spend would be measured against today's cap — and
+# once it had crossed once, ARC would refuse to answer every day after.
+run._day.update(stamp="1999-01-01", cost=run.DAILY_COST_CAP + 1.0)
+try:
+    run.check_rate(_Req())
+    rolled = True
+except Exception:
+    rolled = False
+c("  yesterday's spend does not lock out today", rolled, True)
+c("  ...because the rollover clears it", run._day["cost"], 0.0)
+run._day.update(count=0, cost=0.0)
+
 # --------------------------------------------------------------------- export
 print("\nA copy that can leave the machine:")
 ssrc = io.open(ARC / "selfheal.py", encoding="utf-8").read()
@@ -182,11 +243,15 @@ with TestClient(run.app) as client:
 print("\nThe page offers all three:")
 c.truthy("  an export button", 'id="exportBtn"' in page)
 c.truthy("  ...that posts to the route", '"/api/export"' in body)
-c.truthy("  a three-way brain switch", 'BRAINS = ["auto", "smart", "fast"]' in body)
+c.truthy("  a four-way brain switch", 'BRAINS = ["auto", "smart", "fast", "deep"]' in body)
 c.truthy("  defaulting to auto", '__brainSaved || "auto"' in body)
 c.truthy("  the readout follows what ANSWERED, not what was asked",
          "__arcLastBrain" in body)
-c.truthy("  ...and says why that matters", "a fixed label would be a lie" in body)
+c.truthy("  ...and says why that matters", "the reply wins over the setting" in body)
+# A guest who pins Opus is answered by Sonnet. Showing them OPUS-5 anyway would
+# be the one thing this readout exists to prevent.
+c.truthy("  including when the server overrules a pinned choice",
+         "guest who asks for Opus" in body)
 c.truthy("  Forget now clears every device", "on every device" in body)
 c.truthy("  memory migrates once, and only after the server confirms",
          "migrateMemory" in body and "failed request would lose" in body)

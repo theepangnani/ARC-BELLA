@@ -23,6 +23,13 @@
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
   }
   * { box-sizing: border-box; }
+  /* Same hairline scrollbar as the HUD — the browser's grey default is the
+     brightest thing on a dark page, and this is a page you glance at. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
   html, body { margin: 0; background: var(--void); color: var(--ice);
                font-family: var(--mono); -webkit-font-smoothing: antialiased; }
   body { padding: max(18px, env(safe-area-inset-top)) 18px 40px; }
@@ -149,6 +156,22 @@
       "</table>";
   }
 
+  // Turns AND money, side by side. Either one alone misleads: Opus costs five
+  // times a Haiku turn and Sonnet three times it, so a day can be mostly Haiku
+  // turns and mostly Opus money — and a table of turn counts alone would say
+  // the opposite of what happened to the bill.
+  function modelRows(models, spend) {
+    const es = Object.entries(models || {});
+    if (!es.length) return '<span class="sub">nothing yet</span>';
+    return "<table><tr><th>model</th><th>turns</th><th>cost</th></tr>" +
+      es.slice(0, 12).map(([k, v]) =>
+        "<tr><td>" + esc(k.replace("claude-", "")) + '</td><td class="n">' +
+        num(v) + '</td><td class="n">' +
+        ((spend && spend[k] !== undefined) ? money(spend[k]) : "—") +
+        "</td></tr>").join("") +
+      "</table>";
+  }
+
   async function load() {
     try {
       const r = await fetch("/api/usage?days=" + days);
@@ -162,9 +185,14 @@
       const capped = d.cap > 0 && today.cost >= d.cap;
       const nearCap = d.cap > 0 && today.cost >= d.cap * 0.8;
 
-      // What the cache saved, in money: those tokens at full input price,
-      // less the tenth they actually cost.
-      const saved = (t.tok_cache_read || 0) / 1e6 * d.prices.in * 0.9;
+      // What the cache saved, in money. The server now works this out per turn
+      // at the rate of the model that answered, which is the only way to get it
+      // right once more than one model is in play. The old estimate is kept for
+      // days recorded before that existed — they have the token counts but not
+      // the figure, and dropping them would make the past look free.
+      const saved = t.saved > 0
+        ? t.saved
+        : (t.tok_cache_read || 0) / 1e6 * d.prices.in * 0.9;
 
       $("span").textContent = t.active_days + " active day" +
         (t.active_days === 1 ? "" : "s") + " of " + days;
@@ -184,7 +212,7 @@
         "</div>" +
         "<h2>Cost per day</h2>" + chart(d.series) +
         "<h2>Tools used</h2>" + rows(t.tools, "tool") +
-        "<h2>Models</h2>" + rows(t.models, "model") +
+        "<h2>Models</h2>" + modelRows(t.models, t.spend) +
         (t.errors || t.refusals
           ? "<h2>Trouble</h2><table>" +
             "<tr><td>errors</td><td class='n'>" + num(t.errors) + "</td></tr>" +

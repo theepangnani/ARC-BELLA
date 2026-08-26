@@ -128,6 +128,39 @@ for start, src in blocks:
         else:
             c("block at line %d parses" % line_of(start), str(e), "")
 
+# The HUD is not the only page with inline JavaScript any more. Arc Watch has
+# its own, written the same way and with the same failure: a stray bracket does
+# not degrade it, it stops the whole page rendering. It was outside this suite
+# entirely, which meant the one page that exists to tell you what ARC costs had
+# nothing checking it at all.
+print("\nThe other pages that carry their own script:")
+others = sorted(p for p in (ARC / "static").glob("*.html") if p.name != HUD.name)
+checked = 0
+for path in others:
+    text = io.open(path, encoding="utf-8").read()
+    for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", text, re.S | re.I):
+        src = m.group(1)
+        if not src.strip():
+            continue
+        checked += 1
+        where = "%s line %d" % (path.name, text.count("\n", 0, m.start()) + 1)
+        try:
+            parser(src)
+            c.truthy("  %-28s parses (%d chars)" % (where, len(src)), True)
+        except Exception as e:
+            if modern_only(src, str(e)):
+                try:
+                    parser(NEUTRALISE.sub("a-zA-Z0-9", src))
+                    unconfirmed += 1
+                except Exception as e2:
+                    c("  %s parses (escapes neutralised)" % where, str(e2), "")
+            else:
+                c("  %s parses" % where, str(e), "")
+c.truthy("  and Arc Watch is one of them",
+         any(p.name == "watch.html" for p in others))
+if not checked:
+    print("  (none of them has inline script)")
+
 # Cheap structural checks the parser cannot make, because both of these are
 # valid JavaScript that happens to be wrong.
 body = blocks[0][1]

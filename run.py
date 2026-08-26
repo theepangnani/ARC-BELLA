@@ -54,12 +54,22 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 APP_VARIANT = os.getenv("ARC_APP_VARIANT", "").strip().lower()
 PRIVATE_APP = APP_VARIANT == "private"
 
-# Which brain a fresh browser starts on (the UI's Smart/Fast switch, per-device,
-# can override and remember). The private Bella defaults to Fast so it feels
-# snappy out of the box; the shared one defaults to Smart. Overridable by env.
-DEFAULT_BRAIN = (os.getenv("ARC_DEFAULT_BRAIN") or ("fast" if PRIVATE_APP else "smart")).strip().lower()
-if DEFAULT_BRAIN not in ("smart", "fast"):
-    DEFAULT_BRAIN = "smart"
+# Which brain a fresh browser starts on (the UI's switch, per-device, can
+# override and remember).
+#
+# Auto for both instances now. The private Bella used to start on Fast to feel
+# snappy out of the box, which was the right call when the only alternative was
+# paying Sonnet for "what's the time" — but Auto answers those on Haiku too and
+# still thinks properly when the question deserves it, so a blanket Fast is
+# strictly worse. Leaving it would also have quietly cancelled Auto on the one
+# instance most used by voice: the page starts on Auto and then health flips it.
+#
+# "deep" is deliberately NOT accepted here. A fresh browser landing on Opus
+# would spend five times what it needed to on "good morning", and nobody
+# choosing it would know they had.
+DEFAULT_BRAIN = (os.getenv("ARC_DEFAULT_BRAIN") or "auto").strip().lower()
+if DEFAULT_BRAIN not in ("auto", "smart", "fast"):
+    DEFAULT_BRAIN = "auto"
 
 # Tool modules read their configuration (TG_API_ID, ARC_TG_ALLOWLIST, ...)
 # from the environment at import time, so they MUST be imported after .env is
@@ -233,13 +243,22 @@ PREFER_ELEVEN = os.getenv("ARC_PREFER_ELEVEN", "").strip().lower() in ("1", "tru
 # so an unset ARC_MODEL no longer silently drops to the weaker model.
 MODEL = os.getenv("ARC_MODEL", "claude-sonnet-5")
 
-# The two brains the UI's switch offers: "smart" trades a little latency for
-# depth, "fast" the reverse. Overridable by env. resolve_model() maps whatever
+# The brains the UI's switch offers: "smart" trades a little latency for depth,
+# "fast" the reverse, "deep" gives up the voice loop's pace entirely for the
+# strongest answer available. Overridable by env. resolve_model() maps whatever
 # the client asked for to a real id, falling back to the default for anything
 # unrecognised so a bad value can never reach the API.
+#
+# DEEP IS NEVER CHOSEN AUTOMATICALLY and never offered to a guest. Opus is five
+# times Haiku's rate on both input and output — more than that per turn in
+# practice, since it thinks for longer and those tokens are billed — and the
+# same thinking means a noticeable wait before it says anything, which in a
+# spoken conversation reads as a hang. Worth it when you ask for it and a poor
+# trade when you did not. See router.py, which only ever returns smart or fast.
 MODEL_CHOICES = {
     "smart": os.getenv("ARC_MODEL_SMART", "claude-sonnet-5"),
     "fast":  os.getenv("ARC_MODEL_FAST",  "claude-haiku-4-5-20251001"),
+    "deep":  os.getenv("ARC_MODEL_DEEP",  "claude-opus-5"),
 }
 
 
@@ -279,6 +298,15 @@ MIN_CACHE_CHARS = 4000
 # How hard to think. 'low' keeps the voice loop snappy; raise to medium/high
 # only if you want more considered answers at the cost of a slower reply.
 EFFORT = os.getenv("ARC_EFFORT", "low")
+
+# The deep brain thinks harder as well as being a bigger model — asking Opus a
+# question at 'low' spends Opus money for a Sonnet-shaped answer, which is the
+# worst of both. Kept at 'high' rather than higher because ARC turns thinking
+# off for short exchanges, and on Opus 5 a disabled-thinking request is refused
+# outright above 'high'. A 400 in the middle of a spoken sentence is not worth
+# the extra depth.
+EFFORT_DEEP = os.getenv("ARC_EFFORT_DEEP", "high")
+_NO_THINK_MAX_EFFORT = ("low", "medium", "high")
 
 # Default-model effort support (per-request calls use supports_effort(model)).
 SUPPORTS_EFFORT = supports_effort(MODEL)
@@ -367,6 +395,41 @@ DAILY_CAP = int(os.getenv("ARC_DAILY_CAP", "600"))
 PRICE_IN = float(os.getenv("ARC_PRICE_IN_PER_MTOK", "3.0"))
 PRICE_OUT = float(os.getenv("ARC_PRICE_OUT_PER_MTOK", "15.0"))
 DAILY_COST_CAP = float(os.getenv("ARC_DAILY_COST_CAP", "5.0"))    # dollars; 0 = no cap
+
+# Per-model prices, $ per million tokens, input and output.
+#
+# One flat pair was honest while one model answered everything. It stopped
+# being honest the moment Auto started routing easy turns to Haiku: every one
+# of those was recorded at Sonnet's rate, three times what it actually cost.
+# The error is invisible — a plausible number is still printed — and it is the
+# number the whole paywall gets priced off, so it has to be right.
+#
+# Matched by prefix, because a real id may carry a date (haiku-4-5-20251001).
+PRICES = {
+    "claude-haiku-4-5":  (1.0, 5.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-5":   (3.0, 15.0),
+    "claude-opus-4-6":   (5.0, 25.0),
+    "claude-opus-4-7":   (5.0, 25.0),
+    "claude-opus-4-8":   (5.0, 25.0),
+    "claude-opus-5":     (5.0, 25.0),
+    "claude-fable-5":    (10.0, 50.0),
+}
+
+
+def prices_for(model) -> tuple:
+    """(input, output) $/MTok for a model id.
+
+    An unknown id falls back to the configured pair rather than to zero. A
+    model ARC has never heard of costing nothing would be the one mistake that
+    matters here: the daily cap exists to stop a runaway loop draining a card,
+    and a loop that reports $0.00 is never capped at all.
+    """
+    m = str(model or "")
+    for key in sorted(PRICES, key=len, reverse=True):
+        if m.startswith(key):
+            return PRICES[key]
+    return (PRICE_IN, PRICE_OUT)
 
 # The rate limiter keys off the client's address. X-Forwarded-For is set by a
 # real proxy â€” but anyone can send it, so trusting it unconditionally let a
@@ -855,7 +918,7 @@ async def read_json(request: Request):
 
 _hits = defaultdict(deque)
 _day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0, "tok_in": 0, "tok_out": 0,
-        "tok_cache_read": 0, "tok_cache_write": 0}
+        "tok_cache_read": 0, "tok_cache_write": 0, "cost": 0.0}
 
 # Cached tokens are input tokens at a different price. A read is a tenth of the
 # input rate, a write a quarter more than it — which is the whole reason the
@@ -867,11 +930,23 @@ CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
 
 
+def turn_cost(model, tok_in=0, tok_out=0, cache_read=0, cache_write=0) -> float:
+    """What one turn cost, at the price of the model that actually answered."""
+    p_in, p_out = prices_for(model)
+    return (tok_in / 1e6 * p_in
+            + cache_read / 1e6 * p_in * CACHE_READ_RATE
+            + cache_write / 1e6 * p_in * CACHE_WRITE_RATE
+            + tok_out / 1e6 * p_out)
+
+
 def _day_cost() -> float:
-    return (_day["tok_in"] / 1e6 * PRICE_IN
-            + _day["tok_cache_read"] / 1e6 * PRICE_IN * CACHE_READ_RATE
-            + _day["tok_cache_write"] / 1e6 * PRICE_IN * CACHE_WRITE_RATE
-            + _day["tok_out"] / 1e6 * PRICE_OUT)
+    """Today's spend, accumulated per turn rather than recomputed from totals.
+
+    Summed tokens cannot be priced after the fact once more than one model is
+    in play: a day of nine Haiku turns and one Opus turn has one token total
+    and no single rate that describes it.
+    """
+    return _day["cost"]
 _logins = defaultdict(deque)
 _last_sweep = 0.0
 
@@ -937,8 +1012,11 @@ def is_local_request(request: Request) -> bool:
 def check_rate(request: Request):
     today = time.strftime("%Y-%m-%d")
     if _day["stamp"] != today:
+        # cost resets with the counts. Left behind, yesterday's spend would
+        # still be measured against today's cap — and once it crossed, ARC
+        # would refuse to answer every day from then on.
         _day.update(stamp=today, count=0, tok_in=0, tok_out=0,
-                    tok_cache_read=0, tok_cache_write=0)
+                    tok_cache_read=0, tok_cache_write=0, cost=0.0)
     if _day["count"] >= DAILY_CAP:
         raise HTTPException(429, "Daily limit reached for this deployment. Try again tomorrow.")
     if DAILY_COST_CAP > 0 and _day_cost() >= DAILY_COST_CAP:
@@ -1283,8 +1361,10 @@ async def health(request: Request, _=Depends(require_auth)):
         # use server audio instead of the browser's robot voice.
         "elevenlabs": True,
         "model": MODEL,
-        # The two brains the UI's Smart/Fast switch can pick between, and which
-        # one a fresh browser should start on (private = fast, shared = smart).
+        # The brains the UI's switch can pick between, and which one a fresh
+        # browser should start on (private = fast, shared = smart). "deep" is
+        # listed for everyone but only honoured for the owner — the page shows
+        # what exists, the server decides who gets it.
         "models": MODEL_CHOICES,
         "default_brain": DEFAULT_BRAIN,
     }
@@ -1377,6 +1457,14 @@ async def chat(request: Request, _=Depends(require_auth)):
     brain, brain_why, auto_used = router.pick(
         payload.get("model"), messages,
         has_image=bool(payload.get("see_screen") or payload.get("image")))
+
+    # "deep" is the owner's alone. A guest asking for it is not an error worth
+    # refusing a whole turn over — they get the ordinary brain and an answer,
+    # rather than a 403 and silence. Enforced here rather than in the page,
+    # because a switch in a browser is a suggestion.
+    if brain == "deep" and tier(request) != "owner":
+        brain, brain_why = "smart", "deep is the owner's brain"
+
     model = resolve_model(brain)
 
     if not isinstance(messages, list) or not messages:
@@ -1582,7 +1670,12 @@ async def chat(request: Request, _=Depends(require_auth)):
         # send it on models that accept it — decided per-request, since the brain
         # can be switched at runtime.
         if supports_effort(model):
-            kwargs["output_config"] = {"effort": EFFORT}
+            effort = EFFORT_DEEP if brain == "deep" else EFFORT
+            # Guard the one combination that is a hard 400 rather than a
+            # degraded answer: thinking off above 'high' on Opus 5.
+            if thinking["type"] == "disabled" and effort not in _NO_THINK_MAX_EFFORT:
+                effort = "high"
+            kwargs["output_config"] = {"effort": effort}
         if tools:
             kwargs["tools"] = tools
 
@@ -1688,6 +1781,12 @@ async def chat(request: Request, _=Depends(require_auth)):
     _day["tok_out"] += tokens_out
     _day["tok_cache_read"] += cache_read
     _day["tok_cache_write"] += cache_write
+    # Priced at whatever answered, not at whatever the default is.
+    spent = turn_cost(model, tokens_in, tokens_out, cache_read, cache_write)
+    _day["cost"] += spent
+    # What the cache kept: the difference between what those tokens cost as
+    # reads and what they would have cost at the full input rate.
+    saved = cache_read / 1e6 * prices_for(model)[0] * (1 - CACHE_READ_RATE)
 
     # And to disk, for Arc Watch. _day is memory only and resets on restart, so
     # until this existed the honest answer to "what did I spend on Tuesday?"
@@ -1696,10 +1795,7 @@ async def chat(request: Request, _=Depends(require_auth)):
     stats.record(
         tok_in=tokens_in, tok_out=tokens_out,
         cache_read=cache_read, cache_write=cache_write,
-        cost=(tokens_in / 1e6 * PRICE_IN
-              + cache_read / 1e6 * PRICE_IN * CACHE_READ_RATE
-              + cache_write / 1e6 * PRICE_IN * CACHE_WRITE_RATE
-              + tokens_out / 1e6 * PRICE_OUT),
+        cost=spent, saved=saved,
         tools=used, model=model, searched=searched,
         refusal=(reply == "I can't help with that one, sir."))
 
@@ -1774,8 +1870,15 @@ async def summarize(request: Request, _=Depends(require_auth)):
         raise _claude_error(e)
 
     u = resp.usage
-    _day["tok_in"] += getattr(u, "input_tokens", 0) or 0
-    _day["tok_out"] += getattr(u, "output_tokens", 0) or 0
+    s_in = getattr(u, "input_tokens", 0) or 0
+    s_out = getattr(u, "output_tokens", 0) or 0
+    _day["tok_in"] += s_in
+    _day["tok_out"] += s_out
+    # Small, but it is real money and it is spent without anybody asking for
+    # it. Now that the day's cost is accumulated rather than derived from the
+    # token totals, a call that adds tokens and no cost is a call that spends
+    # invisibly and never counts towards the cap.
+    _day["cost"] += turn_cost(MODEL, s_in, s_out)
 
     new_note = " ".join(b.text for b in resp.content if b.type == "text").strip()[:1600]
     return JSONResponse({"note": new_note or note, "cost_today": round(_day_cost(), 4)})
@@ -2116,9 +2219,14 @@ async def usage_route(request: Request, _=Depends(require_auth)):
         "series": stats.series(days),
         "totals": stats.totals(days),
         "summary": stats.summary(min(days, 30)),
+        # The default model's rates, kept for the readout, plus the whole
+        # table — with more than one brain answering, a single pair no longer
+        # explains a day's bill on its own.
         "prices": {"in": PRICE_IN, "out": PRICE_OUT,
                    "cache_read": PRICE_IN * CACHE_READ_RATE,
-                   "cache_write": PRICE_IN * CACHE_WRITE_RATE},
+                   "cache_write": PRICE_IN * CACHE_WRITE_RATE,
+                   "per_model": {k: {"in": v[0], "out": v[1]}
+                                 for k, v in PRICES.items()}},
         "cap": DAILY_COST_CAP,
         "model": MODEL,
     })

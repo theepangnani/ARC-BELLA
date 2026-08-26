@@ -57,8 +57,9 @@ c.truthy("  and the page says so to the user", "No prompts, replies or transcrip
 print("\nIt survives a restart, which the old meter did not:")
 stats._days.clear()
 stats.record(tok_in=1000, tok_out=100, cache_read=17000, cost=0.02,
-             tools=["weather", "list_events"], model="claude-sonnet-5")
-stats.record(tok_in=500, tok_out=60, cost=0.01, tools=["weather"],
+             saved=0.0459, tools=["weather", "list_events"],
+             model="claude-sonnet-5")
+stats.record(tok_in=500, tok_out=60, cost=0.01, saved=0.0, tools=["weather"],
              model="claude-haiku-4-5", error=True)
 stats.flush()
 c.truthy("  a file is written", (DATA / "usage.json").exists())
@@ -71,6 +72,16 @@ c("  and the tools counted", back["tools"]["weather"], 2)
 c("  cached tokens kept apart from ordinary input",
   (back["tok_cache_read"], back["tok_in"]), (17000, 1500))
 c("  errors counted", back["errors"], 1)
+
+# Turns per model and money per model are different questions, and the answer
+# to one does not give you the other: an equal number of turns here, and twice
+# the money on one of them.
+c("  turns counted per model", back["models"]["claude-sonnet-5"], 1)
+c("  and money counted per model too",
+  (round(back["spend"]["claude-sonnet-5"], 4),
+   round(back["spend"]["claude-haiku-4-5"], 4)), (0.02, 0.01))
+c("  what caching saved is recorded, not reconstructed later at a flat rate",
+  round(back["saved"], 4), 0.0459)
 
 print("\nEmpty days are present, not skipped:")
 # A chart that silently drops the days ARC was off makes a fortnight look like
@@ -186,6 +197,9 @@ with TestClient(run.app) as client:
     c.truthy("  and the prices it was costed at", j["prices"]["in"] > 0)
     c("  cached input is priced at a tenth",
       round(j["prices"]["cache_read"] / j["prices"]["in"], 3), 0.1)
+    c.truthy("  and every model's own rate is published",
+             j["prices"]["per_model"]["claude-opus-5"]["in"] >
+             j["prices"]["per_model"]["claude-haiku-4-5"]["in"])
 
     print("\n  and a guest sees none of it:")
     for path in ("/watch", "/api/usage", "/api/triggers", "/api/triggers/due"):

@@ -166,20 +166,31 @@ with TestClient(run.app) as client:
     c.truthy("  it just passes it", "system=system," in loop[:2000])
 
     print("\nCached tokens are counted, and priced as what they are:")
-    run._day.update(tok_in=0, tok_out=0, tok_cache_read=0, tok_cache_write=0)
+    run._day.update(tok_in=0, tok_out=0, tok_cache_read=0, tok_cache_write=0,
+                    cost=0.0)
     ask(system="hello")
     c("  cache reads are recorded", run._day["tok_cache_read"], 17000)
     c("  and kept apart from ordinary input", run._day["tok_in"], 12)
     # 17,000 read tokens at a tenth of $3/M is $0.0051. Counted as full input
     # it would be $0.051 — ten times the truth, and DAILY_COST_CAP would cut
     # ARC off long before the money was spent.
-    cheap = run._day_cost()
-    run._day.update(tok_in=12 + 17000, tok_cache_read=0)
-    dear = run._day_cost()
+    #
+    # Asked of turn_cost rather than of the day's running total, because the
+    # day's figure is accumulated per turn now and cannot be re-derived from
+    # token counts after the fact: once more than one model answers, there is
+    # no single rate that describes a day. See PRICES in run.py.
+    M = run.MODEL_CHOICES["smart"]
+    cheap = run.turn_cost(M, tok_in=12, cache_read=17000)
+    dear = run.turn_cost(M, tok_in=12 + 17000)
     c.truthy("  a cached turn costs about a tenth of an uncached one",
              dear > cheap * 5)
     c.truthy("  and the rates are named, not inlined",
              run.CACHE_READ_RATE == 0.1 and run.CACHE_WRITE_RATE == 1.25)
+    # The turn above went through the real route, so the day's total moved by
+    # the cost of that turn and not by some figure worked out later.
+    c.truthy("  and the day's total moved by exactly that turn's cost",
+             abs(run._day["cost"]
+                 - run.turn_cost(M, tok_in=12, tok_out=5, cache_read=17000)) < 1e-9)
 
     print("\nThe ceiling now bounds the client, not ARC:")
     r, _ = ask(system="x" * (run.MAX_SYSTEM_CHARS + 1))

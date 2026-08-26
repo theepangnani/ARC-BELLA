@@ -767,6 +767,32 @@ Press the button to pin **Smart** or **Fast** and a pinned choice is never
 overruled. The readout shows which brain actually answered, because on Auto a
 fixed label would be a lie. `ARC_AUTO_MODEL=0` turns it off entirely.
 
+### Opus, when you ask for it
+
+A fourth setting, **Opus**, for a question that deserves the strongest model
+there is. It costs about five times a Haiku turn — more in practice, since it
+thinks for longer and those tokens are billed too — and takes visibly longer to
+start speaking. In a spoken conversation that pause reads as a hang rather than
+as thought, which is exactly why it is never chosen for you: Auto can only ever
+return Smart or Fast. Opus is a button you press.
+
+It is the owner's brain. A guest who asks for it is answered by Sonnet rather
+than refused, and the readout says SONNET-5 — being quietly downgraded and told
+otherwise is worse than not having it.
+
+`ARC_MODEL_DEEP` picks the model (default `claude-opus-5`) and `ARC_EFFORT_DEEP`
+how hard it thinks (default `high`).
+
+### What it costs is counted per model
+
+Each turn is priced at the rate of the model that actually answered — Haiku
+$1/$5 per million tokens, Sonnet $3/$15, Opus $5/$25 — rather than at one flat
+rate for everything. Before this, Auto's Haiku turns were recorded at Sonnet's
+price, which is **three times what they cost**, and the number looked perfectly
+reasonable while being wrong. A model ARC has never heard of falls back to the
+configured pair rather than to zero, because a runaway loop that reports $0.00
+never trips the daily cap.
+
 ## Export everything
 
 **Export everything** in the panel writes one file holding your notes, alarms,

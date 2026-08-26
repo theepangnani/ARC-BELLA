@@ -102,15 +102,23 @@ An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
 `run.py:894`). Handles `pause_turn` resumption for server-side tools and the
 `refusal` stop reason explicitly.
 
-- **Brain switch** — Smart (`claude-sonnet-5`) / Fast
-  (`claude-haiku-4-5-20251001`), switchable at runtime per device.
+- **Brain switch** — Auto (default) / Smart (`claude-sonnet-5`) / Fast
+  (`claude-haiku-4-5-20251001`) / Opus (`claude-opus-5`), switchable at runtime
+  per device. Auto routes per question (`router.py`) and can only ever return
+  Smart or Fast; Opus is owner-only and never chosen automatically. Note that
+  the switch's fourth position is labelled **Opus** and not "Deep", because the
+  thinking control below already uses that word.
 - **Thinking** — Fast / Auto / Deep, with a client-side heuristic deciding
   whether a given utterance needs it.
 - **Web search** — Anthropic's server-side `web_search` tool, max 3 uses per
   turn, toggleable.
 - **Personas** — ARC (unflappable British butler), Bella (best friend), Coach.
 - **Spend meter** — per-day token accounting surfaced live in the HUD as
-  `SPEND TODAY`, with a hard `ARC_DAILY_COST_CAP`.
+  `SPEND TODAY`, with a hard `ARC_DAILY_COST_CAP`. Each turn is priced at the
+  rate of the model that answered it (`PRICES` / `turn_cost`, `run.py`), and
+  the day's figure is accumulated per turn rather than derived from token
+  totals — with more than one model in play there is no single rate that
+  describes a day. Arc Watch breaks the spend down by model.
 
 ### 3.3 Tools (76 across 18 modules, plus one server-side)
 

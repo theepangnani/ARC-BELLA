@@ -159,6 +159,27 @@ with TestClient(run.app) as client:
     for t in ['prompt: "main"', "startAlarmPoll", "speakerFace", "lvlShown"]:
         truthy("  contains %s" % t, t in page)
 
+    # The expensive brain is the owner's. A switch in a browser is a
+    # suggestion, so the check that matters is what actually reached the API —
+    # not what the page offered or what the server said it would do.
+    print("\nThe deep brain is the owner's, and the page cannot talk its way in:")
+
+    def ask_with_brain(cookies, brain):
+        sent.clear()
+        r = client.post("/api/chat", cookies=cookies, json={
+            "system": PROMPT, "allow_actions": False, "model": brain,
+            "messages": [{"role": "user", "content": "why is my code failing"}]})
+        return r, (sent[0].get("model") if sent else None)
+
+    r, model = ask_with_brain(OWNER, "deep")
+    truthy("  the owner asking for it gets Opus", "opus" in (model or ""))
+    r, model = ask_with_brain(GUEST, "deep")
+    check("  a guest asking for it is answered, not refused", r.status_code, 200)
+    check("  ...by Sonnet", model, run.MODEL_CHOICES["smart"])
+    # And told so, rather than shown OPUS-5 over a Sonnet answer.
+    check("  ...and the reply says which brain answered",
+          (r.json() or {}).get("brain"), "smart")
+
     session.revoke_all()
 
 print("\nALL PASS" if ok else "\nFAILURES ABOVE")

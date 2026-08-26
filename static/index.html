@@ -54,6 +54,22 @@
 
   * { box-sizing: border-box; }
 
+  /* Scrollbars, everywhere, not just on the two panels that were styled by
+     hand. The browser's default is a wide light-grey slab that belongs to no
+     part of this design, and on a dark HUD it is the brightest thing on the
+     screen — the eye goes to it before it goes to anything ARC is saying.
+
+     Styled rather than hidden. A scrollbar you cannot see is a list with no
+     bottom: nothing says there is more below, and nothing says how much. Kept
+     at the same hairline width as the panels and coloured from --line, so it
+     reads as an edge of the interface rather than as furniture. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+
   html, body {
     margin: 0; padding: 0;
     background: var(--void);
@@ -230,8 +246,8 @@
     overflow-y: auto; overflow-x: hidden;
     padding-right: 3px; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
   }
-  .col::-webkit-scrollbar { width: 5px; }
-  .col::-webkit-scrollbar-thumb { background: var(--line); }
+  /* Scrollbar handled globally near the top — a .col rule here would win on
+     specificity and quietly cancel the hover state. */
   .panel > * { min-width: 0; max-width: 100%; }
   .panel input[type="range"], .panel select, .panel input[type="text"] {
     width: 100%; max-width: 100%; box-sizing: border-box;
@@ -355,6 +371,10 @@
   #modelBtn:hover { color: var(--ice); }
   #modelBtn.fast { color: var(--void); background: #ffb454; border-color: #ffb454; }
   #modelBtn.auto { color: var(--void); background: #8affd4; border-color: #8affd4; }
+  /* Deep is the expensive one. It should be obvious at a glance that it is
+     still on, the same way the auto-clicker is loud while it runs — a costly
+     setting left on by accident is the failure worth designing against. */
+  #modelBtn.deep { color: var(--void); background: #c9a2ff; border-color: #c9a2ff; }
 
   /* Night mode: a chill RGB bias-light vibe — soft pools of colour glow around
      the edges (like an RGB LED strip behind the screen) and slowly drift through
@@ -642,8 +662,7 @@
     max-height: 58vh; padding-right: 4px; scrollbar-width: thin;
     scrollbar-color: var(--line) transparent;
   }
-  .log::-webkit-scrollbar { width: 5px; }
-  .log::-webkit-scrollbar-thumb { background: var(--line); }
+  /* As with .col — the global rule covers this one too. */
 
   .entry { animation: entryin .32s cubic-bezier(.2,.7,.3,1) both; }
   @keyframes entryin {
@@ -5876,20 +5895,37 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // flag; until the first check it's undefined and we leave the readout be.
     if (!el.rModel || window.__arcBrainReady !== true) return;
     el.rModel.className = "v";
-    // On Auto, report what ANSWERED rather than what was asked for — the whole
-    // point is that it varies per turn, and a fixed label would be a lie.
-    const actual = window.__arcModel === "auto"
-      ? (window.__arcLastBrain || null) : window.__arcModel;
+    // Report what ANSWERED, not what was asked for. On Auto that changes per
+    // turn; on a pinned choice it is normally the same thing — except when the
+    // server overrules it, which it does for a guest who asks for Opus. Showing
+    // OPUS-5 to somebody who was quietly answered by Sonnet is the exact lie
+    // this readout exists to avoid, so the reply wins over the setting either
+    // way. Switching brains clears it, so the button and the readout agree
+    // again until the next answer comes back.
+    const actual = window.__arcLastBrain
+      || (window.__arcModel === "auto" ? null : window.__arcModel);
     el.rModel.textContent = actual === "fast" ? "HAIKU-4.5"
-      : actual === "smart" ? "SONNET-5" : "AUTO";
+      : actual === "smart" ? "SONNET-5"
+      : actual === "deep" ? "OPUS-5" : "AUTO";
   }
-  // Three settings, not two. Auto is the interesting one: the server picks per
-  // QUESTION rather than per person, so "what's the time" goes to Haiku and
-  // "why is my code failing" goes to Sonnet — which is what the manual switch
-  // was always asking the user to do by hand, and nobody does well. Smart and
-  // Fast still pin it, and a pinned choice is never overruled.
-  const BRAINS = ["auto", "smart", "fast"];
-  const BRAIN_LABEL = { auto: "Auto", smart: "Smart", fast: "Fast" };
+  // Four settings. Auto is the interesting one: the server picks per QUESTION
+  // rather than per person, so "what's the time" goes to Haiku and "why is my
+  // code failing" goes to Sonnet — which is what the manual switch was always
+  // asking the user to do by hand, and nobody does well. Smart and Fast still
+  // pin it, and a pinned choice is never overruled.
+  //
+  // Deep is Opus, and it is deliberately last in the cycle and never chosen by
+  // Auto. It costs about five times a Haiku turn — more once its longer
+  // thinking is counted, since those tokens are billed too — and takes visibly
+  // longer to begin speaking, which in a voice loop reads as a hang rather than
+  // as thought. Worth it when you have asked a genuinely hard question; a poor
+  // trade for "what's the weather". The server refuses it to guests.
+  const BRAINS = ["auto", "smart", "fast", "deep"];
+  // Labelled "Opus", not "Deep": the THINK readout already says DEEP when
+  // adaptive thinking was used, and two different meanings of the same word on
+  // one screen is a HUD that has to be explained. Naming the model is also the
+  // more honest label — it is the thing you are choosing.
+  const BRAIN_LABEL = { auto: "Auto", smart: "Smart", fast: "Fast", deep: "Opus" };
 
   function applyModel(announce) {
     const mode = window.__arcModel || "auto";
@@ -5897,6 +5933,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       modelBtn.textContent = "Brain: " + (BRAIN_LABEL[mode] || "Auto");
       modelBtn.classList.toggle("fast", mode === "fast");
       modelBtn.classList.toggle("auto", mode === "auto");
+      modelBtn.classList.toggle("deep", mode === "deep");
     }
     paintModelReadout();
     if (announce) {
@@ -5904,7 +5941,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         ? "Picking a brain per question now — the cheap one for simple things, the better one when it matters."
         : mode === "smart"
           ? "Switched to the smarter Sonnet brain — a little more considered."
-          : "Switched to the faster Haiku brain — snappier replies.";
+          : mode === "deep"
+            ? "Switched to Opus, sir. I'll think harder and take longer, and it costs rather more — worth it for something difficult."
+            : "Switched to the faster Haiku brain — snappier replies.";
       addEntry("sys", "SYSTEM", msg);
       if (state.booted) speak(msg);
     }
@@ -5912,6 +5951,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   if (modelBtn) modelBtn.addEventListener("click", () => {
     const i = BRAINS.indexOf(window.__arcModel);
     window.__arcModel = BRAINS[(i + 1) % BRAINS.length];
+    window.__arcLastBrain = null;   // the last answer is no longer what's set
     window.__brainUserSet = true;   // an explicit choice; stop following the server default
     try { localStorage.setItem("arc.model", window.__arcModel); } catch (_) {}
     applyModel(true);
@@ -7286,9 +7326,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       const h = await (await fetch("/api/health")).json();
       // Reachable and keyed → the brain readout may show the picked model.
       window.__arcBrainReady = !!h.claude;
-      // Adopt this instance's default brain (private → fast) until the user
-      // makes their own pick — so the private Bella feels snappy out of the box.
-      if (!window.__brainUserSet && (h.default_brain === "fast" || h.default_brain === "smart")
+      // Adopt this instance's default brain until the user makes their own
+      // pick. "auto" has to be in this list: without it the page starts on Auto
+      // and this line silently pins it to something else a second later, which
+      // reads as the setting not sticking. "deep" is never adopted — an
+      // expensive brain is a choice somebody makes, not one they arrive in.
+      if (!window.__brainUserSet
+          && ["auto", "fast", "smart"].indexOf(h.default_brain) >= 0
           && h.default_brain !== window.__arcModel) {
         window.__arcModel = h.default_brain;
         if (typeof applyModel === "function") applyModel(false);

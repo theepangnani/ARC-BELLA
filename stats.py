@@ -53,9 +53,18 @@ def _today() -> str:
 
 
 def _blank() -> dict:
+    # "spend" is money per model, alongside "models" which is turns per model.
+    # Both are needed and neither implies the other: Opus is five times Haiku's
+    # rate and Sonnet three times it, so a day can be nine tenths Haiku turns
+    # and nine tenths Opus money. Counting turns alone says the opposite.
+    #
+    # "saved" is what caching kept, worked out at record time from the rate of
+    # the model that actually answered. It used to be reconstructed afterwards
+    # at a flat $3 — which quietly credited every Haiku turn with three times
+    # the saving it earned.
     return {"turns": 0, "tok_in": 0, "tok_out": 0,
             "tok_cache_read": 0, "tok_cache_write": 0,
-            "cost": 0.0, "tools": {}, "models": {},
+            "cost": 0.0, "saved": 0.0, "tools": {}, "models": {}, "spend": {},
             "errors": 0, "refusals": 0, "searches": 0,
             "alarms": 0, "alerts": 0, "voice_chars": 0}
 
@@ -104,14 +113,21 @@ def flush():
 
 
 def day(stamp: str = "") -> dict:
+    """One day's figures, always with every field present.
+
+    A day recorded before a counter existed has no key for it, and the reader
+    should not have to know which release each field arrived in. Filling the
+    gaps from a blank record means an old day reads as a zero rather than as a
+    missing key — which is what it actually was.
+    """
     with _lock:
         _load()
-        return dict(_days.get(stamp or _today()) or _blank())
+        return {**_blank(), **(_days.get(stamp or _today()) or {})}
 
 
 def record(*, tok_in=0, tok_out=0, cache_read=0, cache_write=0, cost=0.0,
-           tools=(), model="", error=False, refusal=False, searched=False,
-           turn=True) -> None:
+           saved=0.0, tools=(), model="", error=False, refusal=False,
+           searched=False, turn=True) -> None:
     """One completed turn. Never raises — a counter must not break a reply."""
     global _dirty
     try:
@@ -126,10 +142,15 @@ def record(*, tok_in=0, tok_out=0, cache_read=0, cache_write=0, cost=0.0,
                          ("searches", 1 if searched else 0)):
                 d[k] = d.get(k, 0) + v
             d["cost"] = round(d.get("cost", 0.0) + (cost or 0.0), 6)
+            d["saved"] = round(d.get("saved", 0.0) + (saved or 0.0), 6)
             for t in tools or ():
                 d["tools"][t] = d["tools"].get(t, 0) + 1
             if model:
                 d["models"][model] = d["models"].get(model, 0) + 1
+                # setdefault, because a day recorded before this existed has
+                # no "spend" key at all and reading it back must not throw.
+                spend = d.setdefault("spend", {})
+                spend[model] = round(spend.get(model, 0.0) + (cost or 0.0), 6)
             _dirty = True
             _write()
     except Exception:
@@ -166,7 +187,11 @@ def series(days: int = 30) -> list:
     """
     with _lock:
         _load()
-        return [{"date": s, **(_days.get(s) or _blank())} for s in _range(days)]
+        # _blank() first for the same reason as day(): a row from an older
+        # release is missing whatever was added since, and a chart reading it
+        # should see a zero, not an absent key.
+        return [{"date": s, **_blank(), **(_days.get(s) or {})}
+                for s in _range(days)]
 
 
 def totals(days: int = 30) -> dict:
@@ -174,15 +199,19 @@ def totals(days: int = 30) -> dict:
     out = _blank()
     tools: Counter = Counter()
     models: Counter = Counter()
+    spend: Counter = Counter()
     for r in rows:
         for k in out:
-            if k in ("tools", "models"):
+            if k in ("tools", "models", "spend"):
                 continue
-            out[k] = round(out[k] + r.get(k, 0), 6) if k == "cost" else out[k] + r.get(k, 0)
+            out[k] = (round(out[k] + r.get(k, 0), 6) if k in ("cost", "saved")
+                      else out[k] + r.get(k, 0))
         tools.update(r.get("tools") or {})
         models.update(r.get("models") or {})
+        spend.update(r.get("spend") or {})
     out["tools"] = dict(tools.most_common())
     out["models"] = dict(models.most_common())
+    out["spend"] = {m: round(v, 6) for m, v in spend.most_common()}
     out["days"] = days
     out["active_days"] = sum(1 for r in rows if r.get("turns"))
     return out
@@ -195,13 +224,11 @@ def summary(days: int = 7) -> str:
         return ("Nothing recorded in the last %d days — either I was switched "
                 "off or nobody said anything." % days)
     span = "today" if days == 1 else "over the last %d days" % days
-    cached = t["tok_cache_read"]
     saved = ""
-    if cached:
-        # What those tokens would have cost at full input price, less what they
-        # did cost. The point of caching, in money.
-        saved = (" Caching saved about $%.2f of that."
-                 % (cached / 1e6 * 3.0 * 0.9))
+    if t.get("saved"):
+        # Worked out per turn at the answering model's own rate, not
+        # reconstructed here at one flat price. The point of caching, in money.
+        saved = " Caching saved about $%.2f of that." % t["saved"]
     top = list(t["tools"].items())[:3]
     tools = ("  Most used: "
              + ", ".join("%s (%d)" % (n, c) for n, c in top)) if top else ""
