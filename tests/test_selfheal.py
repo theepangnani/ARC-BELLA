@@ -262,8 +262,8 @@ selfheal.repair(["data"])
 
 print("\nThe tool surface behaves like every other toolkit:")
 c.truthy("  connected()", selfheal.connected())
-c("  two tools", sorted(t["name"] for t in selfheal.TOOLS),
-  ["self_check", "self_repair"])
+c("  three tools", sorted(t["name"] for t in selfheal.TOOLS),
+  ["export_everything", "self_check", "self_repair"])
 for t in selfheal.TOOLS:
     c.truthy("  %-12s has a schema" % t["name"], "input_schema" in t)
 out, failed = selfheal.run_tool("self_check", {})

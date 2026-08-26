@@ -64,14 +64,15 @@ if len(groups) == 8:
     c.truthy("  Google's status sits with its button",
              "googleBtn" in account and "googleStatus" in account)
     c.truthy("  the recovery buttons are together, at the end",
-             "micFixBtn" in fix and "reconnectBtn" in fix and "selfHealBtn" in fix)
+             "micFixBtn" in fix and "reconnectBtn" in fix and "selfHealBtn" in fix
+             and "exportBtn" in fix)
 
 print("\nSpacing is defined once, not fifteen times:")
 c.truthy("  the group is a flex column with a gap", ".cgroup {" in css and "gap: 9px" in css)
 # Per-button margins were 8px on some and 12px on others, which is what made the
 # stack look accidental.
 for rule in ["#nightBtn, #voiceGuessBtn, #learnBtn", "#personaBtn", "#modelBtn",
-             "#micFixBtn, #reconnectBtn, #selfHealBtn", "#liveScreenBtn, #watchBtn, #displayBtn",
+             "#micFixBtn, #reconnectBtn, #selfHealBtn, #exportBtn", "#liveScreenBtn, #watchBtn, #displayBtn",
              "#consentBtn", "#googleBtn"]:
     seg = css[css.index(rule + " {"):css.index(rule + " {") + 260]
     c("  %-40s carries no margin of its own" % rule, "margin-top" in seg, False)

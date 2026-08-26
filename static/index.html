@@ -354,6 +354,7 @@
   }
   #modelBtn:hover { color: var(--ice); }
   #modelBtn.fast { color: var(--void); background: #ffb454; border-color: #ffb454; }
+  #modelBtn.auto { color: var(--void); background: #8affd4; border-color: #8affd4; }
 
   /* Night mode: a chill RGB bias-light vibe — soft pools of colour glow around
      the edges (like an RGB LED strip behind the screen) and slowly drift through
@@ -373,13 +374,13 @@
   /* Slowly rotate every glow colour through the full RGB spectrum. */
   @keyframes nightRGB { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
   @keyframes nightGlow { from { opacity: .72; } to { opacity: .95; } }
-  #micFixBtn, #reconnectBtn, #selfHealBtn {
+  #micFixBtn, #reconnectBtn, #selfHealBtn, #exportBtn {
     width: 100%; font-family: var(--mono); font-size: 9.5px;
     letter-spacing: .16em; text-transform: uppercase; padding: 11px 10px; cursor: pointer;
     background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
   }
-  #micFixBtn:hover, #reconnectBtn:hover, #selfHealBtn:hover { color: var(--ice); border-color: var(--accent); }
-  #micFixBtn.working, #reconnectBtn.working, #selfHealBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
+  #micFixBtn:hover, #reconnectBtn:hover, #selfHealBtn:hover, #exportBtn:hover { color: var(--ice); border-color: var(--accent); }
+  #micFixBtn.working, #reconnectBtn.working, #selfHealBtn.working, #exportBtn.working { color: var(--void); background: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
   /* Amber once there is something to repair, so the button stops being a
      question and becomes an offer. Green when the answer was "nothing wrong". */
   #selfHealBtn.armed { color: var(--amber, #ffb020); border-color: var(--amber, #ffb020); }
@@ -1367,7 +1368,7 @@
         <div class="chead">How ARC behaves</div>
         <button id="consentBtn" title="When on, ARC never acts on its own — it asks before opening apps, typing, changing settings, playing media, running commands, or sending anything. It can always look things up. Nothing background (like watch mode) can ever act.">🔒 Ask before acting: on</button>
         <button id="personaBtn" title="Switch ARC's personality: composed butler, warm best friend, or upbeat coach">Personality: ARC</button>
-        <button id="modelBtn" title="Switch ARC's brain: Smart (Sonnet — more considered) or Fast (Haiku — snappier replies). Takes effect on your next message; saved on this device.">Brain: Smart</button>
+        <button id="modelBtn" title="Auto picks a brain per question — the cheap one for simple things, the better one when it matters. Smart and Fast pin it. Saved on this device.">Brain: Auto</button>
         <button id="learnBtn" title="Lessons. ARC teaches you step by step, shows code on screen instead of reading it aloud, and remembers where you got to so you can carry on another day. Click to cycle: off, coding, digital skills.">Teach: off</button>
         <button id="voiceGuessBtn" title="Let ARC estimate whether the speaker sounds like an adult man, an adult woman, or a child, from vocal pitch. Rough and often wrong — it never affects how you are addressed, and ARC only mentions it if you ask.">Guess speaker: off</button>
       </div>
@@ -1418,6 +1419,7 @@
         <div class="chead">If something stops working</div>
         <button id="micFixBtn" title="Re-request the microphone and rebuild voice recognition from scratch">Reconnect mic</button>
         <button id="reconnectBtn" title="Reconnect to ARC after a dropped connection — restores the neural voice, rechecks the server, and rebuilds voice input in one tap">Reconnect ARC</button>
+        <button id="exportBtn" title="Write everything — notes, alarms, reminders, rules, memory, usage — into one file you can copy off this machine. No keys or sign-ins go in it.">Export everything</button>
         <button id="selfHealBtn" title="Check ARC's own health — background loop, your notes and alarms files, backups, disk, voices. Press again to repair anything it can repair.">Check ARC</button>
         <div id="selfHealOut" class="gstatus"></div>
       </div>
@@ -1672,36 +1674,74 @@ You are an upbeat, motivating coach in the user's corner.
      every future request so ARC actually accumulates an understanding of
      the user instead of starting cold each session.
   ------------------------------------------------------ */
-  const MEM_KEY = "arc.memory.v1";
-  // ARC asked for a longer memory. 120 facts is still far below anything
-  // that would bloat the request, and covers months of use.
-  const MEM_MAX = 120;
-  let memory = [];
+  const MEM_KEY = "arc.memory.v1";      // legacy: only read, once, to migrate
+  const MEM_MAX = 200;
+  let memory = [];                     // mirror of the server's, for the counter
 
-  function loadMemory() {
+  // Memory lives on the SERVER now (memory.py), keyed by the account you signed
+  // in with. It used to live in localStorage, which meant it was not one memory
+  // at all — it was one per device. Something you told Bella at your desk, the
+  // phone had never heard of; a correction on the phone left the desktop still
+  // believing the old thing. That reads as an assistant being scatty rather
+  // than as a bug, which is what made it worth moving.
+  //
+  // The prompt block is added server-side too, so this page no longer sends
+  // what ARC knows about you — it cannot be edited in devtools, and it is the
+  // same on every device you sign in from.
+
+  async function pullMemory() {
+    try {
+      const r = await fetch("/api/memory");
+      if (!r.ok) return;
+      const d = await r.json();
+      memory = (d.facts || []).map(f => f.text);
+      if (el.rMem) el.rMem.textContent = memory.length;
+    } catch (_) {}
+  }
+
+  // Whatever this browser accumulated before the move goes up once, so nobody
+  // loses months of it. The server refuses if the account already has any,
+  // which is what keeps it to once — a second device with staler facts cannot
+  // push them back over the current ones later.
+  async function migrateMemory() {
+    let old = [];
     try {
       const raw = localStorage.getItem(MEM_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
-      // Anything could be sitting in storage — an older format, a half-written
-      // value, another tab's data. Keep only usable strings rather than
-      // trusting it and crashing on the first reply.
-      memory = Array.isArray(parsed)
-        ? parsed.filter(m => typeof m === "string" && m.trim()).map(m => m.trim().slice(0, 200)).slice(-MEM_MAX)
+      old = Array.isArray(parsed)
+        ? parsed.filter(m => typeof m === "string" && m.trim()).map(m => m.trim())
         : [];
-    } catch (_) { memory = []; }
+    } catch (_) { return; }
+    if (!old.length) return;
+    try {
+      const r = await fetch("/api/memory/import", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ facts: old }),
+      });
+      const d = await r.json();
+      // Only cleared once the server has confirmed it took them. Deleting on a
+      // failed request would lose exactly what this exists to preserve.
+      if (r.ok && (d.imported > 0 || d.why === "already has memory")) {
+        try { localStorage.removeItem(MEM_KEY); } catch (_) {}
+      }
+      if (d.imported > 0) {
+        addEntry("sys", "SYSTEM",
+          "Moved " + d.imported + " remembered thing" + (d.imported === 1 ? "" : "s") +
+          " to the server — every device now knows the same things.");
+      }
+    } catch (_) {}
   }
-  function saveMemory() {
-    try { localStorage.setItem(MEM_KEY, JSON.stringify(memory.slice(-MEM_MAX))); } catch (_) {}
-  }
-  function rememberFact(fact) {
-    const f = fact.trim().replace(/\s+/g, " ").slice(0, 200);
+
+  async function rememberFact(fact) {
+    const f = (fact || "").trim().replace(/\s+/g, " ").slice(0, 240);
     if (f.length < 3) return;
-    const key = f.toLowerCase();
-    if (memory.some(m => m.toLowerCase() === key)) return;
-    memory.push(f);
-    if (memory.length > MEM_MAX) memory = memory.slice(-MEM_MAX);
-    saveMemory();
-    el.rMem && (el.rMem.textContent = memory.length);
+    try {
+      await fetch("/api/chat/remember", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fact: f }),
+      });
+      await pullMemory();
+    } catch (_) {}
   }
 
   /* ---------------- thread continuity ----------------
@@ -2445,7 +2485,10 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
     // hashes means no comments, no backticks and no asterisks at all.
     return { text: out.replace(/[*_#`]/g, "").trim(), silent };
   }
-  loadMemory();
+  // Take over anything this browser had stored, then read what the account
+  // actually knows. Migration first, or the pull would find nothing and the
+  // counter would read zero for a user with months of memory.
+  migrateMemory().then(pullMemory);
   loadThread();
 
   /* --- how hard to think ---------------------------------------------
@@ -2704,10 +2747,11 @@ ROOM MODE IS ON — there are several people present.
 - Keep replies neutral and addressed to whoever just spoke. Avoid "as you mentioned earlier" and similar continuity claims.
 - Do not record anything to memory.` : "";
 
-    const memBlock = roomMode() ? "" : memory.length
-      ? "\n\nWHAT YOU ALREADY KNOW ABOUT THIS USER (from previous conversations — use it naturally, never recite it back):\n" +
-        memory.map(m => "- " + m).join("\n")
-      : "";
+    // No memory block here any more — the server adds it (see memory.block()),
+    // so it is the same on every device and a browser cannot invent facts about
+    // the owner by putting them in the prompt. `room` is sent instead, because
+    // whether to include it at all is still this end's call.
+    const memBlock = "";
 
     return `
 
@@ -5163,6 +5207,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         body: JSON.stringify({
           messages: pending,
           prompt: "main",
+          room: roomMode(),
           system: personaBlock() + modeBlock() + langBlock() + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + voiceBlock() + learnBlock() + altBlock(alts),
           // Only a genuine, user-approved turn may act. Background calls never set this.
           allow_actions: authorize,
@@ -5211,6 +5256,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
     state.history = pending.concat([{ role: "assistant", content: out.text || "…" }]);
     el.rSearch.textContent = data.searched ? "USED" : "IDLE";
+    // Which brain actually answered. On Auto this changes per turn, so the
+    // readout follows the reply rather than the setting.
+    if (data.brain) { window.__arcLastBrain = data.brain; paintModelReadout(); }
     if (data.thought) { el.rThink.textContent = "DEEP"; el.rThink.className = "v good"; }
     if (typeof data.cost_today === "number" && el.rCost) {
       el.rCost.textContent = "≈$" + data.cost_today.toFixed(2);
@@ -5760,6 +5808,27 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   if (reconnectBtn) reconnectBtn.addEventListener("click", reconnectArc);
   const selfHealBtn = document.getElementById("selfHealBtn");
   if (selfHealBtn) selfHealBtn.addEventListener("click", selfHeal);
+  const exportBtn = document.getElementById("exportBtn");
+  // The one failure self-repair cannot survive: the backups folder is on the
+  // same disk as the thing it protects. This makes a copy that can leave.
+  if (exportBtn) exportBtn.addEventListener("click", async () => {
+    exportBtn.classList.add("working");
+    exportBtn.textContent = "Exporting…";
+    try {
+      const r = await fetch("/api/export", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (r.status === 401) { location.reload(); return; }
+      const d = await r.json();
+      addEntry("sys", "SYSTEM", d.said || "Exported.");
+    } catch (e) {
+      addEntry("sys", "SYSTEM", "Could not export (" + e.message + ").");
+    } finally {
+      exportBtn.classList.remove("working");
+      exportBtn.textContent = "Export everything";
+    }
+  });
   const watchStatsBtn = document.getElementById("watchStatsBtn");
   // Its own tab, not a panel: this is a page you leave open on a second
   // screen and glance at, not something you open mid-conversation.
@@ -5797,7 +5866,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // Saved choice wins; otherwise start on "smart" provisionally and let the
   // server's default_brain decide once /api/health returns (private → fast).
   const __brainSaved = (() => { try { return localStorage.getItem("arc.model"); } catch (_) { return null; } })();
-  window.__arcModel = __brainSaved || "smart";
+  window.__arcModel = __brainSaved || "auto";
   window.__brainUserSet = !!__brainSaved;   // only a real user toggle locks it in
   const modelBtn = document.getElementById("modelBtn");
   function paintModelReadout() {
@@ -5807,24 +5876,42 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // flag; until the first check it's undefined and we leave the readout be.
     if (!el.rModel || window.__arcBrainReady !== true) return;
     el.rModel.className = "v";
-    el.rModel.textContent = window.__arcModel === "fast" ? "HAIKU-4.5" : "SONNET-5";
+    // On Auto, report what ANSWERED rather than what was asked for — the whole
+    // point is that it varies per turn, and a fixed label would be a lie.
+    const actual = window.__arcModel === "auto"
+      ? (window.__arcLastBrain || null) : window.__arcModel;
+    el.rModel.textContent = actual === "fast" ? "HAIKU-4.5"
+      : actual === "smart" ? "SONNET-5" : "AUTO";
   }
+  // Three settings, not two. Auto is the interesting one: the server picks per
+  // QUESTION rather than per person, so "what's the time" goes to Haiku and
+  // "why is my code failing" goes to Sonnet — which is what the manual switch
+  // was always asking the user to do by hand, and nobody does well. Smart and
+  // Fast still pin it, and a pinned choice is never overruled.
+  const BRAINS = ["auto", "smart", "fast"];
+  const BRAIN_LABEL = { auto: "Auto", smart: "Smart", fast: "Fast" };
+
   function applyModel(announce) {
-    const smart = window.__arcModel !== "fast";
+    const mode = window.__arcModel || "auto";
     if (modelBtn) {
-      modelBtn.textContent = "Brain: " + (smart ? "Smart" : "Fast");
-      modelBtn.classList.toggle("fast", !smart);
+      modelBtn.textContent = "Brain: " + (BRAIN_LABEL[mode] || "Auto");
+      modelBtn.classList.toggle("fast", mode === "fast");
+      modelBtn.classList.toggle("auto", mode === "auto");
     }
     paintModelReadout();
     if (announce) {
-      const msg = smart ? "Switched to the smarter Sonnet brain — a little more considered."
-                        : "Switched to the faster Haiku brain — snappier replies.";
+      const msg = mode === "auto"
+        ? "Picking a brain per question now — the cheap one for simple things, the better one when it matters."
+        : mode === "smart"
+          ? "Switched to the smarter Sonnet brain — a little more considered."
+          : "Switched to the faster Haiku brain — snappier replies.";
       addEntry("sys", "SYSTEM", msg);
       if (state.booted) speak(msg);
     }
   }
   if (modelBtn) modelBtn.addEventListener("click", () => {
-    window.__arcModel = window.__arcModel === "fast" ? "smart" : "fast";
+    const i = BRAINS.indexOf(window.__arcModel);
+    window.__arcModel = BRAINS[(i + 1) % BRAINS.length];
     window.__brainUserSet = true;   // an explicit choice; stop following the server default
     try { localStorage.setItem("arc.model", window.__arcModel); } catch (_) {}
     applyModel(true);
@@ -6803,12 +6890,19 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     try { localStorage.setItem(GUIDE_KEY, nowHidden ? "1" : "0"); } catch (_) {}
   });
 
-  el.forgetBtn.addEventListener("click", () => {
+  el.forgetBtn.addEventListener("click", async () => {
+    // Server-side now, so this wipes it for every device at once rather than
+    // for this browser only — which is what people always assumed it did.
+    try {
+      await fetch("/api/memory/forget", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ which: "all" }),
+      });
+    } catch (_) {}
     memory = [];
-    saveMemory();
     threadNote = ""; turnsSinceDigest = 0; saveThread();
-    el.rMem.textContent = "0";
-    addEntry("sys", "SYSTEM", "Long-term memory wiped.");
+    if (el.rMem) el.rMem.textContent = "0";
+    addEntry("sys", "SYSTEM", "Long-term memory wiped — on every device.");
   });
 
   el.sendBtn.addEventListener("click", () => {

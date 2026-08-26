@@ -266,6 +266,66 @@ def snapshot(force: bool = False) -> list:
     return made
 
 
+def export_all(path: str = "") -> str:
+    """Everything of yours, in one file, that you can put somewhere else.
+
+    The gap this closes is the one the rest of this module cannot: snapshots
+    live in backups/, which is on the same disk as the thing they protect. A
+    failed write, a corrupt file, a bad repair — all survivable. The disk dying
+    is not, and it takes the copies with it.
+
+    So: one JSON file, written wherever you say, holding every personal file
+    plus what self-repair has been doing. Copy it to a stick, a phone, a drive,
+    anywhere that is not this machine.
+
+    NO SECRETS GO IN IT, and that is what makes it safe to copy around. Not
+    .env, not credentials, not tokens, not the sign-in store — the same
+    KEEP_OUT list the snapshots honour. What comes out is your notes, alarms,
+    reminders, to-dos, price alerts, standing rules, usage record and memory:
+    the things that are yours and that nothing else can regenerate.
+    """
+    out = {"arc_export": 1, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+           "from": str(DATA_DIR), "files": {}, "repairs": history(50)}
+    skipped = []
+    for name in list(DATA_FILES) + ["memory.json"]:
+        if name in KEEP_OUT:
+            continue
+        src = DATA_DIR / name
+        if not src.exists():
+            continue
+        data, err = _read_json(src)
+        if err:
+            # A damaged file is reported rather than silently dropped: an
+            # export that quietly omits something is worse than one that says
+            # what it could not take.
+            skipped.append("%s (%s)" % (name, err))
+            continue
+        out["files"][name] = data
+
+    target = Path(path).expanduser() if (path or "").strip() else \
+        DATA_DIR / ("arc-export-%s.json" % _stamp())
+    try:
+        if target.is_dir():
+            target = target / ("arc-export-%s.json" % _stamp())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(out, ensure_ascii=False, indent=1),
+                          encoding="utf-8")
+    except Exception as e:
+        return "Could not write the export: %s" % e
+
+    n = len(out["files"])
+    size = target.stat().st_size / 1024
+    log("exported %d file%s to %s" % (n, "" if n == 1 else "s", target))
+    said = ("Exported %d file%s (%.0f KB) to %s. No keys, tokens or sign-ins "
+            "are in it, so it is safe to copy off this machine — which is the "
+            "point, because the backups folder is on the same disk as "
+            "everything it protects."
+            % (n, "" if n == 1 else "s", size, target))
+    if skipped:
+        said += " Left out, unreadable: " + ", ".join(skipped) + "."
+    return said
+
+
 def _restore(name: str):
     """Newest snapshot that parses. Returns (path, data), or (None, None).
 
@@ -843,6 +903,18 @@ def self_repair(what: str = "") -> str:
 
 
 TOOLS = [
+    {"name": "export_everything",
+     "description": (
+         "Write every personal file — notes, alarms, reminders, to-dos, price "
+         "alerts, standing rules, usage record and memory — into one JSON file "
+         "the user can copy off this machine. Use for 'back everything up', "
+         "'export my data', 'save a copy somewhere safe'. Contains NO keys, "
+         "tokens or sign-ins, so it is safe to move around. Optionally takes a "
+         "path or folder."),
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description":
+                  "Where to write it. A folder, a filename, or omitted for the data folder."}}}},
+
     {"name": "self_check",
      "description": (
          "Check ARC's own health — background loop, personal data files, backups, "
@@ -866,7 +938,8 @@ TOOLS = [
                   "sessions, logs, automation. Omit to fix whatever needs it."}}}},
 ]
 
-_DISPATCH = {"self_check": self_check, "self_repair": self_repair}
+_DISPATCH = {"self_check": self_check, "self_repair": self_repair,
+             "export_everything": export_all}
 
 
 def run_tool(name: str, args: dict) -> tuple:

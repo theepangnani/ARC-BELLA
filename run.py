@@ -89,8 +89,11 @@ import selfheal
 import prompt
 import stats
 import triggers
+import memory
+import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
-            alerts, alarm, market, automation, selfheal, stats, triggers)
+            alerts, alarm, market, automation, selfheal, stats, triggers,
+            memory)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -193,6 +196,9 @@ PASSIVE_TOOLS = {
     # Reading your own usage record, and reading back the standing rules,
     # change nothing. Setting or clearing a rule does, so those stay gated.
     "usage_report", "list_triggers",
+    # Reading back what ARC knows about you changes nothing. Forgetting
+    # something DOES, and is irreversible, so it stays gated.
+    "list_memory",
 }
 # Master switch. On by default: ARC will not act without the user's say-so. Set
 # ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).
@@ -791,6 +797,25 @@ def apply_session_google(request: Request):
     return sid
 
 
+def apply_session_memory(request: Request) -> str:
+    """Point memory at whoever is signed in, for the length of this request.
+
+    Same shape as apply_session_google above, and for the same reason: the
+    alternative is threading an address through every call site, including the
+    tool dispatcher, which would eventually be forgotten somewhere — and the
+    thing that leaks is one person's memory into another's conversation.
+
+    A guest gets their own, which is the point. Their memory is theirs, and the
+    owner's is not a window they can see through.
+    """
+    who = "owner"
+    if AUTH_MODE != "open":
+        rec = current_session(request) or {}
+        who = (rec.get("email") or "").strip().lower() or "owner"
+    memory.use(who)
+    return who
+
+
 def public_base_url(request: Request) -> str:
     """The externally-visible origin of this request, for the OAuth redirect_uri.
 
@@ -1341,9 +1366,18 @@ async def chat(request: Request, _=Depends(require_auth)):
     # background/automated calls (e.g. watch-mode glances) never set it, so they
     # can never act. See PASSIVE_TOOLS / _is_acting.
     allow_actions = bool(payload.get("allow_actions"))
-    # Which brain this turn runs on — the UI's Smart/Fast switch sends "smart" or
-    # "fast"; anything unrecognised falls back to the server default.
-    model = resolve_model(payload.get("model"))
+    # Which brain this turn runs on. The UI's switch sends "smart", "fast" or
+    # "auto"; anything unrecognised falls back to the server default.
+    #
+    # On "auto" the router picks per QUESTION rather than per person — the time
+    # and "stop" go to Haiku, anything with reasoning in it goes to Sonnet. It
+    # is biased towards the expensive one on purpose: a hard question answered
+    # cheaply is a bad answer, an easy question answered expensively costs a
+    # fraction of a penny, and those are not comparable. See router.py.
+    brain, brain_why, auto_used = router.pick(
+        payload.get("model"), messages,
+        has_image=bool(payload.get("see_screen") or payload.get("image")))
+    model = resolve_model(brain)
 
     if not isinstance(messages, list) or not messages:
         raise HTTPException(400, "No messages supplied.")
@@ -1392,6 +1426,7 @@ async def chat(request: Request, _=Depends(require_auth)):
     # together instead of three that could drift apart.
     local = is_local_request(request) and not guest
     apply_session_google(request)   # use THIS signed-in user's own Google account
+    apply_session_memory(request)   # ...and THIS user's own memory
     tools = all_tools(local, guest)
     if guest:
         # The personality prompt arrives from the client and describes the full
@@ -1420,6 +1455,20 @@ async def chat(request: Request, _=Depends(require_auth)):
             alarm_line = ""
         if alarm_line:
             extra += "\n\n" + alarm_line
+
+    # What ARC knows about this person, added HERE rather than sent up by the
+    # browser. Two things follow from that. It is the same memory whichever
+    # device you are on — it used to be localStorage, so the phone and the
+    # desktop each remembered different things and neither knew it. And a
+    # client cannot invent facts about the owner by putting them in the prompt.
+    #
+    # Room mode is the exception: with several people in earshot ARC cannot
+    # tell who is speaking, so nothing personal goes in and nothing comes out.
+    if not payload.get("room") and not payload.get("no_tools"):
+        try:
+            extra += memory.block()
+        except Exception:
+            pass
 
     # A passive glance (watch mode) just looks and reports — it must not click,
     # type, or otherwise act on the machine. no_tools strips the toolset for it.
@@ -1625,6 +1674,10 @@ async def chat(request: Request, _=Depends(require_auth)):
     else:
         reply = reply or "That turned into more steps than I could finish, sir."
 
+    # Say which brain answered and why. An automatic choice that leaves no
+    # trace is one nobody can check, and this one is spending money.
+    if auto_used:
+        print(f"{C_DIM}  · auto: {brain} — {brain_why}{C_OFF}")
     print(
         f"{C_DIM}  â€º {tokens_in} in / {tokens_out} out"
         f"{'  [searched]' if searched else ''}"
@@ -1654,6 +1707,9 @@ async def chat(request: Request, _=Depends(require_auth)):
         "reply": reply,
         "searched": searched,
         "thought": thinking["type"] == "adaptive",
+        "brain": brain,
+        "auto": auto_used,
+        "why": brain_why,
         "tools": used,
         "blocked": blocked_actions,   # actions ARC wanted but that need the user's ok
         "cost_today": round(_day_cost(), 4),
@@ -1995,6 +2051,61 @@ async def automation_click_route(request: Request, _=Depends(require_auth)):
         rate=payload.get("rate", 5), seconds=payload.get("seconds", 120))})
 
 
+@app.post("/api/chat/remember")
+async def memory_remember(request: Request, _=Depends(require_auth)):
+    """Store one fact ARC asked to keep, via the [[remember: …]] directive.
+
+    A route rather than a tool because the model emits the directive at the end
+    of an ordinary reply — it is not deciding to call something, it is finishing
+    a sentence — and the client strips it before speaking either way.
+    """
+    apply_session_memory(request)
+    payload = await read_json(request)
+    return JSONResponse({"said": memory.remember(payload.get("fact") or ""),
+                         "count": memory.count()})
+
+
+@app.get("/api/memory")
+async def memory_list(request: Request, _=Depends(require_auth)):
+    """What ARC knows about whoever is asking — never about anyone else."""
+    apply_session_memory(request)
+    return JSONResponse({"facts": memory.facts(), "count": memory.count(),
+                         "max": memory.MAX_FACTS})
+
+
+@app.post("/api/memory/forget")
+async def memory_forget(request: Request, _=Depends(require_auth)):
+    apply_session_memory(request)
+    payload = await read_json(request)
+    return JSONResponse({"said": memory.forget(payload.get("which") or "")})
+
+
+@app.post("/api/memory/import")
+async def memory_import(request: Request, _=Depends(require_auth)):
+    """Take over what a browser had in localStorage — once, ever.
+
+    Memory used to live in the browser, so an established user has months of it
+    sitting in one device's storage. Moving the store without this would look
+    exactly like ARC forgetting everything about them.
+
+    Refused once this account has any memory at all, which is what makes it
+    once: a second device with older, staler facts cannot come along later and
+    push them back in on top of the current ones.
+    """
+    apply_session_memory(request)
+    if memory.count():
+        return JSONResponse({"imported": 0, "why": "already has memory"})
+    payload = await read_json(request)
+    items = payload.get("facts") or []
+    if not isinstance(items, list):
+        raise HTTPException(400, "facts must be a list.")
+    n = memory.import_facts(items[:memory.MAX_FACTS])
+    if n:
+        print(f"{C_DIM}  · took over {n} remembered fact"
+              f"{'s' if n != 1 else ''} from a browser{C_OFF}")
+    return JSONResponse({"imported": n})
+
+
 @app.get("/api/usage")
 async def usage_route(request: Request, _=Depends(require_auth)):
     """Everything Arc Watch draws. Figures only — never conversations."""
@@ -2037,6 +2148,19 @@ async def arc_watch(request: Request, _=Depends(require_auth)):
     """
     deny_guest(request)
     return FileResponse(ROOT / "static" / "watch.html")
+
+
+@app.post("/api/export")
+async def export_route(request: Request, _=Depends(require_auth)):
+    """Write everything of the owner's into one portable file.
+
+    Guests are refused: this exports the owner's notes, alarms and memory, and
+    a visitor writing a copy of all of it to disk is not a thing to allow.
+    """
+    deny_guest(request)
+    payload = await request.json() if await request.body() else {}
+    said = await asyncio.to_thread(selfheal.export_all, payload.get("path") or "")
+    return JSONResponse({"said": said})
 
 
 @app.get("/api/selfcheck")
