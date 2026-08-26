@@ -4166,6 +4166,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // the moment you most want to ask "what is wrong with you" is the moment the
   // model may be exactly what is wrong — no credit, bad key, provider down.
   let healArmed = null;
+  let healBusy = false;
 
   function healLine(parent, text, cls) {
     const d = document.createElement("div");
@@ -4191,15 +4192,27 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const btn = document.getElementById("selfHealBtn");
     const box = document.getElementById("selfHealOut");
     if (!btn || !box) return;
+    // One at a time. Without this a second press mid-request starts another,
+    // and the two replies can land in either order — so the panel ends up
+    // showing the older answer, which here means showing a fault as still
+    // present after it was repaired.
+    if (healBusy) return;
+    healBusy = true;
     const repairing = btn.classList.contains("armed") && healArmed;
+    const asked = healArmed;
     btn.classList.remove("armed", "well");
     btn.classList.add("working");
     btn.textContent = repairing ? "Repairing…" : "Checking…";
     try {
       const r = repairing
+        // Named, not blank. Sending nothing asks the server to work out for
+        // itself what needs fixing, which is a second opinion taken after the
+        // user read the first — so it could repair something that appeared in
+        // between and was never on screen. The promise is that the second
+        // press does what the first press printed, so it names exactly those.
         ? await fetch("/api/selfrepair", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}) })
+            body: JSON.stringify({ what: asked.join(",") }) })
         : await fetch("/api/selfcheck");
       if (r.status === 401) { location.reload(); return; }
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -4233,6 +4246,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       btn.textContent = "Check ARC";
     } finally {
       btn.classList.remove("working");
+      healBusy = false;
     }
   }
 

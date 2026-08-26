@@ -214,6 +214,32 @@ c.truthy("  a present key is not called working", "only an actual request can sa
 c.truthy("  a missing library is reported, never installed",
          "pip install" in src and "No auto-install" in src)
 
+print("\nOne broken probe does not take the health report with it:")
+# The whole point of a health check is to answer when things are going wrong,
+# which is exactly when a probe is most likely to throw. Letting one failure
+# end the report turns "what is wrong with you" into a 500 and no answer at
+# all, rather than the nine findings that were perfectly readable.
+def _boom():
+    raise OSError("disk probe exploded")
+_boom.__name__ = "_check_disk"
+real = selfheal.CHECKS
+selfheal.CHECKS = tuple(_boom if f is selfheal._check_disk else f for f in real)
+try:
+    out = selfheal.check()
+    c.truthy("  the other checks still run", len(out) >= 8)
+    own = [f for f in out if f["id"] == "check"]
+    c("  the failure is reported as a finding of its own", len(own), 1)
+    c.truthy("  naming which probe it was", "_check_disk" in own[0]["detail"])
+    c.truthy("  and saying the rest survived", "still ran" in own[0]["detail"])
+    c("  it offers no repair, because a broken probe is not a broken ARC",
+      own[0]["fix"], "")
+finally:
+    selfheal.CHECKS = real
+c.truthy("  a probe returning nothing is simply skipped",
+         selfheal._probe(lambda: None) == [])
+c.truthy("  and the reason it is isolated is on record",
+         "take the others with it" in src)
+
 print("\nThe spoken report is a sentence, not a table:")
 selfheal.beat()
 words = selfheal.describe()
@@ -268,7 +294,18 @@ c.truthy("  ...and why boot is the right moment", "nothing is halfway through a 
 c.truthy("  there are routes for it",
          '@app.get("/api/selfcheck")' in run_src and '@app.post("/api/selfrepair")' in run_src)
 c.truthy("  guests are refused at the route too",
-         run_src.split('@app.get("/api/selfcheck")')[1][:900].count("deny_guest") == 1)
+         run_src.split('@app.get("/api/selfcheck")')[1][:1200].count("deny_guest") == 1)
+# Both routes ask about Google, and Google is per-session. Without this the
+# report describes whichever account the process last touched.
+for route in ('@app.get("/api/selfcheck")', '@app.post("/api/selfrepair")'):
+    c.truthy("  %s points Google at this browser" % route.split('"')[1],
+             "apply_session_google(request)" in run_src.split(route)[1][:1200])
+# Refetching the voice list waits up to twenty seconds on a dead network.
+# Inline, that is twenty seconds in which the server serves nobody at all.
+for route in ('@app.get("/api/selfcheck")', '@app.post("/api/selfrepair")'):
+    c.truthy("  %s does not block the event loop" % route.split('"')[1],
+             "asyncio.to_thread" in run_src.split(route)[1][:1400])
+c.truthy("  ...and the reason is recorded", "A repair must not become an" in run_src)
 # The whole reason for a route rather than only a tool.
 c.truthy("  and a route exists because the model may BE the fault",
          "exactly what is wrong" in body)
@@ -282,6 +319,16 @@ c.truthy("  findings are rendered as text, never as HTML",
          "d.textContent = text;" in body and "never innerHTML" in body)
 c.truthy("  an expired session sends you to sign in rather than failing oddly",
          "r.status === 401" in body)
+# The button promises the second press does what the first press printed. A
+# blank POST asks the server to decide again, which is a different promise:
+# anything that appeared between the two presses would be repaired unseen.
+c.truthy("  the repair names what was shown, rather than posting a blank",
+         "what: asked.join" in body)
+c.truthy("  ...and that reasoning is recorded", "never on screen" in body)
+# Two in flight can land in either order, and the older reply would paint a
+# fault back onto the panel after it had been fixed.
+c.truthy("  a second press mid-request is ignored", "if (healBusy) return;" in body)
+c.truthy("  ...and the flag is always cleared", "healBusy = false;" in body)
 c.truthy("  the model is told to check before it offers a restart",
          "YOU CAN CHECK AND REPAIR YOURSELF" in page)
 c.truthy("  ...and told what it must not claim to fix",
@@ -304,5 +351,66 @@ c.truthy("  the voice check never goes to the network",
          src.split("def _check_voices")[1].split("def ")[0])
 c.truthy("  ...and voices.py offers a way to ask without fetching",
          "def loaded(" in io.open(ARC / "voices.py", encoding="utf-8").read())
+
+print("\nAnd all of that through the real app, over HTTP:")
+# Everything above proves the functions. This proves the WIRING — that the
+# owner's actual request reaches the repair and the guest's identical one does
+# not. They are different claims, and only this one is about what ships.
+write(NOTES, [{"text": "buy milk"}, {"text": "ring mum"}])
+from starlette.testclient import TestClient   # noqa: E402
+import run                                    # noqa: E402
+import session                                # noqa: E402
+
+with TestClient(run.app) as client:           # the context manager runs lifespan
+    OWNER = {run.COOKIE: session.create("owner@example.com", "t")}
+    GUEST = {run.COOKIE: session.create("guest@example.com", "t")}
+
+    c.truthy("  boot took a copy before serving anything",
+             any("startup: backed up" in l for l in selfheal.history(50)))
+    c.truthy("  the loop is beating in the real app", selfheal.beat_age() >= 0)
+
+    r = client.get("/api/selfcheck", cookies=OWNER)
+    c("  the owner gets a report", r.status_code, 200)
+    c("  with nothing broken on a healthy install", r.json()["broken"], 0)
+    c.truthy("  and a spoken summary", len(r.json()["summary"]) > 20)
+
+    c("  a guest cannot look", client.get("/api/selfcheck", cookies=GUEST).status_code, 403)
+    c("  a guest certainly cannot repair",
+      client.post("/api/selfrepair", json={}, cookies=GUEST).status_code, 403)
+    c("  and neither can a stranger", client.get("/api/selfcheck").status_code, 401)
+
+    NOTES.write_text('[{"text": "buy mi', encoding="utf-8")     # the power cut again
+    j = client.get("/api/selfcheck", cookies=OWNER).json()
+    c("  damage shows up over HTTP",
+      [f["what"] for f in j["findings"] if f["level"] == "broken"],
+      ["Your notes file is damaged"])
+    c("  and is offered as fixable", j["fixable"], ["data"])
+
+    r = client.post("/api/selfrepair", json={"what": "data"}, cookies=OWNER)
+    c("  the repair goes through", r.status_code, 200)
+    c.truthy("  it says what it did", "restored your notes" in " ".join(r.json()["done"]))
+    c("  the notes are actually back",
+      json.loads(NOTES.read_text(encoding="utf-8")),
+      [{"text": "buy milk"}, {"text": "ring mum"}])
+    c("  and nothing is left broken", r.json()["still_broken"], [])
+
+    # What the button actually sends: the ids it printed, comma-joined.
+    NOTES.write_text("wrecked again", encoding="utf-8")
+    r = client.post("/api/selfrepair", json={"what": "data,backups"}, cookies=OWNER)
+    c("  a comma-joined list is understood", r.status_code, 200)
+    c.truthy("  and both named repairs ran",
+             any("restored your notes" in l for l in r.json()["done"]))
+    c("  the notes are back again",
+      json.loads(NOTES.read_text(encoding="utf-8")),
+      [{"text": "buy milk"}, {"text": "ring mum"}])
+
+    # A name that matches no repair must change nothing at all, rather than
+    # falling through to "repair everything".
+    before = NOTES.read_text(encoding="utf-8")
+    r = client.post("/api/selfrepair", json={"what": "reinstall windows"}, cookies=OWNER)
+    c("  an unrecognised name repairs nothing", r.json()["done"], [])
+    c("  and touches nothing", NOTES.read_text(encoding="utf-8"), before)
+
+    session.revoke_all()
 
 c.done()

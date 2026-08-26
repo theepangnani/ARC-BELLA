@@ -491,17 +491,42 @@ def _check_deps():
     return out
 
 
+def _probe(fn):
+    """Run one check without letting it take the others with it.
+
+    Every probe here touches something that can fail for reasons of its own —
+    a disk that answers slowly, a file deleted between the glob and the stat, a
+    module that raises on import. Letting one of those end the whole report is
+    precisely the failure this module exists to prevent: the health check dies,
+    the page gets a 500, and the answer to "what is wrong with you" becomes
+    nothing at all rather than the nine things that were perfectly readable.
+
+    So a probe that throws becomes a finding about itself, and the rest run.
+    """
+    try:
+        out = fn()
+    except Exception as e:
+        return [_f("check", "warn", "One of my own checks failed",
+                   "%s raised %s: %s. Everything else below still ran."
+                   % (getattr(fn, "__name__", "a check"), type(e).__name__,
+                      str(e)[:120]))]
+    if out is None:
+        return []
+    return out if isinstance(out, list) else [out]
+
+
+CHECKS = (_check_writable, _check_data, _check_heartbeat, _check_backups,
+          _check_disk, _check_logs, _check_automation, _check_sessions,
+          _check_voices, _check_claude, _check_google, _check_deps)
+
+
 def check(deep: bool = False) -> list:
     """Everything, worst first. Cheap enough to sit behind a button."""
-    found = [_check_writable()]
-    found += _check_data()
-    found += [_check_heartbeat(), _check_backups(), _check_disk(),
-              _check_logs(), _check_automation(), _check_sessions(),
-              _check_voices(), _check_claude()]
-    found += _check_google()
-    found += _check_deps()
+    found = []
+    for fn in CHECKS:
+        found += _probe(fn)
     order = {"broken": 0, "warn": 1, "ok": 2}
-    return sorted([f for f in found if f], key=lambda f: order.get(f["level"], 3))
+    return sorted(found, key=lambda f: order.get(f["level"], 3))
 
 
 # --- repairs ----------------------------------------------------------------

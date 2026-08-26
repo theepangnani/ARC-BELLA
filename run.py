@@ -1871,7 +1871,12 @@ async def selfcheck_route(request: Request, _=Depends(require_auth)):
     button that works when the brain does not is worth more here than tidiness.
     """
     deny_guest(request)
-    findings = selfheal.check()
+    # Point Google at THIS browser's token before asking whether Google is
+    # connected, the same as /api/health. Without it the report describes
+    # whichever account the process last touched, and the one person it would
+    # mislead is a signed-in guest being told their own mail is fine.
+    apply_session_google(request)
+    findings = await asyncio.to_thread(selfheal.check)
     return JSONResponse({
         "findings": findings,
         "summary": selfheal.describe(findings),
@@ -1891,12 +1896,23 @@ async def selfrepair_route(request: Request, _=Depends(require_auth)):
     none of that is a visitor's to decide.
     """
     deny_guest(request)
+    apply_session_google(request)
     payload = await request.json() if await request.body() else {}
     want = payload.get("what") or ""
     ids = [k for k in selfheal.REPAIRS if k in want.lower()] if want.strip() else None
-    findings = selfheal.check()
-    done = selfheal.repair(ids, findings=findings)
-    after = selfheal.check()
+
+    # In a worker thread, because one of these repairs is not quick: refetching
+    # the voice catalogue waits up to twenty seconds on a network that may not
+    # answer. Run inline, that is twenty seconds during which the server cannot
+    # serve anybody — including the alarm poll. A repair must not become an
+    # outage. Safe to move off the loop now that restart_monitor schedules its
+    # task rather than creating one wherever it happens to be called.
+    def work():
+        findings = selfheal.check()
+        done = selfheal.repair(ids, findings=findings)
+        return done, selfheal.check()
+
+    done, after = await asyncio.to_thread(work)
     return JSONResponse({
         "done": done,
         "findings": after,

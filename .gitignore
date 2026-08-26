@@ -64,3 +64,6 @@ repairs.log
 
 # Cached voice catalogue (refetched weekly)
 voices.json
+
+# Transient probe from the self-check ("can I still write here?")
+.write-probe
