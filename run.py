@@ -324,10 +324,14 @@ EFFORT = os.getenv("ARC_EFFORT", "low")
 
 # The deep brain thinks harder as well as being a bigger model — asking Opus a
 # question at 'low' spends Opus money for a Sonnet-shaped answer, which is the
-# worst of both. Kept at 'high' rather than higher because ARC turns thinking
-# off for short exchanges, and on Opus 5 a disabled-thinking request is refused
-# outright above 'high'. A 400 in the middle of a spoken sentence is not worth
-# the extra depth.
+# worst of both.
+#
+# 'high' is now a CHOICE rather than a ceiling. It used to be the highest value
+# that could not 400: ARC sent Opus thinking-off, and thinking-off above 'high'
+# is refused outright. thinking_for() ended that, so 'xhigh' and 'max' are both
+# reachable here. They are not the default because this answers out loud and
+# every extra second of thought is a second of silence after the question — set
+# ARC_EFFORT_DEEP if you would rather wait and get the better answer.
 EFFORT_DEEP = os.getenv("ARC_EFFORT_DEEP", "high")
 _NO_THINK_MAX_EFFORT = ("low", "medium", "high")
 
@@ -428,10 +432,19 @@ DAILY_COST_CAP = float(os.getenv("ARC_DAILY_COST_CAP", "5.0"))    # dollars; 0 =
 # number the whole paywall gets priced off, so it has to be right.
 #
 # Matched by prefix, because a real id may carry a date (haiku-4-5-20251001).
+#
+# SONNET 5 IS $2/$10, NOT $3/$15. It launched at $2/$10 described as
+# introductory pricing "through August 31, 2026", so this table was written
+# against the $3/$15 it was going to revert to. That reversion was cancelled and
+# $2/$10 is simply the price. Sonnet is the default brain and answers most of
+# what Auto does not send to Haiku, so getting it wrong overstated the bill by
+# half on the majority of turns — the same shape of error as the flat rate this
+# table replaced, arriving as a stale constant instead of a missing one.
+# Checked against platform.claude.com/docs/en/about-claude/pricing, 2026-08-26.
 PRICES = {
     "claude-haiku-4-5":  (1.0, 5.0),
     "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-sonnet-5":   (3.0, 15.0),
+    "claude-sonnet-5":   (2.0, 10.0),
     "claude-opus-4-6":   (5.0, 25.0),
     "claude-opus-4-7":   (5.0, 25.0),
     "claude-opus-4-8":   (5.0, 25.0),
@@ -953,13 +966,22 @@ CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
 
 
-def turn_cost(model, tok_in=0, tok_out=0, cache_read=0, cache_write=0) -> float:
+# Web search is billed per search, not per token: $10 per thousand. It is the
+# one line on the bill that does not scale with the model, which means it is
+# also the one a cheap-brain turn cannot dilute — three searches on Haiku cost
+# more than the Haiku did.
+SEARCH_COST = float(os.getenv("ARC_SEARCH_COST", "0.01"))
+
+
+def turn_cost(model, tok_in=0, tok_out=0, cache_read=0, cache_write=0,
+              searches=0) -> float:
     """What one turn cost, at the price of the model that actually answered."""
     p_in, p_out = prices_for(model)
     return (tok_in / 1e6 * p_in
             + cache_read / 1e6 * p_in * CACHE_READ_RATE
             + cache_write / 1e6 * p_in * CACHE_WRITE_RATE
-            + tok_out / 1e6 * p_out)
+            + tok_out / 1e6 * p_out
+            + searches * SEARCH_COST)
 
 
 def _day_cost() -> float:
@@ -1681,6 +1703,13 @@ async def chat(request: Request, _=Depends(require_auth)):
     blocked_actions: list[str] = []
     tokens_in = tokens_out = 0
     cache_read = cache_write = 0
+    # Web search is billed per SEARCH as well as per token — $10 per thousand,
+    # so a penny each, up to three in a turn. That is more than an entire Haiku
+    # turn costs, and none of it was being counted: "what's the weather" was
+    # recorded at a tenth of what it really came to. Tokens are not the only
+    # thing on the bill and a meter that only knows about tokens is wrong by a
+    # margin that grows with exactly the turns Auto sends to the cheap brain.
+    searches = 0
     reply = ""
     claude = request.app.state.claude
 
@@ -1727,6 +1756,8 @@ async def chat(request: Request, _=Depends(require_auth)):
         # cap early — a spend meter that lies is worse than no spend meter.
         cache_read += getattr(u, "cache_read_input_tokens", 0) or 0
         cache_write += getattr(u, "cache_creation_input_tokens", 0) or 0
+        stu = getattr(u, "server_tool_use", None)
+        searches += getattr(stu, "web_search_requests", 0) or 0 if stu else 0
 
         # Safety classifiers can decline. That arrives as a normal 200 with an
         # empty or partial body, so it has to be checked before reading content.
@@ -1811,7 +1842,8 @@ async def chat(request: Request, _=Depends(require_auth)):
     _day["tok_cache_read"] += cache_read
     _day["tok_cache_write"] += cache_write
     # Priced at whatever answered, not at whatever the default is.
-    spent = turn_cost(model, tokens_in, tokens_out, cache_read, cache_write)
+    spent = turn_cost(model, tokens_in, tokens_out, cache_read, cache_write,
+                      searches)
     _day["cost"] += spent
     # What the cache kept: the difference between what those tokens cost as
     # reads and what they would have cost at the full input rate.
@@ -1884,12 +1916,21 @@ async def summarize(request: Request, _=Depends(require_auth)):
 
     claude = request.app.state.claude
     try:
+        # Same rule as the chat route, and for the same reason — this one is
+        # hardcoded to MODEL, so setting ARC_MODEL to an Opus id would otherwise
+        # quietly reintroduce the leak here after it had been closed there. It
+        # matters more in this route than in that one: what comes back is not
+        # spoken and forgotten, it is WRITTEN DOWN and read again every session.
+        think = thinking_for(MODEL, False)
         resp = await claude.messages.create(
             model=MODEL,
-            max_tokens=500,
+            # Thinking is spent from the same ceiling as the note itself, so 500
+            # would be swallowed whole and the note would come back truncated or
+            # empty — and an empty note overwrites a good one.
+            max_tokens=500 if think["type"] == "disabled" else 4000,
             system=sys_prompt,
             messages=[{"role": "user", "content": user_msg}],
-            thinking={"type": "disabled"},
+            thinking=think,
         )
     except anthropic.APIConnectionError as e:
         raise HTTPException(502, f"Could not reach the Anthropic API: {e}")

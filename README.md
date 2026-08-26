@@ -781,17 +781,30 @@ than refused, and the readout says SONNET-5 — being quietly downgraded and tol
 otherwise is worse than not having it.
 
 `ARC_MODEL_DEEP` picks the model (default `claude-opus-5`) and `ARC_EFFORT_DEEP`
-how hard it thinks (default `high`).
+how hard it thinks (default `high`, and `xhigh` and `max` both work).
+
+Opus always reasons, whatever the THINKING switch says. Everywhere else that
+switch means what it says — thinking is the slowest part of a spoken reply, so
+it is off unless you ask. Opus 5 is the exception: with reasoning disabled it
+sometimes writes a tool call into its ordinary reply text instead of calling the
+tool, which does not error and which ARC would read out loud. Depth is set with
+effort there instead.
 
 ### What it costs is counted per model
 
 Each turn is priced at the rate of the model that actually answered — Haiku
-$1/$5 per million tokens, Sonnet $3/$15, Opus $5/$25 — rather than at one flat
+$1/$5 per million tokens, Sonnet $2/$10, Opus $5/$25 — rather than at one flat
 rate for everything. Before this, Auto's Haiku turns were recorded at Sonnet's
 price, which is **three times what they cost**, and the number looked perfectly
 reasonable while being wrong. A model ARC has never heard of falls back to the
 configured pair rather than to zero, because a runaway loop that reports $0.00
 never trips the daily cap.
+
+Web searches are counted too, at a penny each ($10 per thousand, up to three in
+a turn). They are the one charge that does not shrink when Auto picks the cheap
+brain — three searches cost more than the Haiku turn that made them — so a meter
+that counted only tokens was most wrong about exactly the turns Auto handles
+most: "what's the weather".
 
 ## Export everything
 

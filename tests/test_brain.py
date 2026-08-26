@@ -141,7 +141,13 @@ c.truthy("  and the reason is written down", "NEVER CHOSEN AUTOMATICALLY" in
 # ---------------------------------------------------------------- what it costs
 print("\nEach model is costed at its own price, not at the default's:")
 c("  haiku, with its date suffix", run.prices_for("claude-haiku-4-5-20251001"), (1.0, 5.0))
-c("  sonnet 5", run.prices_for("claude-sonnet-5"), (3.0, 15.0))
+# $2/$10, not $3/$15. The launch price was called introductory "through
+# August 31, 2026" and this table was written against the reversion; the
+# reversion was cancelled and $2/$10 is the price. Sonnet answers most of what
+# Auto does not send to Haiku, so the stale constant overstated the bill by half
+# on the majority of turns.
+c("  sonnet 5, at the price it is and not the one it was going to be",
+  run.prices_for("claude-sonnet-5"), (2.0, 10.0))
 c("  opus 5", run.prices_for("claude-opus-5"), (5.0, 25.0))
 c("  and opus 4.8 is not read as opus 5", run.prices_for("claude-opus-4-8"), (5.0, 25.0))
 # A model ARC has never heard of must not be free. The daily cap is what stops
@@ -154,13 +160,33 @@ c("  ...and to nothing at all for a missing one", run.prices_for(None),
 haiku = run.turn_cost("claude-haiku-4-5-20251001", tok_in=10000, tok_out=1000)
 sonnet = run.turn_cost("claude-sonnet-5", tok_in=10000, tok_out=1000)
 opus = run.turn_cost("claude-opus-5", tok_in=10000, tok_out=1000)
-c("  the same turn costs 3x more on sonnet than haiku", round(sonnet / haiku, 2), 3.0)
+c("  the same turn costs 2x more on sonnet than haiku", round(sonnet / haiku, 2), 2.0)
 c("  and 5x more on opus", round(opus / haiku, 2), 5.0)
 c.truthy("  a cache read is a tenth of an input token",
          round(run.turn_cost("claude-sonnet-5", cache_read=1_000_000)
                / run.turn_cost("claude-sonnet-5", tok_in=1_000_000), 3) == 0.1)
 c.truthy("  the flat-rate mistake is recorded", "three times what it actually cost" in
          io.open(ARC / "run.py", encoding="utf-8").read())
+
+# Tokens are not the only thing on the bill. Web search is $10 per thousand
+# searches — a penny each, up to three a turn — and none of it was counted, so
+# "what's the weather" was recorded at a fraction of what it came to. It is the
+# one charge a cheap brain cannot dilute: three searches cost more than the
+# Haiku turn that made them.
+c("  a search costs a penny", run.SEARCH_COST, 0.01)
+c("  three searches are three pennies on top of the tokens",
+  round(run.turn_cost("claude-haiku-4-5", tok_in=1000, searches=3)
+        - run.turn_cost("claude-haiku-4-5", tok_in=1000), 6), 0.03)
+c.truthy("  and they cost the same whichever brain ran them",
+         run.turn_cost("claude-opus-5", searches=2)
+         == run.turn_cost("claude-haiku-4-5", searches=2) == 0.02)
+c.truthy("  searching on Haiku costs more than the Haiku does",
+         run.turn_cost("claude-haiku-4-5", tok_in=8000, tok_out=300, searches=3)
+         > 2 * run.turn_cost("claude-haiku-4-5", tok_in=8000, tok_out=300))
+_src = io.open(ARC / "run.py", encoding="utf-8").read()
+c.truthy("  the route actually counts them", "web_search_requests" in _src)
+c.truthy("  ...and hands them to turn_cost",
+         re.search(r"spent = turn_cost\([^)]*searches", _src, re.S) is not None)
 
 print("\nThe day's spend accumulates per turn, and resets with the day:")
 
@@ -283,8 +309,16 @@ c("  Haiku too", run.thinking_for(run.MODEL_CHOICES["fast"], False)["type"], "di
 c("  and both still obey the switch when it is on",
   [run.thinking_for(run.MODEL_CHOICES[b], True)["type"] for b in ("smart", "fast")],
   ["adaptive", "adaptive"])
+_run_src = io.open(ARC / "run.py", encoding="utf-8").read()
 c.truthy("  the route asks the helper rather than deciding for itself",
-         "thinking = thinking_for(model, thinking_on)"
-         in io.open(ARC / "run.py", encoding="utf-8").read())
+         "thinking = thinking_for(model, thinking_on)" in _run_src)
+# The summariser is hardcoded to MODEL, so an ARC_MODEL pointed at Opus would
+# have reintroduced the leak in the one place it persists: that reply is not
+# spoken and forgotten, it is written into the note and read every session.
+c("  and no request builds its own thinking block any more",
+  _run_src.count('thinking={"type": "disabled"}'), 0)
+c.truthy("  the summariser goes through it too", "think = thinking_for(MODEL, False)" in _run_src)
+c.truthy("  with room for the thinking it may now do",
+         'max_tokens=500 if think["type"] == "disabled" else 4000' in _run_src)
 
 c.done()
