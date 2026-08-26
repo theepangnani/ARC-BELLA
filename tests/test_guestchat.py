@@ -11,7 +11,7 @@ import sys
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox   # noqa: E402
+from _harness import ARC, HUD, sandbox, system_text   # noqa: E402
 sandbox()
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
@@ -108,8 +108,12 @@ with TestClient(run.app) as client:
         print("\n  what ARC sent for the guest turn:")
         print("    tools     :", len(names))
         print("    names     :", sorted(n for n in names if n))
-        truthy("    guest is told it is a guest", "GUEST ACCOUNT" in kw["system"])
-        truthy("    no owner alarm summary leaked", "ALARMS SET" not in kw["system"])
+        # `system` is a list of blocks now — the server's rulebook first and
+        # marked cacheable, the client's contribution second. The guest
+        # preamble is appended to the second one.
+        whole = system_text(kw)
+        truthy("    guest is told it is a guest", "GUEST ACCOUNT" in whole)
+        truthy("    no owner alarm summary leaked", "ALARMS SET" not in whole)
         truthy("    no alarm tools offered",
                not any((n or "").endswith("_alarm") or n == "list_alarms" for n in names))
         # NOT asserted: calendar/mail. Those appear only when the signed-in
@@ -149,7 +153,10 @@ with TestClient(run.app) as client:
     r = client.get("/", cookies=GUEST)
     check("  HUD served", r.status_code, 200)
     page = r.text
-    for t in ["SYSTEM_PROMPT", "startAlarmPoll", "speakerFace", "lvlShown"]:
+    # 'prompt: "main"' replaces SYSTEM_PROMPT here: the rulebook is not in the
+    # page any more, and what proves the real HUD was served is that it asks
+    # the server for it by name.
+    for t in ['prompt: "main"', "startAlarmPoll", "speakerFace", "lvlShown"]:
         truthy("  contains %s" % t, t in page)
 
     session.revoke_all()

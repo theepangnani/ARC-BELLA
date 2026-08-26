@@ -233,7 +233,10 @@ page = r.text
 check("page loads", r.status_code, 200)
 for token in ['id="alarmBar"', 'id="alarmSnooze"', 'id="alarmStop"',
               "/api/alarms/due", "/api/alarms/snooze", "/api/alarms/dismiss",
-              "set_alarm", "alarmBeep"]:
+              # was "set_alarm": that word only appeared in the prompt, which
+              # the page no longer carries. This proves the same thing — the
+              # real alarm client is here, not a stub.
+              "startAlarmPoll", "alarmBeep"]:
     truthy("  contains %s" % token, token in page)
 
 session.revoke_all()

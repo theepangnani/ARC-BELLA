@@ -152,6 +152,11 @@ second press, and only what it just printed. What it has already done on its
 own is in `repairs.log` next to your data, with timestamps. Start there; the
 entries below are the things it deliberately cannot fix for you.
 
+**ARC's personality changed and you didn't change it.** The prompt is
+`prompts/main.md` now, not `static/index.html`. Editing the page will not change
+how ARC talks, and neither will editing the prompt without a restart — it is
+read once, at import.
+
 **An alarm didn't ring and nothing else looks wrong.** Check `repairs.log` for
 `watchdog: restarted my background loop`. That loop is what fires alarms,
 reminders and price alerts, and before the watchdog existed it could die

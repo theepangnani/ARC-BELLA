@@ -19,9 +19,14 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check, prompt_text   # noqa: E402
 DATA = sandbox()
 
+
+# ARC's own instructions live server-side now (prompts/main.md), where a
+# browser cannot edit them. These checks ask what ARC is TOLD, so they read
+# the prompt rather than the page it used to be pasted into.
+PROMPT = prompt_text()
 import selfheal   # noqa: E402
 
 page = io.open(HUD, encoding="utf-8").read()
@@ -330,10 +335,10 @@ c.truthy("  ...and that reasoning is recorded", "never on screen" in body)
 c.truthy("  a second press mid-request is ignored", "if (healBusy) return;" in body)
 c.truthy("  ...and the flag is always cleared", "healBusy = false;" in body)
 c.truthy("  the model is told to check before it offers a restart",
-         "YOU CAN CHECK AND REPAIR YOURSELF" in page)
+         "YOU CAN CHECK AND REPAIR YOURSELF" in PROMPT)
 c.truthy("  ...and told what it must not claim to fix",
-         "WHAT SELF-REPAIR CANNOT TOUCH" in page)
-c.truthy("  including its own code", "you never edit it, and never offer to" in page)
+         "WHAT SELF-REPAIR CANNOT TOUCH" in PROMPT)
+c.truthy("  including its own code", "you never edit it, and never offer to" in PROMPT)
 
 print("\nThe writes that caused all this are atomic now:")
 # notes/todos/reminders truncated first and filled second, so an interruption

@@ -16,9 +16,14 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check, prompt_text   # noqa: E402
 sandbox()
 
+
+# ARC's own instructions live server-side now (prompts/main.md), where a
+# browser cannot edit them. These checks ask what ARC is TOLD, so they read
+# the prompt rather than the page it used to be pasted into.
+PROMPT = prompt_text()
 import market   # noqa: E402
 import extras   # noqa: E402
 
@@ -127,13 +132,13 @@ c.truthy("still offered over the tunnel (nothing local about it)",
 
 print("\nAnd ARC is told how to speak about it:")
 page = open(HUD, encoding="utf-8").read()
-c.truthy("never say 'will'", 'NEVER say a stock "will" do anything' in page)
-c.truthy("no price targets", "never give a price target as a fact" in page)
-c.truthy("speak the odds with the range", "Speak the RANGE with its odds" in page)
-c.truthy("past tense for indicators", "Never present them as what will happen" in page)
+c.truthy("never say 'will'", 'NEVER say a stock "will" do anything' in PROMPT)
+c.truthy("no price targets", "never give a price target as a fact" in PROMPT)
+c.truthy("speak the odds with the range", "Speak the RANGE with its odds" in PROMPT)
+c.truthy("past tense for indicators", "Never present them as what will happen" in PROMPT)
 c.truthy("refuses to tell them what to do with their money",
-         "not going to tell them what to do with their money" in page)
+         "not going to tell them what to do with their money" in PROMPT)
 c.truthy("always calls the tool rather than reciting stale training",
-         "prices move and your training is old" in page)
+         "prices move and your training is old" in PROMPT)
 
 c.done()

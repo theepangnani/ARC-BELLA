@@ -702,6 +702,28 @@ A timer lives in the page, so it stops when the page does — fine for tea, not
 for waking up. Anything you must not miss should be an **alarm** (above) or a
 reminder, both of which the server keeps.
 
+## Where ARC's personality lives
+
+`prompts/main.md` — about 44,000 characters of it — plus `prompts/watch.md` for
+the passive screen glance. **Edit those files to change how ARC behaves**, then
+restart. They are plain prose; nothing in them is code.
+
+They used to live inside `static/index.html` and get sent to the server with
+every message. Two reasons they moved, and the first matters more the moment
+anyone else can sign in:
+
+- **A prompt the browser sends is a prompt the browser can edit.** Delete the
+  safety lock, drop the guest restrictions, give yourself a different persona —
+  and the server had no way to tell an edited copy from the real one. Now the
+  server puts its own text first and whatever the page sends second, so a client
+  can add to the rules and can never remove them.
+- **A prompt that stops changing can be cached**, and cached tokens cost about a
+  tenth. Those 12,000 tokens were being re-sent on every message *and* on each
+  of the six tool rounds a single answer can take. That was most of the bill.
+
+The page still sends the parts that genuinely vary each turn — persona, mode,
+language, the date, timers, what's on screen — and asks for the rest by name.
+
 ## Repairing itself
 
 Things that run unattended break quietly. The power goes at the wrong moment

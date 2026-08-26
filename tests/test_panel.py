@@ -17,9 +17,14 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check, prompt_text   # noqa: E402
 sandbox()
 
+
+# ARC's own instructions live server-side now (prompts/main.md), where a
+# browser cannot edit them. These checks ask what ARC is TOLD, so they read
+# the prompt rather than the page it used to be pasted into.
+PROMPT = prompt_text()
 page = io.open(HUD, encoding="utf-8").read()
 body = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", page, re.S)[0]
 css = page[:page.index("</style>")]
@@ -83,23 +88,23 @@ c.truthy("  the transcript buttons are untouched",
 
 print("\nThe character it is asked to have:")
 c.truthy("  good at everything, and quiet about it",
-         "=== GOOD AT EVERYTHING, QUIET ABOUT IT ===" in page)
+         "=== GOOD AT EVERYTHING, QUIET ABOUT IT ===" in PROMPT)
 c.truthy("  humility means calibration, not timidity",
-         "Humility here means CALIBRATION, not timidity" in page)
+         "Humility here means CALIBRATION, not timidity" in PROMPT)
 c.truthy("  confidence tracks the evidence", "let your confidence track the evidence"
-         in page.lower())
+         in PROMPT.lower())
 c.truthy("  'I don't know' is allowed to be the whole answer",
-         '"I don\'t know" is a complete answer' in page)
-c.truthy("  and bluffing is not", "NEVER BLUFF" in page)
+         '"I don\'t know" is a complete answer' in PROMPT)
+c.truthy("  and bluffing is not", "NEVER BLUFF" in PROMPT)
 c.truthy("  no hedging what it is sure of",
-         "Do not qualify what you are sure about" in page)
-c.truthy("  corrections taken cleanly, without grovelling", "No grovelling" in page)
-c.truthy("  no boasting", "No boasting" in page)
+         "Do not qualify what you are sure about" in PROMPT)
+c.truthy("  corrections taken cleanly, without grovelling", "No grovelling" in PROMPT)
+c.truthy("  no boasting", "No boasting" in PROMPT)
 c.truthy("  straight about not being the qualified person",
-         "not the qualified person" in page)
+         "not the qualified person" in PROMPT)
 # The old character is not replaced, only extended.
-c.truthy("  the butler survives", "unflappable British butler" in page)
-c.truthy("  so does the warmth", "=== YOU GENUINELY CARE ===" in page)
+c.truthy("  the butler survives", "unflappable British butler" in PROMPT)
+c.truthy("  so does the warmth", "=== YOU GENUINELY CARE ===" in PROMPT)
 
 print("\nEvery group folds away and comes back:")
 c("  eight groups now", page.count('class="cgroup"'), 8)
@@ -123,7 +128,12 @@ for m in ["work", "relax", "business"]:
     c.truthy("  MODES has %s" % m, "    %s: {" % m in body)
 c.truthy("  a mode changes how ARC WRITES, not just the switches",
          "function modeBlock()" in body and
-         "personaBlock() + modeBlock() + langBlock() + SYSTEM_PROMPT" in body)
+         "personaBlock() + modeBlock() + langBlock() + contextBlock()" in body)
+# The base prompt is no longer pasted in here — the page asks for it by name and
+# the server puts its own copy first. What the page still contributes is exactly
+# the per-turn stuff, mode among it.
+c.truthy("  ...and the page asks the server for the rest by name",
+         'prompt: "main",' in body)
 MODEBLOCK = body[body.index("const MODES = {"):body.index("let modeNow")]
 for setting in ["persona:", "night:", "cues:", "think:", "brain:", "prompt:", "hint:"]:
     c("  each of the three sets %-9s" % setting, MODEBLOCK.count(setting), 3)
@@ -134,7 +144,7 @@ c.truthy("  ...which the comment explains", "A mode you cannot" in body)
 # would be a small daily annoyance for nothing.
 c("  it is NOT remembered across restarts",
   'localStorage.setItem("arc.mode"' in body, False)
-c.truthy("  it can be switched by voice too", "[[mode: work]]" in page)
+c.truthy("  it can be switched by voice too", "[[mode: work]]" in PROMPT)
 c.truthy("  ...and the directive is handled",
          r"mode\s*:\s*(work|relax|business" in body)
 c.truthy("  the switches are flipped through the real functions",

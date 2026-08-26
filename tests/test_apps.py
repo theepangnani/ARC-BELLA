@@ -18,9 +18,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check, prompt_text   # noqa: E402
 sandbox()
 
+
+# ARC's own instructions live server-side now (prompts/main.md), where a
+# browser cannot edit them. These checks ask what ARC is TOLD, so they read
+# the prompt rather than the page it used to be pasted into.
+PROMPT = prompt_text()
 import pc   # noqa: E402
 
 c = Check()
@@ -126,12 +131,12 @@ c("  none of it is offered over the tunnel",
 
 print("\nARC is told what it can and cannot do here:")
 page = open(HUD, encoding="utf-8").read()
-c.truthy("  that the user presses send", "the USER presses send" in page)
-c.truthy("  that no personal API exists", "no personal API" in page)
-c.truthy("  not to invent a phone number", "Never invent a number" in page)
+c.truthy("  that the user presses send", "the USER presses send" in PROMPT)
+c.truthy("  that no personal API exists", "no personal API" in PROMPT)
+c.truthy("  not to invent a phone number", "Never invent a number" in PROMPT)
 c.truthy("  to ask before closing something unsaved", "ask first if there might be unsaved work"
-         in page)
+         in PROMPT)
 c.truthy("  to look at what's installed rather than guess twice",
-         "rather than guessing twice" in page)
+         "rather than guessing twice" in PROMPT)
 
 c.done()

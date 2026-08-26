@@ -377,6 +377,51 @@ loader read as *empty* — and the next save then overwrote the remains. Both no
 write to one side and `os.replace()` into position, matching `alerts.py`,
 `alarm.py` and `session.py`.
 
+### 3.11 Who owns the prompt
+
+For most of ARC's life the system prompt was a template literal in
+`index.html` and travelled up with every request. With exactly one user — the
+person who wrote it — that was fine; nobody edits their own assistant's rulebook
+in devtools to cheat themselves.
+
+It stops being fine the moment anyone else signs in. **A prompt the client sends
+is a prompt the client can change**: delete the ask-first safety lock, drop the
+guest restrictions, hand yourself a different persona. The server had nothing to
+compare an edited copy against, so every rule expressed in that prompt was a
+request, politely worded. This was recorded as half of the client-enforced
+consent gap in §7.
+
+The rulebook now lives in `prompts/main.md` and `prompts/watch.md`, read by
+`prompt.py`, and the request carries only a **name** — `main` or `watch`, with
+anything else falling back to `main`, so a name can never become a path. The
+server puts its own text first and the browser's second, which means a client
+can **add** to the instructions and can never remove them. Send an empty
+`system` from devtools and ARC is still ARC.
+
+What the page still contributes is exactly what varies per turn: persona, mode,
+language, the date, timers, what is on screen, consent state, lesson progress.
+That reordering is itself an improvement — the chosen persona now lands *after*
+the default character rather than before it, so it overrides rather than being
+overridden.
+
+**The same move pays for itself.** A prefix that no longer varies per request
+can be cached, and cache reads bill at roughly a tenth of the input rate. The
+base prompt is ~12,000 tokens and was re-sent in full on every turn *and* on
+each of the up to six tool rounds within one turn — measured at $0.036 a send,
+$0.0036 cached, so a six-round turn saves about $0.19. The block carries
+`cache_control: {type: ephemeral}` only when it clears `MIN_CACHE_CHARS`
+(4,000), because the API silently declines to cache a shorter prefix and a
+breakpoint that never hits is worse than none.
+
+Cached tokens are accounted separately (`tok_cache_read`, `tok_cache_write` at
+0.1× and 1.25×). Folded into ordinary input they would have made `SPEND TODAY`
+about five times too high and tripped `ARC_DAILY_COST_CAP` long before the money
+was spent.
+
+`ARC_MAX_SYSTEM_CHARS` drops from 96,000 to **24,000** as a result. It had been
+rising to accommodate ARC's own prompt; now it bounds only what a caller may
+add, which is what a limit like that is for.
+
 ## 4. Architecture
 
 ```
@@ -605,7 +650,7 @@ worse than no answer because it gets acted on.
 | ~~**Undeclared runtime dependencies**~~ | Closed, and the gap was narrower than recorded: `pc.py` uses `ctypes` and `PIL` for input and capture, not `mss` or `pyautogui`. Only `pycaw` was missing, now declared with a `sys_platform == "win32"` marker so Linux installs skip it | #5 |
 | ~~**Duplicated dependency**~~ | Closed in "Tidy requirements.txt"; `edge-tts` appears once | #5 |
 | **Unpinned dependencies** | All use `>=`, with no lockfile | #5 |
-| **Consent gate is client-enforced** | `allow_actions` is a boolean the caller sends, and the whole system prompt arrives from the browser | #3 |
+| **Consent gate is client-enforced** | `allow_actions` is still a boolean the caller sends. The system prompt half of this is CLOSED: the rulebook lives in `prompts/*.md` server-side, the client may only append, and its contribution is capped at 24,000 chars | #3 |
 | ~~**No security headers**~~ | Closed. CSP, nosniff, frame denial, referrer and permissions policy on every response, HSTS over HTTPS; `ARC_SECURITY_HEADERS=0` disables. `'unsafe-inline'` for script stays — the HUD is one inline file with no build step — so the policy's value is in `connect-src`, `img-src` and `frame-ancestors`, not in script control | #2 |
 | **No streaming** | `/api/chat` is request/response with a 25 s client abort | — |
 | **Half-built multi-user** | Google identity is per-session; notes, reminders, alerts, display, Telegram and computer control are global | — |

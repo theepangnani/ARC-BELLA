@@ -14,6 +14,7 @@ ARC_DATA_DIR at a real one.
 """
 
 import atexit
+import io
 import os
 import shutil
 import sys
@@ -105,6 +106,34 @@ def fake_web_credentials():
     }}), encoding="utf-8")
     gauth.WEB_CREDENTIALS = p            # read at call time, so this takes
     return p
+
+
+def prompt_text(name: str = "main") -> str:
+    """ARC's own instructions, wherever they currently live.
+
+    They used to be a template literal inside index.html, so suites asked
+    "is this rule in the page?". They now live in prompts/*.md, server-side,
+    where a browser cannot edit them. The question the suites are actually
+    asking — does ARC's prompt still say this — has not changed, so it gets a
+    helper rather than a path each of them has to know.
+    """
+    return io.open(ARC / "prompts" / ("%s.md" % name), encoding="utf-8").read()
+
+
+def system_text(sent) -> str:
+    """Flatten what was sent as `system` into one string.
+
+    It is a list of blocks now, not a string: the server's own text first and
+    marked cacheable, the client's contribution second. A suite checking that
+    some instruction reached the model should not have to care which block it
+    landed in — but the ORDER matters and is checked directly in test_prompt.
+    """
+    if isinstance(sent, dict):
+        sent = sent.get("system")
+    if isinstance(sent, str):
+        return sent
+    return "\n\n".join(b.get("text", "") for b in (sent or [])
+                       if isinstance(b, dict))
 
 
 class Check:

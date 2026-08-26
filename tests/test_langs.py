@@ -21,9 +21,14 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check, prompt_text   # noqa: E402
 sandbox()
 
+
+# ARC's own instructions live server-side now (prompts/main.md), where a
+# browser cannot edit them. These checks ask what ARC is TOLD, so they read
+# the prompt rather than the page it used to be pasted into.
+PROMPT = prompt_text()
 import voices   # noqa: E402
 
 page = io.open(HUD, encoding="utf-8").read()
@@ -101,9 +106,9 @@ c.truthy("  ...by name, not by tag", "langName(tag)" in body)
 c.truthy("  and is told to match a mid-conversation switch",
          "match whatever they just used" in body)
 c.truthy("  English needs no such block", 'if (base === "en") return "";' in body)
-c.truthy("  the prompt says it too", "ANSWER IN THE LANGUAGE YOU ARE SPOKEN TO IN" in page)
+c.truthy("  the prompt says it too", "ANSWER IN THE LANGUAGE YOU ARE SPOKEN TO IN" in PROMPT)
 c.truthy("  including how numbers are read in that language",
-         "READ ALOUD in THAT language" in page)
+         "READ ALOUD in THAT language" in PROMPT)
 
 print("\nThe picker offers only what will work:")
 c.truthy("  languages come from the server", 'fetch("/api/voices")' in body)

@@ -16,9 +16,14 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, HUD, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check, prompt_text   # noqa: E402
 sandbox()
 
+
+# ARC's own instructions live server-side now (prompts/main.md), where a
+# browser cannot edit them. These checks ask what ARC is TOLD, so they read
+# the prompt rather than the page it used to be pasted into.
+PROMPT = prompt_text()
 import automation   # noqa: E402
 import pc           # noqa: E402
 
@@ -117,11 +122,11 @@ c("  and no guest gets any of it",
 print("\nARC is told the rules:")
 page = open(HUD, encoding="utf-8").read()
 c.truthy("  'stop' means stop first, talk after",
-         'if they say "stop" while something is repeating' in page)
-c.truthy("  one at a time, bounded", "only one runs at a time" in page)
+         'if they say "stop" while something is repeating' in PROMPT)
+c.truthy("  one at a time, bounded", "only one runs at a time" in PROMPT)
 c.truthy("  mentions the game-ban risk once, lightly",
-         "online games often ban input automation" in page)
-c.truthy("  and is told not to lecture about it", "don't repeat it every time" in page)
+         "online games often ban input automation" in PROMPT)
+c.truthy("  and is told not to lecture about it", "don't repeat it every time" in PROMPT)
 
 print("\nThe module says the same thing to whoever reads it:")
 src = open(ARC / "automation.py", encoding="utf-8").read()

@@ -86,6 +86,7 @@ import market
 import automation
 import voices
 import selfheal
+import prompt
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
@@ -248,9 +249,21 @@ def supports_effort(model: str) -> bool:
 # so the extra headroom costs nothing on a normal turn.
 MAX_TOKENS = int(os.getenv("ARC_MAX_TOKENS", "8000"))
 
-# Ceiling on the system prompt the client may send. See the check in /api/chat
-# for why this is not 40,000 any more.
-MAX_SYSTEM_CHARS = int(os.getenv("ARC_MAX_SYSTEM_CHARS", "96000"))
+# Ceiling on what the CLIENT may add to the prompt — persona, mode, language,
+# the date, timers, screen, consent, lesson. ARC's own rulebook is not included
+# and cannot be: it comes from prompts/main.md, server-side (see prompt.py).
+#
+# It was 96,000, and had to be, because the 44,282-character base prompt was
+# being sent up with every request and the ceiling had to clear it. With the
+# base held here, a realistic client contribution is around 7,000 characters,
+# so this can go back to being what it was meant to be — a bound on abuse, with
+# room to grow, rather than a number that had to keep chasing the prompt.
+MAX_SYSTEM_CHARS = int(os.getenv("ARC_MAX_SYSTEM_CHARS", "24000"))
+
+# The API will not cache a prefix shorter than about 1,024 tokens, and gives no
+# error when you ask — it just never reports a hit. At roughly 3.7 characters
+# per token of English prose that is ~3,800 characters; 4,000 leaves a margin.
+MIN_CACHE_CHARS = 4000
 
 # How hard to think. 'low' keeps the voice loop snappy; raise to medium/high
 # only if you want more considered answers at the cost of a slower reply.
@@ -773,11 +786,24 @@ async def read_json(request: Request):
 # --------------------------------------------------------------------------
 
 _hits = defaultdict(deque)
-_day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0, "tok_in": 0, "tok_out": 0}
+_day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0, "tok_in": 0, "tok_out": 0,
+        "tok_cache_read": 0, "tok_cache_write": 0}
+
+# Cached tokens are input tokens at a different price. A read is a tenth of the
+# input rate, a write a quarter more than it — which is the whole reason the
+# base prompt is cached, and also the reason those tokens cannot simply be
+# added to tok_in. Counted at full rate, a cached turn would report about five
+# times what it cost, and DAILY_COST_CAP would cut ARC off long before the
+# money was actually spent.
+CACHE_READ_RATE = 0.1
+CACHE_WRITE_RATE = 1.25
 
 
 def _day_cost() -> float:
-    return _day["tok_in"] / 1e6 * PRICE_IN + _day["tok_out"] / 1e6 * PRICE_OUT
+    return (_day["tok_in"] / 1e6 * PRICE_IN
+            + _day["tok_cache_read"] / 1e6 * PRICE_IN * CACHE_READ_RATE
+            + _day["tok_cache_write"] / 1e6 * PRICE_IN * CACHE_WRITE_RATE
+            + _day["tok_out"] / 1e6 * PRICE_OUT)
 _logins = defaultdict(deque)
 _last_sweep = 0.0
 
@@ -843,7 +869,8 @@ def is_local_request(request: Request) -> bool:
 def check_rate(request: Request):
     today = time.strftime("%Y-%m-%d")
     if _day["stamp"] != today:
-        _day.update(stamp=today, count=0, tok_in=0, tok_out=0)
+        _day.update(stamp=today, count=0, tok_in=0, tok_out=0,
+                    tok_cache_read=0, tok_cache_write=0)
     if _day["count"] >= DAILY_CAP:
         raise HTTPException(429, "Daily limit reached for this deployment. Try again tomorrow.")
     if DAILY_COST_CAP > 0 and _day_cost() >= DAILY_COST_CAP:
@@ -1254,7 +1281,12 @@ async def chat(request: Request, _=Depends(require_auth)):
 
     payload = await read_json(request)
     messages = payload.get("messages") or []
-    system = payload.get("system") or ""
+    # What the CLIENT contributes: persona, mode, language, the date, timers,
+    # what is on screen. Not the rulebook — that is prompt.base(), added below,
+    # and it goes FIRST so nothing sent from a browser can drop or contradict
+    # it. See prompt.py for why that distinction is the whole point.
+    extra = payload.get("system") or ""
+    prompt_name = payload.get("prompt") or "main"
     use_search = bool(payload.get("search"))
     # Either a bool (legacy: "yes, the primary") or which monitor(s) to attach —
     # "each", "all", "primary", "2". Anything truthy but unrecognised falls
@@ -1290,23 +1322,22 @@ async def chat(request: Request, _=Depends(require_auth)):
     if total > 60_000:
         raise HTTPException(400, "Conversation is too long. Clear the log and start again.")
 
-    # This guard is against an abusive caller, not against ARC's own prompt —
-    # and at 40,000 it had quietly become the latter. The HUD's SYSTEM_PROMPT is
-    # 36,292 characters on its own, and the page appends persona, memory, thread
-    # digest, timers, screen, consent, voice, lesson and speech-alternative
-    # blocks to it, with a guest preamble or the alarm summary added here. A
-    # user with accumulated memory and a lesson in progress reaches ~43,800 —
-    # so ARC would start rejecting EVERY message the moment someone had used it
-    # enough, and the symptom is simply that it stops answering.
+    # This bounds what a CALLER can add, not ARC's own prompt — which is no
+    # longer sent from the browser at all and so cannot be bounded here.
     #
-    # 96,000 leaves genuine room to grow while still bounding abuse. If this is
-    # ever hit again the answer is to trim the prompt, so say so out loud rather
-    # than failing with a number nobody can act on.
-    if not isinstance(system, str):
+    # It used to be both, and the number had to keep rising to accommodate the
+    # rulebook itself: the HUD's own prompt was 44,282 characters before the
+    # page appended persona, memory, thread digest, timers, screen, consent,
+    # voice and lesson blocks, so the ceiling had reached 96,000 and a user with
+    # enough accumulated memory would still have started getting rejected on
+    # every single message. With the base held server-side, what arrives from
+    # the browser is a few thousand characters and the ceiling can go back to
+    # bounding abuse, which is its actual job.
+    if not isinstance(extra, str):
         raise HTTPException(400, "System prompt is missing.")
-    if len(system) > MAX_SYSTEM_CHARS:
-        print(f"{C_RED}  ! system prompt {len(system)} chars "
-              f"(limit {MAX_SYSTEM_CHARS}) — the prompt needs trimming{C_OFF}")
+    if len(extra) > MAX_SYSTEM_CHARS:
+        print(f"{C_RED}  ! client prompt blocks {len(extra)} chars "
+              f"(limit {MAX_SYSTEM_CHARS}){C_OFF}")
         raise HTTPException(400, "System prompt is too long.")
 
     # --- what ARC can actually do this turn -------------------------------
@@ -1325,7 +1356,7 @@ async def chat(request: Request, _=Depends(require_auth)):
         # the owner's notes, then hits a refusal it can't explain. Telling it the
         # shape of the account up front is the difference between a demo that
         # feels deliberate and one that feels broken.
-        system += (
+        extra += (
             "\n\nGUEST ACCOUNT — this is not your owner.\n"
             "You are signed in as a guest. You have their own Google account "
             "(calendar, mail, drive, contacts), plus weather, stocks, news and "
@@ -1345,7 +1376,7 @@ async def chat(request: Request, _=Depends(require_auth)):
         except Exception:
             alarm_line = ""
         if alarm_line:
-            system += "\n\n" + alarm_line
+            extra += "\n\n" + alarm_line
 
     # A passive glance (watch mode) just looks and reports — it must not click,
     # type, or otherwise act on the machine. no_tools strips the toolset for it.
@@ -1410,10 +1441,40 @@ async def chat(request: Request, _=Depends(require_auth)):
             _attach_to_last_user([{"type": "image",
                                    "source": {"type": "base64", "media_type": mt, "data": b64}}])
 
+    # --- the prompt itself -------------------------------------------------
+    # Two blocks, and the split is doing two jobs at once.
+    #
+    # AUTHORITY: the server's text is first and the browser's is second, so a
+    # client can add to the instructions and can never remove them. Send an
+    # empty `system` from devtools and ARC is still ARC.
+    #
+    # COST: the first block is identical on every request — same text, same
+    # tools ahead of it — so it is marked cacheable. Cache reads bill at about
+    # a tenth of the input rate. That block is roughly twelve thousand tokens
+    # and was being sent in full on every turn AND on each of the up-to-six
+    # tool rounds inside one turn, which is where most of the money went.
+    #
+    # Everything volatile — persona, the date, alarms, what is on screen —
+    # must stay in the SECOND block. Caching is a prefix match: one changed
+    # byte in the first block and nothing after it is cached either.
+    base = prompt.base(prompt_name)
+    head = {"type": "text", "text": base}
+    # Below roughly a thousand tokens the API will not cache a prefix at all,
+    # and does not say so — it simply never reports a hit. The main prompt is
+    # twelve thousand tokens and caches; the watch brief is under three hundred
+    # and never would, and marking it cacheable would be a breakpoint that
+    # looks like it is working and isn't. So only ask when it can be granted.
+    if len(base) >= MIN_CACHE_CHARS:
+        head["cache_control"] = {"type": "ephemeral"}
+    system = [head]
+    if extra.strip():
+        system.append({"type": "text", "text": extra})
+
     searched = False
     used: list[str] = []
     blocked_actions: list[str] = []
     tokens_in = tokens_out = 0
+    cache_read = cache_write = 0
     reply = ""
     claude = request.app.state.claude
 
@@ -1445,6 +1506,13 @@ async def chat(request: Request, _=Depends(require_auth)):
         u = resp.usage
         tokens_in += getattr(u, "input_tokens", 0) or 0
         tokens_out += getattr(u, "output_tokens", 0) or 0
+        # Counted apart from input_tokens, because they are not priced like
+        # them: a cache read is about a tenth of the input rate and a write
+        # about a quarter more. Folding them into tokens_in would make the
+        # SPEND TODAY readout roughly five times too high and trip the daily
+        # cap early — a spend meter that lies is worse than no spend meter.
+        cache_read += getattr(u, "cache_read_input_tokens", 0) or 0
+        cache_write += getattr(u, "cache_creation_input_tokens", 0) or 0
 
         # Safety classifiers can decline. That arrives as a normal 200 with an
         # empty or partial body, so it has to be checked before reading content.
@@ -1522,6 +1590,8 @@ async def chat(request: Request, _=Depends(require_auth)):
 
     _day["tok_in"] += tokens_in
     _day["tok_out"] += tokens_out
+    _day["tok_cache_read"] += cache_read
+    _day["tok_cache_write"] += cache_write
 
     return JSONResponse({
         "reply": reply,
