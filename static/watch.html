@@ -1,0 +1,215 @@
+<!doctype html>
+<!--
+  Arc Watch — what ARC has cost and done.
+
+  A separate page rather than another panel in the HUD, for the same reason
+  /display is: this is something you leave open on a second screen and glance
+  at, not something you open in the middle of a conversation.
+
+  It shows counts and costs. It does not show, and the server does not store,
+  anything anybody said — see stats.py for why that line is where it is.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arc Watch</title>
+<link rel="icon" href="/static/arc-logo.svg">
+<style>
+  :root {
+    --void: #04070c; --ink: #0a1119; --line: #16232f;
+    --cyan: #6fe8ff; --cyan-dim: #4a7f93; --ice: #dff6ff;
+    --amber: #ffb020; --rose: #ff6b81; --green: #8affd4;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--void); color: var(--ice);
+               font-family: var(--mono); -webkit-font-smoothing: antialiased; }
+  body { padding: max(18px, env(safe-area-inset-top)) 18px 40px; }
+
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+           border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 18px; }
+  h1 { font-size: 13px; letter-spacing: .34em; text-transform: uppercase;
+       color: var(--cyan); margin: 0; font-weight: 500; }
+  .sub { font-size: 9.5px; letter-spacing: .14em; color: var(--cyan-dim);
+         text-transform: uppercase; }
+  .spacer { flex: 1; }
+  .ranges button {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .14em; padding: 6px 10px;
+    text-transform: uppercase; cursor: pointer; margin-left: 5px;
+    background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
+  }
+  .ranges button.on { color: var(--void); background: var(--cyan); border-color: var(--cyan); }
+  .ranges button:hover { color: var(--ice); border-color: var(--cyan); }
+
+  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+           margin-bottom: 22px; }
+  .card { border: 1px solid var(--line); background: var(--ink); padding: 13px 14px; }
+  .card .k { font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase;
+             color: var(--cyan-dim); }
+  .card .v { font-size: 23px; margin-top: 7px; letter-spacing: .02em; }
+  .card .n { font-size: 8.5px; color: var(--cyan-dim); margin-top: 5px; letter-spacing: .06em; }
+  .card.warn .v { color: var(--amber); }
+  .card.good .v { color: var(--green); }
+
+  h2 { font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase;
+       color: var(--cyan-dim); margin: 24px 0 10px; font-weight: 500; }
+
+  /* The chart is drawn as bars rather than pulled from a library: one file,
+     no build step, no external request — the same rule the HUD follows. */
+  .chart { display: flex; align-items: flex-end; gap: 2px; height: 150px;
+           border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+  .bar { flex: 1; min-width: 2px; background: var(--cyan-dim); position: relative;
+         transition: background .12s; }
+  .bar:hover { background: var(--cyan); }
+  .bar.empty { background: #0f1a24; }
+  .bar .tip {
+    display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    background: var(--ink); border: 1px solid var(--line); padding: 5px 8px;
+    font-size: 9px; white-space: nowrap; z-index: 5; margin-bottom: 5px; color: var(--ice);
+  }
+  .bar:hover .tip { display: block; }
+  .axis { display: flex; justify-content: space-between; font-size: 8.5px;
+          color: var(--cyan-dim); margin-top: 6px; letter-spacing: .08em; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+  th { text-align: left; font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+       color: var(--cyan-dim); font-weight: 500; padding: 6px 8px 6px 0; }
+  td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line); }
+  td.n { text-align: right; color: var(--cyan); }
+
+  .note { font-size: 9.5px; color: var(--cyan-dim); line-height: 1.7; margin-top: 26px;
+          border-top: 1px solid var(--line); padding-top: 14px; max-width: 62ch; }
+  .err { color: var(--rose); font-size: 11px; }
+  a { color: var(--cyan); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Arc Watch</h1>
+  <span class="sub" id="span">loading…</span>
+  <span class="spacer"></span>
+  <span class="ranges">
+    <button data-days="7">7d</button>
+    <button data-days="30" class="on">30d</button>
+    <button data-days="90">90d</button>
+    <button data-days="365">1y</button>
+  </span>
+</header>
+
+<div id="out"><span class="sub">reading the record…</span></div>
+
+<div class="note">
+  Counts and costs only. No prompts, replies or transcripts are stored — a usage
+  log that quietly became a conversation log would be a far more sensitive file
+  than this one, sitting in the same folder with the same protection.
+  <br><br>
+  Costs are worked out from the token counts the API reports, at the rates in
+  your <code>.env</code>. Cached input is billed at a tenth and counted
+  separately, so the figure here is what you actually spent rather than what it
+  would have cost without caching.
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  let days = 30;
+
+  const money = n => "$" + (n || 0).toFixed(n >= 10 ? 2 : 3);
+  const num = n => (n || 0).toLocaleString();
+  const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
+
+  function card(k, v, n, cls) {
+    return '<div class="card ' + (cls || "") + '"><div class="k">' + esc(k) +
+           '</div><div class="v">' + esc(v) + '</div>' +
+           (n ? '<div class="n">' + esc(n) + "</div>" : "") + "</div>";
+  }
+
+  function chart(series) {
+    const top = Math.max(...series.map(d => d.cost), 0.0001);
+    const bars = series.map(d => {
+      const h = Math.max(d.cost > 0 ? 2 : 1, Math.round(d.cost / top * 148));
+      const tip = d.date + " · " + money(d.cost) + " · " + num(d.turns) + " turns";
+      return '<div class="bar' + (d.turns ? "" : " empty") + '" style="height:' + h +
+             'px"><span class="tip">' + esc(tip) + "</span></div>";
+    }).join("");
+    const first = series[0] || {}, last = series[series.length - 1] || {};
+    return '<div class="chart">' + bars + '</div><div class="axis"><span>' +
+           esc(first.date || "") + "</span><span>" + money(top) +
+           ' max/day</span><span>' + esc(last.date || "") + "</span></div>";
+  }
+
+  function rows(obj, label) {
+    const es = Object.entries(obj || {});
+    if (!es.length) return '<span class="sub">nothing yet</span>';
+    return "<table><tr><th>" + esc(label) + "</th><th></th></tr>" +
+      es.slice(0, 12).map(([k, v]) =>
+        "<tr><td>" + esc(k) + '</td><td class="n">' + num(v) + "</td></tr>").join("") +
+      "</table>";
+  }
+
+  async function load() {
+    try {
+      const r = await fetch("/api/usage?days=" + days);
+      // A page left open on a second screen WILL outlive its session. Say so
+      // rather than showing a stale chart that looks live.
+      if (r.status === 401) { location.href = "/"; return; }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = await r.json();
+      const t = d.totals, today = d.today;
+
+      const capped = d.cap > 0 && today.cost >= d.cap;
+      const nearCap = d.cap > 0 && today.cost >= d.cap * 0.8;
+
+      // What the cache saved, in money: those tokens at full input price,
+      // less the tenth they actually cost.
+      const saved = (t.tok_cache_read || 0) / 1e6 * d.prices.in * 0.9;
+
+      $("span").textContent = t.active_days + " active day" +
+        (t.active_days === 1 ? "" : "s") + " of " + days;
+
+      $("out").innerHTML =
+        '<div class="cards">' +
+          card("Today", money(today.cost), num(today.turns) + " turns",
+               capped ? "warn" : "") +
+          card("Last " + days + "d", money(t.cost), num(t.turns) + " turns") +
+          card("Per turn", money(t.turns ? t.cost / t.turns : 0), "average") +
+          card("Saved by caching", money(saved),
+               num(t.tok_cache_read) + " cached tokens", saved > 0 ? "good" : "") +
+          card("Tokens out", num(t.tok_out), num(t.tok_in) + " in") +
+          card("Daily cap", d.cap > 0 ? money(d.cap) : "off",
+               capped ? "reached today" : nearCap ? "close today" : "",
+               capped ? "warn" : "") +
+        "</div>" +
+        "<h2>Cost per day</h2>" + chart(d.series) +
+        "<h2>Tools used</h2>" + rows(t.tools, "tool") +
+        "<h2>Models</h2>" + rows(t.models, "model") +
+        (t.errors || t.refusals
+          ? "<h2>Trouble</h2><table>" +
+            "<tr><td>errors</td><td class='n'>" + num(t.errors) + "</td></tr>" +
+            "<tr><td>refusals</td><td class='n'>" + num(t.refusals) + "</td></tr></table>"
+          : "");
+    } catch (e) {
+      $("out").innerHTML = '<span class="err">Could not read the record (' +
+        esc(e.message) + "). Is ARC still running?</span>";
+    }
+  }
+
+  document.querySelectorAll(".ranges button").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".ranges button").forEach(x => x.classList.remove("on"));
+      b.classList.add("on");
+      days = parseInt(b.dataset.days, 10) || 30;
+      load();
+    });
+  });
+
+  load();
+  // Slow on purpose. This is a page you leave open; a tight poll would spend
+  // more on the watching than on the thing being watched.
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>

@@ -60,6 +60,10 @@ DATA_FILES = {
     "reminders.json":    ([], "reminders"),
     "alarms.json":       ([], "alarms"),
     "price_alerts.json": ([], "price alerts"),
+    "triggers.json":     ([], "standing rules"),
+    # A dict, not a list — the shape check below is what makes that matter, and
+    # it would catch a file that had somehow become the wrong kind of thing.
+    "usage.json":        ({}, "usage record"),
 }
 
 # Never copied into backups/, each for its own reason:

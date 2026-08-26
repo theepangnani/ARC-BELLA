@@ -174,10 +174,45 @@ PRIMARY = {
 }
 
 
+# Microsoft ships child voices in several locales and does not flag them as
+# anything but "Female". Picked automatically they are alarming — an assistant
+# that answers you in a small child's voice is not a quirk, it is unusable —
+# and alphabetical order put one of them second in line for English.
+#
+# A hand-kept list, and named as one. It is short because it only has to cover
+# what could be chosen AUTOMATICALLY; anyone who actually wants one of these
+# can still select it by name in the voice picker.
+CHILD = {"en-GB-MaisieNeural", "en-US-AnaNeural"}
+
+# Where the choice would otherwise be arbitrary, name it. Alphabetical order
+# says nothing about how a voice sounds — the same reason PRIMARY exists for
+# picking a country. en-GB is ARC's own voice and the reason this table does.
+PREFERRED = {
+    "en-GB": "en-GB-SoniaNeural",
+    "en-US": "en-US-AriaNeural",
+}
+
+
 def _score(v, want_gender):
     # Female first only because ARC's own voice has always been Sonia, so an
-    # unspecified switch to another language keeps the same character.
-    return (0 if (v["gender"] or "").lower() == want_gender else 1, v["short"])
+    # unspecified switch to another language keeps the same character. A named
+    # preference beats both, and a child voice is never chosen for you.
+    return (0 if v["short"] == PREFERRED.get(v["locale"]) else 1,
+            1 if v["short"] in CHILD else 0,
+            0 if (v["gender"] or "").lower() == want_gender else 1,
+            v["short"])
+
+
+def same_language(lang: str, voice: str) -> bool:
+    """Do a language tag and a voice name share a base language?
+
+    So a caller can ask "can my configured voice speak this?" without pulling
+    the whole catalogue apart. en-GB-SoniaNeural speaks "en", "en-US" and
+    "en-GB"; it does not speak "ta".
+    """
+    a = (lang or "").strip().replace("_", "-").split("-")[0].lower()
+    b = (voice or "").strip().split("-")[0].lower()
+    return bool(a) and a == b
 
 
 def for_lang(lang: str, gender: str = "female") -> str:

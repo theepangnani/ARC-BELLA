@@ -87,8 +87,10 @@ import automation
 import voices
 import selfheal
 import prompt
+import stats
+import triggers
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
-            alerts, alarm, market, automation, selfheal)
+            alerts, alarm, market, automation, selfheal, stats, triggers)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -188,6 +190,9 @@ PASSIVE_TOOLS = {
     # asking, and an assistant that quietly rewrites your notes file because
     # it decided the file looked wrong is not one anybody asked for.
     "self_check",
+    # Reading your own usage record, and reading back the standing rules,
+    # change nothing. Setting or clearing a rule does, so those stay gated.
+    "usage_report", "list_triggers",
 }
 # Master switch. On by default: ARC will not act without the user's say-so. Set
 # ARC_REQUIRE_CONSENT=0 to disable the gate entirely (not recommended).
@@ -422,6 +427,12 @@ async def lifespan(app: FastAPI):
                 # browser via /api/alerts/due — phone push is a bonus on top.
                 await anyio.to_thread.run_sync(alerts.evaluate)
 
+                # Standing rules: "tell me if Tesla drops below 200", "warn me
+                # if I've spent five dollars today". Same cadence as the price
+                # alerts above and the same shape — it notifies, and cannot
+                # buy, sell or spend anything. See triggers.py.
+                await anyio.to_thread.run_sync(triggers.evaluate)
+
                 # Alarms: start any whose moment has come and reschedule the
                 # repeating ones. Runs unconditionally, like alerts and for the
                 # same reason — a ringing alarm is surfaced in the browser via
@@ -516,6 +527,10 @@ async def lifespan(app: FastAPI):
         app.state.watchdog_task.cancel()
     if app.state.push_task:
         app.state.push_task.cancel()
+    # The usage record batches its writes, so the last few turns are still in
+    # memory here. Without this, every restart loses them — and a launcher that
+    # restarts ARC is exactly what the owner runs several times a day.
+    stats.flush()
     await app.state.http.aclose()
     if app.state.claude:
         await app.state.claude.close()
@@ -550,6 +565,10 @@ BACKGROUND_PATHS = {
     "/api/alarms/due", "/api/automation/status",
     "/api/calendar/upcoming", "/api/screen-watch", "/api/stocks",
     "/api/stock-search", "/api/push/status", "/api/display", "/api/voices",
+    # Both are timers with nobody necessarily there: the trigger poll runs
+    # beside the alert poll, and Arc Watch left open on a second screen would
+    # otherwise hold a session alive for ever by refreshing itself.
+    "/api/triggers/due", "/api/usage",
     # Announcing departure is the opposite of use. Without this the auth check
     # that runs ahead of the route would refresh the idle clock on the way in,
     # and the goodbye would read as a hello.
@@ -614,6 +633,30 @@ def authed(request: Request) -> bool:
 def require_auth(request: Request):
     if not authed(request):
         raise HTTPException(401, "Not signed in.")
+
+
+def tier(request: Request) -> str:
+    """Which kind of account this is: "owner" or "guest".
+
+    The owner account — the address in ARC_ALLOWED_EMAILS that is not also in
+    ARC_GUEST_EMAILS — is the top of the tree and has no ceiling of any kind:
+    every tool, every toolkit, no session clock, no idle timeout, no cap on
+    what it may read or change. Guests get the default-deny list in GUEST_TOOLS
+    and nothing else. There is deliberately no middle.
+
+    ONE THING IS STILL WITHHELD FROM THE OWNER, and it is worth being explicit
+    that it is not an oversight: computer control and input automation are
+    offered only to a LOCAL request, never over the tunnel — see all_tools().
+    That gate protects against a stolen session cookie, not against the owner.
+    A cookie lifted from a phone would otherwise be a shell on the machine, from
+    anywhere in the world, and no password would stand between the two. Say the
+    word and it comes off, but it should come off on purpose.
+
+    Stated as a function rather than left implicit because a paid tier will
+    need somewhere to slot in, and "what can this account do" should have one
+    answer in one place rather than three checks that drift apart.
+    """
+    return "guest" if is_guest(request) else "owner"
 
 
 def is_guest(request: Request) -> bool:
@@ -1593,6 +1636,20 @@ async def chat(request: Request, _=Depends(require_auth)):
     _day["tok_cache_read"] += cache_read
     _day["tok_cache_write"] += cache_write
 
+    # And to disk, for Arc Watch. _day is memory only and resets on restart, so
+    # until this existed the honest answer to "what did I spend on Tuesday?"
+    # was that nobody knew, including ARC. Counts and costs only — no prompts,
+    # no replies, nothing anybody said. See stats.py.
+    stats.record(
+        tok_in=tokens_in, tok_out=tokens_out,
+        cache_read=cache_read, cache_write=cache_write,
+        cost=(tokens_in / 1e6 * PRICE_IN
+              + cache_read / 1e6 * PRICE_IN * CACHE_READ_RATE
+              + cache_write / 1e6 * PRICE_IN * CACHE_WRITE_RATE
+              + tokens_out / 1e6 * PRICE_OUT),
+        tools=used, model=model, searched=searched,
+        refusal=(reply == "I can't help with that one, sir."))
+
     return JSONResponse({
         "reply": reply,
         "searched": searched,
@@ -1719,7 +1776,13 @@ async def _edge_tts(text: str, voice: str = "", lang: str = ""):
     Tamil letters aloud.
     """
     v = voice if voices.is_valid(voice) else ""
-    if not v and lang:
+    if not v and lang and not voices.same_language(lang, TTS_VOICE):
+        # Only go to the catalogue for a language ARC's OWN voice cannot speak.
+        # Asking it for English handed back whichever female en-GB voice sorted
+        # first alphabetically — Libby, with Maisie (Microsoft's British CHILD
+        # voice) next in line — so adding a hundred languages quietly replaced
+        # Bella's voice with a child's. ARC_TTS_VOICE is the configured voice
+        # and it wins for its own language, every time.
         v = voices.for_lang(lang)
     if not v:
         v = TTS_VOICE
@@ -1930,6 +1993,50 @@ async def automation_click_route(request: Request, _=Depends(require_auth)):
     payload = await request.json() if await request.body() else {}
     return JSONResponse({"status": automation.auto_click(
         rate=payload.get("rate", 5), seconds=payload.get("seconds", 120))})
+
+
+@app.get("/api/usage")
+async def usage_route(request: Request, _=Depends(require_auth)):
+    """Everything Arc Watch draws. Figures only — never conversations."""
+    deny_guest(request)
+    days = max(1, min(400, int(request.query_params.get("days") or 30)))
+    return JSONResponse({
+        "today": stats.day(),
+        "series": stats.series(days),
+        "totals": stats.totals(days),
+        "summary": stats.summary(min(days, 30)),
+        "prices": {"in": PRICE_IN, "out": PRICE_OUT,
+                   "cache_read": PRICE_IN * CACHE_READ_RATE,
+                   "cache_write": PRICE_IN * CACHE_WRITE_RATE},
+        "cap": DAILY_COST_CAP,
+        "model": MODEL,
+    })
+
+
+@app.get("/api/triggers")
+async def triggers_list(request: Request, _=Depends(require_auth)):
+    deny_guest(request)
+    return JSONResponse({"rules": triggers._load(),
+                         "text": triggers.list_triggers()})
+
+
+@app.get("/api/triggers/due")
+async def triggers_due(request: Request, _=Depends(require_auth)):
+    """Rules that fired since the browser last asked, so it can speak them."""
+    deny_guest(request)
+    return JSONResponse({"due": triggers.due()})
+
+
+@app.get("/watch")
+async def arc_watch(request: Request, _=Depends(require_auth)):
+    """Arc Watch — what ARC has cost and done, as a page.
+
+    Its own screen rather than another panel in the HUD, for the same reason
+    /display is: this is something you leave open on a second monitor and
+    glance at, not something you open mid-conversation.
+    """
+    deny_guest(request)
+    return FileResponse(ROOT / "static" / "watch.html")
 
 
 @app.get("/api/selfcheck")
@@ -2252,9 +2359,11 @@ async def leave(request: Request, _=Depends(require_auth)):
 async def session_info(request: Request, _=Depends(require_auth)):
     """Lets the HUD warn before the absolute cap lands mid-conversation."""
     if AUTH_MODE == "open":
-        return JSONResponse({"email": "local", "auth_mode": "open"})
+        return JSONResponse({"email": "local", "auth_mode": "open",
+                             "tier": "owner"})
     info = session.describe(request.cookies.get(COOKIE, "")) or {}
-    return JSONResponse({**info, "auth_mode": AUTH_MODE, "guest": is_guest(request)})
+    return JSONResponse({**info, "auth_mode": AUTH_MODE,
+                         "guest": is_guest(request), "tier": tier(request)})
 
 
 @app.get("/oauth/google/status")

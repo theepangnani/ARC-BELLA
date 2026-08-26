@@ -51,7 +51,8 @@ c.truthy("  and the order is stated as the point of the design",
 # which is the same default-deny as PASSIVE_TOOLS and GUEST_TOOLS.
 c("  it knows exactly which files are its business",
   sorted(selfheal.DATA_FILES),
-  ["alarms.json", "notes.json", "price_alerts.json", "reminders.json", "todos.json"])
+  ["alarms.json", "notes.json", "price_alerts.json", "reminders.json",
+   "todos.json", "triggers.json", "usage.json"])
 for secret in ("credentials.json", "credentials_web.json", "token.json", ".env"):
     c.truthy("  %-22s is never copied or rewritten" % secret,
              secret in selfheal.KEEP_OUT and secret not in selfheal.DATA_FILES)
@@ -276,8 +277,12 @@ c("  an unknown tool fails", failed, True)
 
 print("\nThe server wires it in, and gates it the same way as everything else:")
 run_src = io.open(ARC / "run.py", encoding="utf-8").read()
+# Checked against the live tuple rather than the source text: the line grows
+# every time a toolkit is added, and a substring match on it breaks for a
+# reason that has nothing to do with self-repair.
+import selfheal as _sh   # noqa: E402
 c.truthy("  selfheal is a toolkit", "import selfheal" in run_src
-         and "automation, selfheal)" in run_src)
+         and _sh in __import__("run").TOOLKITS)
 c.truthy("  self_check needs no permission", '"self_check",' in run_src)
 c("  self_repair DOES — it rewrites files", '"self_repair"' in
   run_src.split("PASSIVE_TOOLS = {")[1].split("}")[0], False)

@@ -1411,6 +1411,7 @@
         <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
         <button id="fullscreenBtn" title="Toggle full-screen (or press F)">⛶ Full screen</button>
         <button id="resetPanelsBtn" title="Snap the weather and stock panels back to their default spots">Reset panels</button>
+        <button id="watchStatsBtn" title="Arc Watch — what ARC has cost and done, day by day. Opens in its own tab; leave it on a second screen.">⌘ Arc Watch</button>
       </div>
 
       <div class="cgroup" data-group="fix">
@@ -1908,6 +1909,26 @@ You are an upbeat, motivating coach in the user's corner.
       speak(msg);
     }
   }
+
+  // Standing rules — "tell me if Tesla drops below 200", "warn me if I've
+  // spent five dollars today". Same shape as the alert poll above: the server
+  // decides when one is true, this end only surfaces it. Rules NOTIFY; nothing
+  // here buys, sells or spends anything, and triggers.py explains why.
+  async function pollTriggers() {
+    if (!state.booted) return;
+    if (state.mode === "thinking" || state.mode === "speaking" || state.holding) return;
+    let due = [];
+    try {
+      const d = await (await fetch("/api/triggers/due")).json();
+      due = (d && d.due) || [];
+    } catch (_) { return; }
+    if (due.length) {
+      const msg = due.join(" ");
+      addEntry("sys", "SYSTEM", msg);
+      cue("done");
+      speak(msg);
+    }
+  }
   /* ---------------- alarms ----------------
      The server owns these (alarm.py): it decides when one goes off, keeps them
      across restarts, repeats them, and pushes to the phone. This end has one
@@ -2112,7 +2133,10 @@ You are an upbeat, motivating coach in the user's corner.
     clearInterval(reminderPoll);
     pollReminders();
     pollAlerts();
-    reminderPoll = setInterval(() => { pollReminders(); pollAlerts(); }, 20000);
+    pollTriggers();
+    reminderPoll = setInterval(() => {
+      pollReminders(); pollAlerts(); pollTriggers();
+    }, 20000);
     // Alarms are NOT started here — see startAlarmPoll above, which runs at
     // page load. They also poll faster than this: twenty seconds of
     // oversleeping is a missed train.
@@ -5736,6 +5760,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   if (reconnectBtn) reconnectBtn.addEventListener("click", reconnectArc);
   const selfHealBtn = document.getElementById("selfHealBtn");
   if (selfHealBtn) selfHealBtn.addEventListener("click", selfHeal);
+  const watchStatsBtn = document.getElementById("watchStatsBtn");
+  // Its own tab, not a panel: this is a page you leave open on a second
+  // screen and glance at, not something you open mid-conversation.
+  if (watchStatsBtn) watchStatsBtn.addEventListener("click",
+    () => window.open("/watch", "arc-watch"));
 
   const personaBtn = document.getElementById("personaBtn");
   function applyPersona(mode, announce) {

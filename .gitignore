@@ -44,6 +44,10 @@ notes.json
 # Market price alerts (personal watchlist)
 price_alerts.json
 
+# Standing rules (personal watchlist) and the usage record (what you spent)
+triggers.json
+usage.json
+
 # Alarms (personal — when you get up)
 alarms.json
 
