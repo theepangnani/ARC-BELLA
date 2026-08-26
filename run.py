@@ -262,6 +262,29 @@ MODEL_CHOICES = {
 }
 
 
+def thinking_for(model: str, want_on: bool) -> dict:
+    """The thinking block to send, given what was asked for and who is answering.
+
+    ARC turns thinking off by default because it is the single biggest source of
+    reply latency, and a voice loop is judged on how quickly it starts talking.
+
+    On Opus 5 that trade is not on offer. With thinking disabled, the model
+    sometimes writes a tool call into its VISIBLE TEXT instead of emitting a
+    tool_use block: nothing errors, the turn succeeds, the tool never runs — and
+    ARC reads the tool call out loud. The same setting can leak internal tags
+    into the reply, which also get spoken. Both are documented behaviour of that
+    model rather than something a rule in the prompt can fix, and both are worse
+    here than anywhere else, because the failure is audible and confident.
+
+    So on Opus, thinking is on and `effort` is what controls depth instead. That
+    is not a cost regression worth arguing about: deep is the brain the owner
+    reached for on purpose, it already runs at a higher effort than the other
+    two, and lower effort with thinking ON is both cheaper and safer than
+    thinking OFF. Haiku and Sonnet keep the fast path — the failure is not
+    documented there, and latency is the whole reason the default exists.
+    """
+    return {"type": "adaptive"} if (want_on or "opus" in (model or "").lower())         else {"type": "disabled"}
+
 def resolve_model(choice) -> str:
     return MODEL_CHOICES.get(str(choice or "").strip().lower(), MODEL)
 
@@ -1575,14 +1598,17 @@ async def chat(request: Request, _=Depends(require_auth)):
             "allowed_callers": ["direct"],
         })
 
-    # The UI's OFF / AUTO / ALWAYS switch used to be sent and then ignored by
     # Thinking is the single biggest source of reply latency, so for a voice
     # loop it is OFF by default and only turns on when the user explicitly asks
     # (the THINKING switch set to ON/ALWAYS). Most spoken questions don't need
     # it; the ones that do can opt in.
+    #
+    # thinking_for() then has the last word, because on Opus that default is not
+    # safe to honour — see the note on the helper. The switch still means what it
+    # says on the two brains that answer most turns.
     want_think = payload.get("think")
     thinking_on = want_think is True or str(want_think).lower() in ("on", "always", "adaptive", "true")
-    thinking = {"type": "adaptive"} if thinking_on else {"type": "disabled"}
+    thinking = thinking_for(model, thinking_on)
 
     convo = list(messages)
 
@@ -1672,7 +1698,10 @@ async def chat(request: Request, _=Depends(require_auth)):
         if supports_effort(model):
             effort = EFFORT_DEEP if brain == "deep" else EFFORT
             # Guard the one combination that is a hard 400 rather than a
-            # degraded answer: thinking off above 'high' on Opus 5.
+            # degraded answer: thinking off above 'high' on Opus 5. Belt and
+            # braces now that thinking_for() never disables thinking on Opus —
+            # it costs nothing and it is the wrong thing to be relying on a
+            # second function for if that one is ever changed.
             if thinking["type"] == "disabled" and effort not in _NO_THINK_MAX_EFFORT:
                 effort = "high"
             kwargs["output_config"] = {"effort": effort}

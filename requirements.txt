@@ -1,25 +1,40 @@
+# Pinned exactly, on purpose.
+#
+# Every line here used to be `>=`, which meant a fresh install today and a
+# fresh install next month were not the same program. That is a strange thing
+# to allow in something that repairs itself when it breaks: selfheal.py can
+# restore a half-written notes.json, and it cannot do anything at all about
+# edge-tts changing its API underneath ARC between one `pip install` and the
+# next. The drift had already happened — edge-tts asked for >=6.1 and this
+# machine is running 7.2.8, a major version it was never tested against.
+#
+# The trade is that security updates no longer arrive on their own. That is the
+# right way round here: this runs on one machine, and an upgrade that breaks
+# the voice at 7am is worse than an upgrade that waits until someone chooses
+# it. To move: bump the line, run tests/run_all.py, commit the two together.
+
 # Server
-fastapi>=0.115
-uvicorn[standard]>=0.32
-httpx>=0.27
-python-dotenv>=1.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+httpx==0.28.1
+python-dotenv==1.2.2
 
 # Reasoning
-anthropic>=0.69
+anthropic==0.120.2
 
 # Google — calendar, email, contacts, Drive
-google-api-python-client>=2.150
-google-auth-oauthlib>=1.2
+google-api-python-client==2.198.0
+google-auth-oauthlib==1.4.0
 
 # Telegram
-telethon>=1.36
+telethon==1.44.0
 
 # Volume control. Windows-only, and marked so — without it `system_control`
 # silently does nothing on a fresh install, which is indistinguishable from
 # ARC deciding not to. Imported lazily by pc.py, so its absence is survivable.
-pycaw>=20240210; sys_platform == "win32"
+pycaw==20251023; sys_platform == "win32"
 
 # Voice, QR for phone pairing, image handling
-edge-tts>=6.1
-segno>=1.6
-pillow>=10.0
+edge-tts==7.2.8
+segno==1.6.6
+pillow==12.3.0

@@ -263,4 +263,28 @@ c("  exporting does", "export_everything" in run.PASSIVE_TOOLS, False)
 c("  none of it is a guest's",
   [t for t in ("list_memory", "forget", "export_everything") if t in run.GUEST_TOOLS], [])
 
+print("\nOpus never answers with thinking switched off:")
+# Not a preference. With thinking disabled, Opus 5 sometimes writes a tool call
+# into its VISIBLE TEXT instead of emitting a tool_use block — the turn succeeds,
+# the tool never runs, and a voice assistant reads the call out loud. It can also
+# leak internal tags into the reply, which also get spoken. Neither is something
+# a rule in the prompt can fix, so the request is what has to change.
+OPUS = run.MODEL_CHOICES["deep"]
+c("  asked for thinking, Opus thinks", run.thinking_for(OPUS, True)["type"], "adaptive")
+c("  NOT asked for it, Opus still thinks", run.thinking_for(OPUS, False)["type"], "adaptive")
+c("  a dated opus id is caught too",
+  run.thinking_for("claude-opus-4-8-20260101", False)["type"], "adaptive")
+# The default exists because thinking is the biggest source of reply latency and
+# the voice loop is judged on how fast it starts talking. That stays true on the
+# two brains that answer nearly every turn.
+c("  Sonnet keeps the fast default",
+  run.thinking_for(run.MODEL_CHOICES["smart"], False)["type"], "disabled")
+c("  Haiku too", run.thinking_for(run.MODEL_CHOICES["fast"], False)["type"], "disabled")
+c("  and both still obey the switch when it is on",
+  [run.thinking_for(run.MODEL_CHOICES[b], True)["type"] for b in ("smart", "fast")],
+  ["adaptive", "adaptive"])
+c.truthy("  the route asks the helper rather than deciding for itself",
+         "thinking = thinking_for(model, thinking_on)"
+         in io.open(ARC / "run.py", encoding="utf-8").read())
+
 c.done()

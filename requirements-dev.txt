@@ -5,4 +5,4 @@
 # inline script in static/index.html still parses. A syntax error there does
 # not degrade — the whole page becomes a dark rectangle that answers nothing.
 # `node` on PATH works too; the suite uses whichever it finds.
-esprima>=4.0
+esprima==4.0.1
