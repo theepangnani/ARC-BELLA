@@ -310,6 +310,105 @@ def _windows():
     return out
 
 
+def _exe_of(hwnd) -> str:
+    """The executable behind a window, lowercased, or "".
+
+    Needed because a title alone cannot tell you what is playing. "Bohemian
+    Rhapsody" could be Spotify, a browser tab, or a Word document somebody is
+    writing about it — and guessing wrong puts a document title on the HUD as
+    music. The process name is the fact; the title is the guess.
+    """
+    if not IS_WIN:
+        return ""
+    import ctypes
+    from ctypes import wintypes
+    try:
+        pid = wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        # PROCESS_QUERY_LIMITED_INFORMATION — enough for the image name and
+        # allowed against processes this one may not fully open.
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(512)
+            size = wintypes.DWORD(512)
+            if not ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                    h, 0, buf, ctypes.byref(size)):
+                return ""
+            return buf.value.rsplit("\\", 1)[-1].lower()
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        return ""
+
+
+# What each player leaves in its window title, and what to strip back off it.
+# Spotify writes "Artist - Song" while playing and its own name when stopped,
+# which is the whole detection: a title that is just the app is silence.
+_PLAYERS = {
+    "spotify.exe":  {"name": "Spotify",  "idle": ("spotify", "spotify premium", "spotify free")},
+    "vlc.exe":      {"name": "VLC",      "idle": ("vlc media player", "vlc"),
+                     "strip": (" - vlc media player",)},
+    "chrome.exe":   {"name": "Chrome",   "idle": (),
+                     "strip": (" - google chrome", " - youtube")},
+    "msedge.exe":   {"name": "Edge",     "idle": (),
+                     "strip": (" - microsoft​ edge", " - microsoft edge", " - youtube")},
+    "firefox.exe":  {"name": "Firefox",  "idle": (),
+                     "strip": (" — mozilla firefox", " - mozilla firefox", " - youtube")},
+    "music.ui.exe": {"name": "Media Player", "idle": ("media player",)},
+}
+# Browsers only count when the tab says so. Otherwise every open window would
+# be "now playing", which is how a spreadsheet ends up on the HUD as a song.
+_BROWSER_HINTS = ("youtube", "soundcloud", "spotify", "bandcamp", "apple music",
+                  "tidal", "deezer", "mixcloud")
+
+
+def now_playing() -> dict:
+    """What this machine is playing, read from the players' own window titles.
+
+    Deliberately NOT audio fingerprinting. Windows already knows what is
+    playing and writes it above the window; listening to the speakers to work
+    out something the operating system could simply be asked is a research
+    project standing in for a lookup.
+
+    {playing: bool, title, artist, source} — playing is False when every player
+    is showing its own name, which is what they do when stopped.
+    """
+    if not IS_WIN:
+        return {"playing": False}
+    for hwnd, title in _windows():
+        exe = _exe_of(hwnd)
+        cfg = _PLAYERS.get(exe)
+        if not cfg:
+            continue
+        low = title.strip().lower()
+        if low in cfg.get("idle", ()):
+            continue
+        if exe in ("chrome.exe", "msedge.exe", "firefox.exe"):
+            if not any(h in low for h in _BROWSER_HINTS):
+                continue
+        clean = title.strip()
+        for suffix in cfg.get("strip", ()):
+            if clean.lower().endswith(suffix):
+                clean = clean[: -len(suffix)].strip()
+        # Chrome prefixes a play marker and an unread count on some pages.
+        clean = clean.lstrip("▶ ").strip()
+        if not clean:
+            continue
+        artist, song = "", clean
+        if " - " in clean:
+            a, b = clean.split(" - ", 1)
+            # Spotify is Artist - Song; a browser tab is usually Song - Site.
+            if exe == "spotify.exe":
+                artist, song = a.strip(), b.strip()
+            else:
+                song = a.strip()
+        return {"playing": True, "title": song[:80], "artist": artist[:60],
+                "source": cfg["name"]}
+    return {"playing": False}
+
+
 def _match_window(title: str):
     want = (title or "").strip().lower()
     if not want:

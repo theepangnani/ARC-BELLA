@@ -813,14 +813,49 @@
   /* ---------- forecast widget ----------
      Floats in the open top-right of the main area, just left of the right
      rail, over the reactor. Glassy, like the other HUD panels. */
-  .forecast {
-    position: fixed; top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px);
-    z-index: 3; width: 190px; pointer-events: auto;
+  /* The chrome shared by every floating card — weather, markets, agenda, now
+     playing. Written once and listed four ways rather than copied four times:
+     the previous two were identical but separate, and a third copy is the point
+     at which they start drifting apart by a pixel each. Only POSITION differs
+     per card, below. */
+  .forecast, .stocks, .agenda, .nowplaying {
+    position: fixed; z-index: 3; width: 190px; pointer-events: auto;
     border: 1px solid rgba(95,217,255,.22);
     background: linear-gradient(180deg, rgba(9,19,32,.55), rgba(4,7,12,.4));
     backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
     padding: 11px 13px; font-family: var(--mono);
     box-shadow: 0 0 22px rgba(4,7,12,.55), inset 0 0 22px rgba(95,217,255,.05);
+  }
+  .forecast { top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
+  /* The left of the stage, mirroring the two on the right. */
+  .agenda    { top: 60px;  left: calc(clamp(180px, 13vw, 250px) + 34px); }
+  .nowplaying { top: 262px; left: calc(clamp(180px, 13vw, 250px) + 34px); }
+
+  /* Rows, titles and hints are the markets panel's, reused verbatim so the four
+     cards read as one family rather than as four things that happen to float. */
+  .agenda .st-title, .nowplaying .st-title {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 8.5px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--cyan-dim); margin-bottom: 6px;
+  }
+  .agenda .ag-row {
+    display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+    font-size: 10.5px; padding: 3px 0;
+    border-top: 1px dashed rgba(18,41,60,.7);
+  }
+  .agenda .ag-row:first-of-type { border-top: none; }
+  .agenda .ag-at { color: var(--accent); white-space: nowrap; }
+  .agenda .ag-what {
+    color: var(--ice); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; text-align: right;
+  }
+  /* Something already running is the most relevant row on the panel, so it is
+     the one that is lit rather than the one that is dimmed. */
+  .agenda .ag-row.now .ag-at { color: #8affd4; }
+  .agenda .ag-row.allday .ag-at { color: var(--cyan-dim); }
+  .agenda .st-hint, .nowplaying .st-hint {
+    font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--cyan-dim); opacity: .5; margin-top: 6px; text-align: center;
   }
   .forecast .fc-loc {
     font-size: 8.5px; letter-spacing: .22em; text-transform: uppercase;
@@ -859,15 +894,7 @@
   .stocks .st-del:hover { opacity: 1; color: #ff7a8a; text-shadow: 0 0 8px rgba(255,122,138,.6); }
 
   /* stock watcher — sits just under the forecast, same glassy panel */
-  .stocks {
-    position: fixed; top: 262px; right: calc(clamp(240px, 19vw, 380px) + 34px);
-    z-index: 3; width: 190px; pointer-events: auto;
-    border: 1px solid rgba(95,217,255,.22);
-    background: linear-gradient(180deg, rgba(9,19,32,.55), rgba(4,7,12,.4));
-    backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
-    padding: 11px 13px; font-family: var(--mono);
-    box-shadow: 0 0 22px rgba(4,7,12,.55), inset 0 0 22px rgba(95,217,255,.05);
-  }
+  .stocks { top: 262px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
   .stocks .st-title {
     display: flex; justify-content: space-between; align-items: center;
     font-size: 8.5px; letter-spacing: .22em; text-transform: uppercase;
@@ -1058,6 +1085,16 @@
   .shapepop[hidden] { display: none; }
   .shapepop button { font-size: 9.5px; padding: 7px 4px; letter-spacing: .1em; }
 
+  .nowplaying .np-song {
+    font-family: var(--display); font-size: 14px; color: var(--ice);
+    line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .nowplaying .np-artist {
+    font-size: 9.5px; letter-spacing: .1em; color: var(--accent);
+    margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   /* ---------- override ----------
      Full bleed and slow, because the whole point is that it feels like
      something. It is the only screen in ARC allowed to be dramatic. */
@@ -1130,6 +1167,8 @@
   html.chat .col.left,
   html.chat .forecast,
   html.chat .stocks,
+  html.chat .agenda,
+  html.chat .nowplaying,
   html.chat .hearmeter,
   html.chat #txPanel > h2,
   html.chat .col.right > .panel:not(#txPanel) { display: none !important; }
@@ -1412,6 +1451,11 @@
 <!-- live weather, floating in the top-right of the main area (Stark-style) -->
 <div class="forecast" id="forecast" aria-live="polite"></div>
 <div class="stocks" id="stocks" aria-live="polite"></div>
+<!-- The rest of today, and what is playing — the left of the stage, mirroring
+     the weather and the markets on the right. Both hide themselves when they
+     have nothing to say rather than sitting there empty. -->
+<div class="agenda" id="agenda" aria-live="polite" hidden></div>
+<div class="nowplaying" id="nowplaying" aria-live="polite" hidden></div>
 
 <!-- ============ BOOT GATE ============ -->
 <div class="boot" id="boot">
@@ -7635,6 +7679,137 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     label();
   })();
 
+  /* ---------------- the agenda card ----------------
+     The rest of today, beside the markets and built the same way: nodes, never
+     innerHTML with a value from outside. An event title is text somebody else
+     wrote — a meeting invitation from a stranger is the ordinary case, not the
+     exotic one — and this panel renders it on the owner's screen.
+
+     It hides itself when there is nothing on. A card that says "no events" all
+     evening is a card you stop seeing, and then it is no use on the morning it
+     has something to say.
+  ------------------------------------------------------------------- */
+  let agendaTick = 0;
+
+  function paintAgenda(d) {
+    const box = $("agenda");
+    if (!box) return;
+    const rows = (d && d.events) || [];
+    if (!rows.length) { box.hidden = true; box.textContent = ""; return; }
+
+    box.textContent = "";
+    const t = document.createElement("div");
+    t.className = "st-title";
+    const tl = document.createElement("span"); tl.textContent = "TODAY";
+    const tr = document.createElement("span"); tr.textContent = String(rows.length);
+    t.appendChild(tl); t.appendChild(tr);
+    box.appendChild(t);
+
+    rows.forEach(ev => {
+      const row = document.createElement("div");
+      row.className = "ag-row" + (ev.all_day ? " allday" : (ev.started ? " now" : ""));
+      const at = document.createElement("span");
+      at.className = "ag-at";
+      at.textContent = ev.all_day ? "ALL DAY" : (ev.started ? "NOW" : ev.at);
+      const what = document.createElement("span");
+      what.className = "ag-what";
+      what.textContent = ev.title || "(untitled)";
+      what.title = what.textContent;          // the full thing on hover
+      row.appendChild(at); row.appendChild(what);
+      box.appendChild(row);
+    });
+
+    const next = rows.find(e => !e.all_day && !e.started);
+    if (next) {
+      const hint = document.createElement("div");
+      hint.className = "st-hint";
+      const m = next.minutes;
+      hint.textContent = m < 60 ? "next in " + Math.max(1, m) + " min"
+        : "next at " + next.at;
+      box.appendChild(hint);
+    }
+    box.hidden = false;
+  }
+
+  async function pollAgenda() {
+    try {
+      const r = await fetch("/api/calendar/agenda");
+      if (!r.ok) return;                       // not linked, or not signed in
+      paintAgenda(await r.json());
+    } catch (_) { /* a dropped poll is not worth a line in the transcript */ }
+  }
+
+  function startAgendaPoll() {
+    clearInterval(agendaTick);
+    pollAgenda();
+    // Five minutes. A diary does not change second to second, and this is a
+    // Google call — polling it like a stock ticker would spend quota to watch
+    // nothing happen.
+    agendaTick = setInterval(pollAgenda, 300000);
+  }
+
+  /* ---------------- now playing ----------------
+     Read from the players' own window titles, which is where Windows already
+     writes it. Listening to the speakers to work out something the operating
+     system could simply be asked is a research project standing in for a
+     lookup — and it would need the microphone, which is busy.
+
+     Hides itself in silence. A card reading "nothing playing" all day is a card
+     you stop seeing.
+  ------------------------------------------------------------------- */
+  let npTick = 0, npLast = "";
+
+  function paintNowPlaying(d) {
+    const box = $("nowplaying");
+    if (!box) return;
+    if (!d || !d.playing || !d.title) {
+      box.hidden = true; box.textContent = ""; npLast = ""; return;
+    }
+    // Rebuilt only when the track changes, so a card that is not changing does
+    // not flicker every ten seconds.
+    const key = (d.source || "") + "|" + (d.artist || "") + "|" + d.title;
+    if (key === npLast) return;
+    npLast = key;
+
+    box.textContent = "";
+    const t = document.createElement("div");
+    t.className = "st-title";
+    const tl = document.createElement("span"); tl.textContent = "NOW PLAYING";
+    const tr = document.createElement("span"); tr.textContent = d.source || "";
+    t.appendChild(tl); t.appendChild(tr);
+    box.appendChild(t);
+
+    const song = document.createElement("div");
+    song.className = "np-song";
+    song.textContent = d.title;
+    song.title = d.title;
+    box.appendChild(song);
+
+    if (d.artist) {
+      const who = document.createElement("div");
+      who.className = "np-artist";
+      who.textContent = d.artist;
+      box.appendChild(who);
+    }
+    box.hidden = false;
+  }
+
+  async function pollNowPlaying() {
+    try {
+      const r = await fetch("/api/nowplaying");
+      if (!r.ok) return;
+      paintNowPlaying(await r.json());
+    } catch (_) {}
+  }
+
+  function startNowPlayingPoll() {
+    clearInterval(npTick);
+    pollNowPlaying();
+    // Ten seconds. A track lasts minutes, and this reads window titles on the
+    // machine rather than calling anything out on the network.
+    npTick = setInterval(pollNowPlaying, 10000);
+  }
+
   /* ---------------- override ----------------
      "Bella override, this is the true master" opens a panel; the word gets you
      a confirmation and your other devices signed out.
@@ -8638,6 +8813,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     restoreTimers();
     restoreHistory();
     startReminderPoll();
+    // After boot, not from page load like the alarms: this one needs a Google
+    // token, and asking before anybody has pressed Initialize is a request that
+    // can only ever be refused.
+    startAgendaPoll();
+    startNowPlayingPoll();
     refreshGoogleStatus();
     setMode("standby");
 

@@ -734,7 +734,11 @@ def _sign(raw: str) -> str:
 BACKGROUND_PATHS = {
     "/api/health", "/api/session", "/api/reminders/due", "/api/alerts/due",
     "/api/alarms/due", "/api/automation/status",
-    "/api/calendar/upcoming", "/api/screen-watch", "/api/stocks",
+    # The agenda panel refreshes itself on a timer beside the markets. Left out
+    # of this set it would hold a session alive for ever just by being on
+    # screen, which is precisely what the idle clock exists to prevent.
+    "/api/calendar/upcoming", "/api/calendar/agenda", "/api/nowplaying",
+    "/api/screen-watch", "/api/stocks",
     "/api/stock-search", "/api/push/status", "/api/display", "/api/voices",
     # Both are timers with nobody necessarily there: the trigger poll runs
     # beside the alert poll, and Arc Watch left open on a second screen would
@@ -2621,6 +2625,50 @@ async def calendar_upcoming(request: Request, _=Depends(require_auth)):
     except Exception:
         events = []
     return JSONResponse({"events": events})
+
+
+@app.get("/api/calendar/agenda")
+async def calendar_agenda(request: Request, _=Depends(require_auth)):
+    """The rest of today, for the panel beside the markets.
+
+    THIS user's own calendar — apply_session_google points every Google call at
+    the token of whoever is signed in on this browser, so a guest reading the
+    panel is reading their own day and not the owner's. That is the same
+    mechanism the calendar tools already use, and it is why the panel needs no
+    tier check of its own.
+
+    An empty list on failure rather than an error: a calendar that is not linked
+    is the ordinary case, not a fault, and a panel that shows a red row when you
+    simply have not connected Google is a panel that trains you to ignore it.
+    """
+    apply_session_google(request)
+    if not gcal.connected():
+        return JSONResponse({"events": [], "connected": False})
+    try:
+        import anyio
+        events = await anyio.to_thread.run_sync(gcal.agenda)
+    except Exception as e:
+        print(f"{C_DIM}  · agenda: {type(e).__name__}: {e}{C_OFF}")
+        events = []
+    return JSONResponse({"events": events, "connected": True})
+
+
+@app.get("/api/nowplaying")
+async def now_playing(request: Request, _=Depends(require_auth)):
+    """What THIS machine is playing, from the players' own window titles.
+
+    Local only, like every other thing that reads the desktop. Over the tunnel
+    it would be reporting the contents of a room the caller is not in — and the
+    phone showing the desktop's music as if it were its own is a small lie the
+    HUD does not need to tell.
+    """
+    if not is_local_request(request):
+        return JSONResponse({"playing": False, "remote": True})
+    try:
+        import anyio
+        return JSONResponse(await anyio.to_thread.run_sync(pc.now_playing))
+    except Exception:
+        return JSONResponse({"playing": False})
 
 
 @app.post("/api/duck")

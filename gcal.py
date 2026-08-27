@@ -98,6 +98,58 @@ def upcoming_events(within_minutes: int = 15) -> list:
     return out
 
 
+def agenda(hours: int = 24) -> list:
+    """What is left of the day, for the panel on the HUD.
+
+    Not upcoming_events with a bigger number. That one exists to nudge you
+    before a meeting, so it skips all-day entries and anything already started
+    — both of which are exactly what an agenda must show. "Leave for the
+    airport" is on your day whether or not it has a clock on it, and a thing
+    that started ten minutes ago is the most relevant row on the panel.
+
+    Returns [{id, title, at, all_day, started, minutes}], soonest first.
+    """
+    svc = _service()
+    now = dt.datetime.now(_tz())
+    # From the start of TODAY, not from now, so something running since nine is
+    # still on the list at ten. Trimmed below rather than by the query, because
+    # only the query knows which entries are all-day.
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = now + dt.timedelta(hours=max(1, min(int(hours or 24), 72)))
+    items = svc.events().list(
+        calendarId="primary", timeMin=day0.isoformat(), timeMax=end.isoformat(),
+        singleEvents=True, orderBy="startTime", maxResults=25,
+    ).execute().get("items", [])
+
+    out = []
+    for e in items:
+        st = e.get("start", {}) or {}
+        timed = st.get("dateTime")
+        if timed:
+            when = _parse(timed)
+            mins = round((when - now).total_seconds() / 60)
+            fin = (e.get("end", {}) or {}).get("dateTime")
+            # Dropped only once it is genuinely OVER, not once it has begun.
+            if fin and _parse(fin) < now:
+                continue
+            out.append({"id": e.get("id", ""), "title": e.get("summary", "(untitled)"),
+                        "at": when.strftime("%H:%M"), "all_day": False,
+                        "started": mins < 0, "minutes": mins})
+        elif st.get("date"):
+            # All-day. Only today's — tomorrow's would sit at the top of the
+            # panel all afternoon claiming to be next.
+            if st["date"] != now.strftime("%Y-%m-%d"):
+                continue
+            out.append({"id": e.get("id", ""), "title": e.get("summary", "(untitled)"),
+                        "at": "all day", "all_day": True,
+                        "started": False, "minutes": -1})
+    # All-day first, then by clock. Sorting purely by minutes would bury an
+    # all-day entry under every timed one, or float it above a meeting starting
+    # in five, depending which sentinel you picked.
+    out.sort(key=lambda r: (0 if r["all_day"] else 1, r["minutes"]))
+    return out[:8]
+
+
 # --------------------------------------------------------------------------
 # the tools themselves
 # --------------------------------------------------------------------------
