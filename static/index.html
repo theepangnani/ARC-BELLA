@@ -1030,6 +1030,34 @@
      What survives on purpose: the reactor (small, still the push-to-talk
      target, still breathing), the live line, the brand bar. ARC without the
      core is a chat window with a serif greeting. */
+  /* ---------- core shape: one button, twelve behind it ----------
+     A row of twelve tiny buttons is a wall — nothing looks more important than
+     anything else, so nothing is findable, and it is the same complaint the
+     control panel groups were built to answer. This is one control the width of
+     the rail, and the choices arrive over the top of it only when asked for. */
+  .shapepick { position: relative; }
+  .shapenow {
+    width: 100%; text-align: left; padding: 8px 26px 8px 10px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .shapenow::after {
+    content: "+"; position: absolute; right: 10px; top: 50%;
+    transform: translateY(-50%); opacity: .7; font-size: 12px;
+  }
+  .shapepick.open .shapenow::after { content: "3"; }   /* en dash */
+  .shapepop {
+    position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 40;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+    padding: 7px; border: 1px solid var(--line); border-radius: 3px;
+    background: rgba(4,9,16,.97);
+    box-shadow: 0 10px 30px -10px rgba(0,0,0,.85);
+    animation: shapein .14s ease both;
+  }
+  @keyframes shapein { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1 } }
+  .shapepop[hidden] { display: none; }
+  .shapepop button { font-size: 9.5px; padding: 7px 4px; letter-spacing: .1em; }
+
   /* ---------- override ----------
      Full bleed and slow, because the whole point is that it feels like
      something. It is the only screen in ARC allowed to be dramatic. */
@@ -1663,14 +1691,26 @@
       <input type="color" id="customColor" value="#5fd9ff">
 
       <label class="ctl" style="margin-top:12px">Core shape</label>
-      <div class="seg" id="shapes">
-        <button data-shape="hud" class="on">HUD</button>
-        <button data-shape="rings">Rings</button>
-        <button data-shape="hex">Hex</button>
-        <button data-shape="wave">Wave</button>
-        <button data-shape="sphere">Sphere</button>
-        <button data-shape="helix">Helix</button>
-        <button data-shape="cube">Cube</button>
+      <!-- Twelve of these in a row was a wall of tiny buttons. One button
+           saying what is on, and the rest a grid that pops out over the rail —
+           the same control, taking the space of one. -->
+      <div class="shapepick">
+        <button class="shapenow" id="shapeBtn" aria-haspopup="true"
+                aria-expanded="false">HUD</button>
+        <div class="shapepop" id="shapes" hidden>
+          <button data-shape="hud" class="on">HUD</button>
+          <button data-shape="rings">Rings</button>
+          <button data-shape="tri">Triangle</button>
+          <button data-shape="dia">Diamond</button>
+          <button data-shape="pent">Pentagon</button>
+          <button data-shape="hex">Hexagon</button>
+          <button data-shape="oct">Octagon</button>
+          <button data-shape="wave">Wave</button>
+          <button data-shape="sphere">Sphere</button>
+          <button data-shape="pyramid">Pyramid</button>
+          <button data-shape="cube">Cube</button>
+          <button data-shape="helix">Helix</button>
+        </div>
       </div>
 
       <label class="ctl" style="margin-top:12px">Depth</label>
@@ -3152,7 +3192,16 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // becomes a sphere, a hexagon a hex prism, a wave a 3D standing wave), so
   // coreShape is what the user picked and renderShape is what's drawn.
   let renderShape = "rings";
-  const THREE_D_OF = { hud: "sphere", rings: "sphere", hex: "hexprism", wave: "wave3d" };
+  // Polygons are DATA, not branches. "hex" used to be hardcoded in four places —
+  // the tick ring, the bar walk, the prism, the 3D map — so a triangle meant
+  // four more special cases and an octagon four more after that. One table
+  // instead, and a new one is a line.
+  const POLY = { tri: 3, dia: 4, pent: 5, hex: 6, oct: 8 };
+  let polySides = 6;          // which polygon the prism builder should extrude
+
+  const THREE_D_OF = { hud: "sphere", rings: "sphere", wave: "wave3d",
+                       tri: "prism", dia: "prism", pent: "prism",
+                       hex: "prism", oct: "prism" };
   // Declared here, not next to the projection code: buildGeometry runs during
   // start-up and reads it, so a later `let` would be in the temporal dead zone
   // and throw before the page ever rendered.
@@ -3285,6 +3334,27 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
 
   // Points spread along the twelve edges of a cube (a wireframe box of bars).
+  // A square base and an apex — eight edges, same walk as the cube. Kept as a
+  // dedicated 3D form rather than "the 3D of a triangle", because a triangle
+  // extruded is a wedge and nobody means a wedge when they say pyramid.
+  function buildPyramid() {
+    geo = [];
+    const s = 66, h = 78, per = 7;
+    const V = [[-s, h / 2, -s], [s, h / 2, -s], [s, h / 2, s], [-s, h / 2, s],
+               [0, -h / 2 - 14, 0]];                                  // apex last
+    const E = [[0, 1], [1, 2], [2, 3], [3, 0], [0, 4], [1, 4], [2, 4], [3, 4]];
+    for (const [a, b] of E) {
+      for (let j = 0; j < per; j++) {
+        const f = j / per;
+        const X = V[a][0] + (V[b][0] - V[a][0]) * f;
+        const Y = V[a][1] + (V[b][1] - V[a][1]) * f;
+        const Z = V[a][2] + (V[b][2] - V[a][2]) * f;
+        const m = Math.hypot(X, Y, Z) || 1;
+        _push3d(X, Y, Z, X / m, Y / m, Z / m);
+      }
+    }
+  }
+
   function buildCube() {
     geo = [];
     const s = 62, per = 6;
@@ -3302,22 +3372,23 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
   }
 
-  // A hexagon extruded into a solid hexagonal prism — the 3D form of "hex".
-  function buildHexPrism() {
+  // Any polygon extruded into a solid — the 3D form of every flat polygon.
+  // Was buildHexPrism, with 6 written into it five times.
+  function buildPrism(N) {
     geo = [];
     const R = 74, H = 96, per = 5;
-    const corner = k => { const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
+    const corner = k => { const a = (k / N) * Math.PI * 2 - Math.PI / 2;
                           return [Math.cos(a) * R, Math.sin(a) * R]; };
-    for (const yy of [-H / 2, H / 2]) {           // top and bottom hexagons
-      for (let k = 0; k < 6; k++) {
-        const [x1, z1] = corner(k), [x2, z2] = corner((k + 1) % 6);
+    for (const yy of [-H / 2, H / 2]) {           // top and bottom faces
+      for (let k = 0; k < N; k++) {
+        const [x1, z1] = corner(k), [x2, z2] = corner((k + 1) % N);
         for (let j = 0; j < per; j++) {
           const f = j / per, X = x1 + (x2 - x1) * f, Z = z1 + (z2 - z1) * f;
           const m = Math.hypot(X, Z) || 1; _push3d(X, yy, Z, X / m, 0, Z / m);
         }
       }
     }
-    for (let k = 0; k < 6; k++) {                  // the six vertical edges
+    for (let k = 0; k < N; k++) {                  // the vertical edges
       const [x, z] = corner(k), m = Math.hypot(x, z) || 1;
       for (let j = 0; j <= per; j++) _push3d(x, -H / 2 + H * (j / per), z, x / m, 0, z / m);
     }
@@ -3352,10 +3423,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                         stroke="var(--accent)" stroke-width="${long ? 1.6 : .7}"
                         opacity="${long ? .75 : .3}"/>`;
       }
-    } else if (shape === "hex") {
-      for (let k = 0; k < 6; k++) {
-        const a1 = (k / 6) * Math.PI * 2 - Math.PI / 2;
-        const a2 = ((k + 1) / 6) * Math.PI * 2 - Math.PI / 2;
+    } else if (POLY[shape]) {
+      const N = POLY[shape];
+      for (let k = 0; k < N; k++) {
+        const a1 = (k / N) * Math.PI * 2 - Math.PI / 2;
+        const a2 = ((k + 1) / N) * Math.PI * 2 - Math.PI / 2;
         ticks += `<line x1="${200 + Math.cos(a1) * 186}" y1="${200 + Math.sin(a1) * 186}"
                         x2="${200 + Math.cos(a2) * 186}" y2="${200 + Math.sin(a2) * 186}"
                         stroke="var(--accent)" stroke-width="1.4" opacity=".55"/>`;
@@ -3377,8 +3449,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       buildHelix();
     } else if (renderShape === "cube") {
       buildCube();
-    } else if (renderShape === "hexprism") {
-      buildHexPrism();
+    } else if (renderShape === "prism") {
+      polySides = POLY[shape] || 6;
+      buildPrism(polySides);
+    } else if (renderShape === "pyramid") {
+      buildPyramid();
     } else if (renderShape === "wave3d") {
       buildWave3D();
     } else {
@@ -3388,12 +3463,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           const x = 30 + t * 340;
           geo.push({ x, y: 200, nx: 0, ny: -1, two: true,
                      X: x - 200, Y: 0, Z: 0, NX: 0, NY: -1, NZ: 0 });
-        } else if (shape === "hex") {
-          // walk the perimeter of a hexagon rather than a circle
-          const side = t * 6;
+        } else if (POLY[shape]) {
+          // walk the perimeter of the polygon rather than a circle
+          const N = POLY[shape];
+          const side = t * N;
           const k = Math.floor(side), f = side - k;
-          const a1 = (k / 6) * Math.PI * 2 - Math.PI / 2;
-          const a2 = ((k + 1) / 6) * Math.PI * 2 - Math.PI / 2;
+          const a1 = (k / N) * Math.PI * 2 - Math.PI / 2;
+          const a2 = ((k + 1) / N) * Math.PI * 2 - Math.PI / 2;
           const R = 96;
           const x1 = Math.cos(a1) * R, y1 = Math.sin(a1) * R;
           const x2 = Math.cos(a2) * R, y2 = Math.sin(a2) * R;
@@ -7524,6 +7600,39 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       });
       paint();
     });
+  })();
+
+  /* The shape picker opens on demand and closes the moment a choice is made,
+     clicked away from, or Escape is pressed. The list itself keeps the id the
+     rest of the code already binds to, so nothing downstream had to change. */
+  (function shapePicker() {
+    const btn = $("shapeBtn"), pop = $("shapes");
+    if (!btn || !pop) return;
+    const wrap = btn.parentElement;
+
+    function open(on) {
+      pop.hidden = !on;
+      wrap.classList.toggle("open", !!on);
+      btn.setAttribute("aria-expanded", on ? "true" : "false");
+    }
+    btn.addEventListener("click", (e) => { e.stopPropagation(); open(pop.hidden); });
+    pop.addEventListener("click", (e) => { if (e.target.dataset.shape) open(false); });
+    document.addEventListener("click", (e) => {
+      if (!wrap.contains(e.target)) open(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !pop.hidden) open(false);
+    });
+    // The button has to say what is on, or the whole point of hiding the rest
+    // is lost. Watching the list rather than being told by applyShape, so it
+    // stays right however the shape got chosen.
+    const label = () => {
+      const on = pop.querySelector("button.on");
+      if (on) btn.textContent = on.textContent;
+    };
+    new MutationObserver(label).observe(pop, {
+      subtree: true, attributes: true, attributeFilter: ["class"] });
+    label();
   })();
 
   /* ---------------- override ----------------

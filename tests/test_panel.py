@@ -185,4 +185,34 @@ c.truthy("  it borrows the marker the groups already use",
 c.truthy("  a folded panel costs no layout at all",
          '.panel.shut > *:not(h2) { display: none !important; }' in page)
 
+
+print("\nTwelve core shapes, behind one button:")
+# A row of twelve tiny buttons is the same wall the control groups were built to
+# answer: nothing looks more important than anything else, so nothing is found.
+c("  every shape is offered", page.count('data-shape="'), 12)
+for shape in ("tri", "dia", "pent", "hex", "oct", "pyramid", "cube", "sphere", "helix"):
+    c.truthy("  %-8s" % shape, 'data-shape="%s"' % shape in page)
+c.truthy("  they live in a pop-out, not a row", 'class="shapepop"' in page)
+c.truthy("  ...opened by one button that says what is on", 'id="shapeBtn"' in page)
+c.truthy("  ...which keeps itself right by watching the list",
+         "MutationObserver(label)" in body)
+c.truthy("  closing on Escape, a click away, or a choice",
+         '"Escape" && !pop.hidden' in body and "!wrap.contains(e.target)" in body)
+# The list kept the id everything downstream already binds to, so applyShape and
+# the saved-shape restore needed no changes at all.
+c.truthy("  and the list kept the id the rest of the code binds to",
+         'class="shapepop" id="shapes"' in page)
+
+print("\nPolygons are data, not four branches each:")
+# "hex" was written into the tick ring, the bar walk, the prism and the 3D map.
+# A triangle meant four more special cases; an octagon four more after that.
+c.truthy("  one table names them all",
+         "const POLY = { tri: 3, dia: 4, pent: 5, hex: 6, oct: 8 };" in body)
+c.truthy("  the tick ring reads it", "} else if (POLY[shape]) {" in body)
+c.truthy("  the prism takes a side count", "function buildPrism(N)" in body)
+c("  and the hardcoded hexagon is gone", "hexprism" in body, False)
+# A triangle extruded is a wedge, and nobody means a wedge when they say pyramid.
+c.truthy("  the pyramid is its own solid", "function buildPyramid" in body)
+c.truthy("  ...and the reason is written down", "nobody means a wedge" in body)
+
 c.done()
