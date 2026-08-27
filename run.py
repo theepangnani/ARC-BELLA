@@ -473,11 +473,18 @@ RATE_PER_MIN = int(os.getenv("ARC_RATE_PER_MIN", "12"))
 RATE_PER_HOUR = int(os.getenv("ARC_RATE_PER_HOUR", "120"))
 DAILY_CAP = int(os.getenv("ARC_DAILY_CAP", "600"))
 
-# Rough per-million-token prices so we can show a running daily spend and stop a
-# runaway loop from quietly draining a paid key. Defaults track the default
-# model (Sonnet 5); override if you switch. It's an estimate either way — the
-# runtime brain switch means a day can mix Sonnet and Haiku turns. DAILY_COST_CAP
-# is a generous ceiling — normal use costs pennies, so hitting it means a loop.
+# THE FALLBACK PRICE, for a model that is not in PRICES below — and nothing
+# else. It used to be the only price ARC knew, which is why the old comment here
+# said it "tracks the default model": it was Sonnet's rate, applied to whatever
+# answered. PRICES ended that, and Sonnet 5 is $2/$10 now anyway, so a reader
+# taking these two lines as the Sonnet rate would be wrong twice over.
+#
+# Left HIGHER than any current model on purpose. This is the number used when
+# ARC meets an id it has never seen, and the only two ways to be wrong are to
+# over-count a model nobody has configured yet or to under-count one — and
+# under-counting is what lets a runaway loop drain a card while DAILY_COST_CAP
+# reads as fine. Expensive-and-wrong trips the cap early; cheap-and-wrong never
+# trips it at all.
 PRICE_IN = float(os.getenv("ARC_PRICE_IN_PER_MTOK", "3.0"))
 PRICE_OUT = float(os.getenv("ARC_PRICE_OUT_PER_MTOK", "15.0"))
 DAILY_COST_CAP = float(os.getenv("ARC_DAILY_COST_CAP", "5.0"))    # dollars; 0 = no cap
