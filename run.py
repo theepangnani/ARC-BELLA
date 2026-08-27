@@ -29,7 +29,7 @@ import httpx
 import uvicorn
 import anthropic
 import edge_tts
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import Response, FileResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,14 +39,49 @@ from fastapi.staticfiles import StaticFiles
 # --------------------------------------------------------------------------
 
 ROOT = Path(__file__).parent.resolve()
-load_dotenv(ROOT / ".env")
+
+# Config is read in PRECEDENCE order, and the order matters more than it looks:
+#
+#     a real environment variable  >  this instance's arc.env  >  shared .env
+#
+# The private Bella's arc.env is how that instance says who may sign in. Loading
+# the shared .env first and the instance file "without overriding" afterwards
+# gets it exactly backwards — the shared file has already won, so the private
+# instance quietly accepts the shared GUEST list. Four accounts, on the one
+# instance whose entire purpose is that nobody else is in it. Worse, it only
+# ever worked at all through launch-bella-private.ps1; started any other way —
+# a shortcut, a terminal, a supervisor restarting it at three in the morning —
+# the file was never read. Who may sign in is a property of the INSTANCE, not
+# of how it happened to be launched.
+#
+# So the shared file is READ here and APPLIED last, and a variable already in
+# the environment still beats both, which is what keeps `ARC_PORT=8421 python
+# run.py` behaving exactly as it always did.
+_shared_env = dotenv_values(ROOT / ".env")
 
 # Per-instance DATA lives here; shared CONFIG (API keys, OAuth client) stays in
 # ROOT. Set ARC_DATA_DIR to run a second, fully separate Bella from the same
 # code — its own reminders, notes, alerts, Google sign-ins and app window,
 # isolated from the shared instance. Unset = ROOT, so nothing changes by default.
-DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
+#
+# Settled before the instance file can be looked for, so it is the only setting
+# that cannot come from one — that file lives inside the directory it would be
+# naming.
+DATA_DIR = Path(os.getenv("ARC_DATA_DIR")
+                or _shared_env.get("ARC_DATA_DIR") or ROOT).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+_INSTANCE_ENV = DATA_DIR / "arc.env"
+if _INSTANCE_ENV.is_file():
+    load_dotenv(_INSTANCE_ENV, override=False)
+
+# The shared file fills in whatever is still unset. An EMPTY value counts as
+# SET: "ARC_GUEST_EMAILS=" in an instance file means no guests, and refilling it
+# from the very list it was written to escape would be the bug this whole block
+# exists to prevent.
+for _k, _v in _shared_env.items():
+    if _v is not None and _k not in os.environ:
+        os.environ[_k] = _v
 
 # App identity. The private Bella (launched with ARC_APP_VARIANT=private) installs
 # as its own app with a light-blue-on-black logo and its own name, so it's visibly

@@ -237,6 +237,31 @@
     display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   }
 
+  /* ---------- panels fold away ----------
+     The rails carry six panels and about thirty readouts, and most of the time
+     you want two of them. Folding is per panel and remembered, so the rail ends
+     up showing what YOU look at rather than everything that exists.
+
+     A heading is not a button, so it is given the keyboard and the semantics of
+     one — a rail you can only operate with a mouse is a rail somebody cannot
+     operate at all. --------------------------------------------------------- */
+     The marker is the SAME one .cgroup already uses inside these panels — an
+     en dash open, a plus folded. Two idioms for one gesture, three inches
+     apart, would read as two different controls that happen to look alike. */
+  .panel > h2 { cursor: pointer; user-select: none; }
+  .panel > h2:hover { color: var(--accent); }
+  .panel > h2::after {
+    content: "–";
+    font-size: 12px; line-height: 1; opacity: .8; margin-left: auto;
+    padding-left: 8px;
+  }
+  .panel.shut > h2::after { content: "+"; }
+  /* Everything except the heading. Not height:0 — a hidden panel should cost
+     no layout at all, or folding four of them still leaves a rail of gaps. */
+  .panel.shut > *:not(h2) { display: none !important; }
+  .panel.shut { padding-bottom: 9px; }
+  .panel > h2:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+
   .col {
     display: flex; flex-direction: column; gap: 16px; min-width: 0;
     /* Rails scroll within themselves so the reactor and the HUD frame stay put
@@ -7348,6 +7373,55 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     try { await fetch("/api/logout", { method: "POST" }); } catch (_) {}
     window.location.href = "/";
   }
+
+  /* ---------------- folding the rails ----------------
+     Every panel with a heading folds, remembers, and comes back the way you
+     left it. Keyed by the heading's own text rather than by position, so
+     inserting a panel above another does not silently hand one panel's saved
+     state to a different one.
+
+     The transcript is excluded: it is not a readout on a rail, it is the
+     conversation, and a control that can hide the conversation is a control
+     somebody will press by accident and think ARC has died. ---------------- */
+  (function foldablePanels() {
+    let shut = {};
+    try { shut = JSON.parse(localStorage.getItem("arc.folded") || "{}") || {}; } catch (_) {}
+
+    document.querySelectorAll(".panel > h2").forEach(h => {
+      const panel = h.parentElement;
+      if (panel.id === "txPanel") return;
+      const key = (h.textContent || "").trim().toLowerCase().slice(0, 40);
+      if (!key) return;
+
+      // A heading is not a button. Give it the role, the tab stop and the keys,
+      // or the rail becomes mouse-only.
+      h.setAttribute("role", "button");
+      h.setAttribute("tabindex", "0");
+
+      const paint = () => {
+        panel.classList.toggle("shut", !!shut[key]);
+        h.setAttribute("aria-expanded", shut[key] ? "false" : "true");
+      };
+      const flip = () => {
+        shut[key] = !shut[key];
+        paint();
+        try { localStorage.setItem("arc.folded", JSON.stringify(shut)); } catch (_) {}
+      };
+
+      h.addEventListener("click", (e) => {
+        // The Quick guide heading carries its own hide/show link and the
+        // markets one a "+". Clicking those must not also fold the panel out
+        // from under the thing just pressed. The marker is a ::after now, so
+        // it is part of the heading and needs no case of its own.
+        if (e.target !== h) return;
+        flip();
+      });
+      h.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+      });
+      paint();
+    });
+  })();
 
   /* ---------------- signed-in devices ----------------
      A stolen cookie is a bearer token: whoever holds it is you, and until now

@@ -162,4 +162,27 @@ c.truthy("  it reflects a run started by voice",
          "clickStatus().then(d => { if (d && d.running)" in body)
 c.truthy("  polling stops when the run does", "clearInterval(clickPoll)" in body)
 
+print("\nThe rails fold too, not just the groups inside them:")
+# Six panels and about thirty readouts, and most of the time you want two.
+c.truthy("  every panel heading folds its panel", "function foldablePanels" in body)
+c.truthy("  ...remembered per panel", '"arc.folded"' in body)
+# Keyed by the heading's own words rather than by position, so inserting a
+# panel above another cannot hand one panel's saved state to a different one.
+c.truthy("  keyed by the heading, not its position",
+         "h.textContent" in body and "shut[key]" in body)
+# The conversation is not a readout. A control that hides it is one somebody
+# presses by accident and concludes ARC has died.
+c.truthy("  the transcript is excluded", 'panel.id === "txPanel"' in body)
+# A heading is not a button unless it is given the role, the tab stop and the
+# keys — otherwise the rail is mouse-only.
+c.truthy("  reachable from the keyboard",
+         'h.setAttribute("role", "button")' in body and '"keydown"' in body)
+c.truthy("  ...and says which state it is in", 'aria-expanded' in body)
+# One gesture, one marker. The groups inside these panels already use an en
+# dash / plus, and two idioms three inches apart read as two controls.
+c.truthy("  it borrows the marker the groups already use",
+         '.panel > h2::after' in page and '.panel.shut > h2::after { content: "+"; }' in page)
+c.truthy("  a folded panel costs no layout at all",
+         '.panel.shut > *:not(h2) { display: none !important; }' in page)
+
 c.done()

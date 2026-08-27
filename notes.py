@@ -13,6 +13,8 @@ import time
 import datetime as dt
 from pathlib import Path
 
+import whose
+
 ROOT = Path(__file__).parent.resolve()
 # Per-instance data dir (see run.py); a second Bella keeps its own notes.
 DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
@@ -25,12 +27,18 @@ def connected() -> bool:
     return True
 
 
-def _load() -> list:
+def _raw() -> object:
     try:
-        data = json.loads(NOTES.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        return json.loads(NOTES.read_text(encoding="utf-8"))
     except Exception:
-        return []
+        return {}
+
+
+def _load() -> list:
+    """This account's notes. Everything above this line is unchanged by the
+    split, because the split is entirely a question of which slice of the file
+    a request is looking at — see whose.py."""
+    return whose.mine(_raw())
 
 
 def _save(items) -> None:
@@ -40,8 +48,13 @@ def _save(items) -> None:
     # reads a half file as "no notes at all", the next note saved would
     # overwrite the remains with a list of one. os.replace cannot land halfway.
     try:
+        # Read-modify-write: the file holds everybody, and this account is only
+        # replacing its own slice. Reading first is what stops one person's
+        # save erasing another's notes — the cap below is per account now, and
+        # applied to this slice alone for the same reason.
+        blob = whose.replace(_raw(), items[-MAX_NOTES:])
         tmp = NOTES.with_name(NOTES.name + ".tmp")
-        tmp.write_text(json.dumps(items[-MAX_NOTES:], ensure_ascii=False, indent=2),
+        tmp.write_text(json.dumps(blob, ensure_ascii=False, indent=2),
                        encoding="utf-8")
         os.replace(tmp, NOTES)
     except Exception:

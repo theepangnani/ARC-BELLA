@@ -75,3 +75,9 @@ voices.json
 
 # Transient probe from the self-check ("can I still write here?")
 .write-probe
+
+# The guardian's own output. Runtime, per machine, and the log is a record of
+# what went wrong HERE — it is for the person coming home, not for the repo.
+guardian.log
+guardian-status.json
+guardian-status.json.tmp
