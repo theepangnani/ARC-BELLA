@@ -67,6 +67,31 @@ for status, msg, want_status, needles in cases:
     for n in needles:
         c.truthy("       says %r" % n, n.lower() in h.detail.lower())
 
+print("\nA spending cap is not an empty balance, and saying so is the point:")
+# Hit for real on 2026-08-27: the key was valid, the account had credit, and a
+# monthly ceiling the owner had set on themselves was stopping it being used.
+# Sending them to Plans & Billing would have had them buy credit they already
+# had and watch it change nothing — a different page, a different fix.
+LIMIT = ("You have reached your specified API usage limits. "
+         "You will regain access on 2026-09-01 at 00:00 UTC.")
+h = run._claude_error(Err(400, LIMIT))
+c("  it is payment-shaped, like the credit one", h.status_code, 402)
+c.truthy("  ...but says CAP, not empty", "spending limit" in h.detail)
+c.truthy("  ...and says there IS credit", "there's credit" in h.detail)
+c.truthy("  ...and sends them to the right page", "Settings, Limits" in h.detail)
+c("  ...not the wrong one", "Plans & Billing" in h.detail, False)
+# The reset date is the one fact that decides whether you change a setting or
+# just wait, so the provider's own sentence is kept.
+c.truthy("  and keeps the date it lifts", "2026-09-01" in h.detail)
+c.truthy("  ...as a whole sentence", "You will regain access" in h.detail)
+# Without a date it must still be a sentence, not a dangling fragment.
+c.truthy("  a message with no date still reads",
+         run._claude_error(Err(400, "You have reached your specified API usage limits."))
+         .detail.rstrip().endswith("Settings, Limits."))
+# And the older, genuinely-empty case is untouched.
+c("  an empty balance is still its own message",
+  "Plans & Billing" in run._claude_error(Err(400, CREDIT)).detail, True)
+
 print("\n401 MEANS ONE THING, AND IT IS NOT THIS:")
 # The bug this pins cost an evening. ARC's page wraps every fetch and treats a
 # 401 as "your sign-in has ended" — it navigates to the sign-in page. When a

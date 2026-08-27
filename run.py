@@ -1504,6 +1504,34 @@ def _claude_error(e) -> HTTPException:
                                   "can't think until it's topped up. Add credit at "
                                   "console.anthropic.com under Plans & Billing, "
                                   "then say anything to try again.")
+    if "usage limit" in low or "spend limit" in low or "spending limit" in low:
+        # NOT the same as being out of credit, and the difference is the whole
+        # value of saying it: this is a ceiling the owner set on themselves,
+        # sitting on a different page from the balance. Sending them to Plans &
+        # Billing would have them buy credit they already have and watch it
+        # change nothing.
+        #
+        # The provider's own sentence is kept because it carries the date the
+        # limit resets, which is the one fact that decides whether you go and
+        # change a setting or simply wait.
+        when = ""
+        # Longest phrase first, so the sentence keeps its subject and reads as
+        # English rather than starting mid-clause.
+        i = -1
+        for phrase in ("you will regain access", "you regain access", "regain access"):
+            i = low.find(phrase)
+            if i >= 0:
+                break
+        if i >= 0:
+            j = raw.find(".", i)
+            frag = raw[i:(j + 1) if j >= 0 else len(raw)].strip()
+            if frag:
+                when = " " + frag[0].upper() + frag[1:]
+        return HTTPException(402, "You've hit the spending limit set on your "
+                                  "Anthropic account — there's credit, but a cap "
+                                  "you set is stopping it being used. Raise it at "
+                                  "console.anthropic.com under Settings, Limits."
+                                  + when)
     if status == 401 or "authentication" in low or "invalid x-api-key" in low:
         # 502, NOT 401, and the difference is not pedantry.
         #
