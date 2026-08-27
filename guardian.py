@@ -48,12 +48,37 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Which ARC this guardian is for. Taken from the command line as well as the
+# environment, because a Windows scheduled task can carry arguments trivially
+# and environment variables only awkwardly — and the private Bella needs BOTH a
+# different port and a different data directory.
+#
+# Getting this wrong is worse than not watching at all: a guardian that
+# relaunches run.py with no environment starts a SHARED Bella pointed at the
+# PRIVATE data directory. That is not a failed rescue, it is a second app
+# writing into somebody's private notes. So the same values that decide what to
+# watch are the values handed to what gets started.
+_args = sys.argv[1:]
+
+
+def _arg(name, fallback=""):
+    key = "--" + name
+    for i, a in enumerate(_args):
+        if a == key and i + 1 < len(_args):
+            return _args[i + 1]
+        if a.startswith(key + "="):
+            return a.split("=", 1)[1]
+    return fallback
+
 ROOT = Path(__file__).parent.resolve()
-DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
+DATA_DIR = Path(_arg("data") or os.getenv("ARC_DATA_DIR") or ROOT).resolve()
 LOG = DATA_DIR / "guardian.log"
 STATUS = DATA_DIR / "guardian-status.json"
 
-PORT = int(os.getenv("ARC_GUARD_PORT", os.getenv("ARC_PORT", "8420")))
+PORT = int(_arg("port") or os.getenv("ARC_GUARD_PORT")
+           or os.getenv("ARC_PORT") or "8420")
+CHILD_DATA = _arg("data") or os.getenv("ARC_DATA_DIR", "")
+CHILD_VARIANT = _arg("variant") or os.getenv("ARC_APP_VARIANT", "")
 EVERY = int(os.getenv("ARC_GUARD_EVERY", "60"))          # seconds between checks
 TIMEOUT = int(os.getenv("ARC_GUARD_TIMEOUT", "10"))      # seconds to wait for a reply
 GRACE = int(os.getenv("ARC_GUARD_GRACE", "75"))          # seconds to allow for a boot
@@ -114,7 +139,16 @@ def start() -> bool:
     it — a supervisor whose children die when it is closed is a supervisor that
     turns one problem into two."""
     try:
-        kw = {"cwd": str(ROOT), "stdout": subprocess.DEVNULL,
+        # The child gets the SAME identity this guardian was given. Inheriting
+        # the bare environment is how the private instance would come back as
+        # the shared one.
+        env = dict(os.environ)
+        env["ARC_PORT"] = str(PORT)
+        if CHILD_DATA:
+            env["ARC_DATA_DIR"] = CHILD_DATA
+        if CHILD_VARIANT:
+            env["ARC_APP_VARIANT"] = CHILD_VARIANT
+        kw = {"cwd": str(ROOT), "env": env, "stdout": subprocess.DEVNULL,
               "stderr": subprocess.DEVNULL, "stdin": subprocess.DEVNULL}
         if os.name == "nt":
             # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP

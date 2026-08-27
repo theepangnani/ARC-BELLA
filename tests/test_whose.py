@@ -21,12 +21,13 @@ bugs — everything is set correctly and the wrong one wins.
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _harness import ARC, sandbox, Check   # noqa: E402
+from _harness import ARC, HUD, sandbox, Check   # noqa: E402
 sandbox()
 
 import whose   # noqa: E402
@@ -158,5 +159,45 @@ c("  ...and an empty guest list stays empty", got["g"], [])
 # An explicit variable is the launcher talking, and it still wins over both.
 got = _emails(priv, {"ARC_GUEST_EMAILS": "someone@example.com"})
 c("  but the environment still outranks the file", got["g"], ["someone@example.com"])
+
+
+print("\nThe guardian knows WHICH Bella it is responsible for:")
+# The failure this prevents is worse than the outage it fixes: a guardian that
+# relaunches run.py with a bare environment brings the PRIVATE instance back as
+# the SHARED one, pointed at the private data directory. That is not a failed
+# rescue, it is a second app writing into somebody's private notes.
+g = io.open(ARC / "guardian.py", encoding="utf-8").read()
+c.truthy("  it takes an identity, not just a port",
+         '_arg("port")' in g and "CHILD_DATA" in g and "CHILD_VARIANT" in g)
+c.truthy("  ...from the command line, which a scheduled task can carry",
+         "def _arg(" in g)
+c.truthy("  and hands the SAME one to what it starts",
+         'env["ARC_PORT"] = str(PORT)' in g and 'env["ARC_DATA_DIR"] = CHILD_DATA' in g)
+c.truthy("  the reason is written down", "writing into somebody's private notes" in g)
+# Defined before first use. It was not, and both guardians crashed on startup.
+c.truthy("  the argument reader is defined above everything that uses it",
+         g.index("def _arg(") < g.index("DATA_DIR = Path(_arg("))
+ps = io.open(ARC / "install-guardian.ps1", encoding="utf-8").read()
+c.truthy("  one task per instance", "ARC Guardian (private)" in ps)
+c.truthy("  ...and the private one is only installed if it exists",
+         "Test-Path $private" in ps)
+c.truthy("  removal takes both away", 'foreach ($n in @("ARC Guardian", "ARC Guardian (private)"))' in ps)
+# PowerShell 5.1 reads a BOM-less .ps1 as ANSI, so one em dash stops the whole
+# file parsing. Found the hard way.
+c("  the installer is pure ASCII, or PowerShell will not parse it",
+  ps.isascii(), True)
+
+print("\nAnd the microphone stops narrating its own recovery:")
+body_ = re.findall(r"<script(?![^>]*src=)[^>]*>(.*?)</script>",
+                   io.open(HUD, encoding="utf-8").read(), re.S)[0]
+# Three lines every thirty seconds, for ever, all of them saying it worked.
+c.truthy("  a routine restart is silent", "quietRebuild = true;" in body_)
+c.truthy("  ...including the all-clear for it", "if (!quietRebuild) {" in body_)
+c.truthy("  but it is still counted", "silentRebuilds.push" in body_)
+c.truthy("  and said once if it keeps happening", "function nagIfPersistent" in body_)
+# A counter would eventually trip on three spread across a week.
+c.truthy("  measured over a window, not for ever", "now - t < 600000" in body_)
+c.truthy("  and the complaint about noise is not itself noisy",
+         "now - noisedAt > 1200000" in body_)
 
 c.done()

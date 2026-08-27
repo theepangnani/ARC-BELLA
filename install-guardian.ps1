@@ -18,10 +18,13 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $task = "ARC Guardian"
 
 if ($Remove) {
-    try {
-        Unregister-ScheduledTask -TaskName $task -Confirm:$false
-        "Removed '$task'. Nothing is watching ARC now."
-    } catch { "'$task' was not installed." }
+    foreach ($n in @("ARC Guardian", "ARC Guardian (private)")) {
+        try {
+            Unregister-ScheduledTask -TaskName $n -Confirm:$false
+            "Removed '$n'."
+        } catch { "'$n' was not installed." }
+    }
+    "Nothing is watching ARC now."
     Get-Process python -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*guardian.py*" } |
         ForEach-Object { Stop-Process -Id $_.Id -Force }
@@ -36,7 +39,19 @@ if (-not $py) { throw "python is not on PATH -- the guardian needs it to run." }
 $pyw = Join-Path (Split-Path -Parent $py) "pythonw.exe"
 if (Test-Path $pyw) { $py = $pyw }
 
-$action  = New-ScheduledTaskAction -Execute $py -Argument "guardian.py" -WorkingDirectory $here
+# One guardian per Bella. The private instance needs its own, and it needs its
+# own IDENTITY -- a guardian that relaunches run.py with no arguments would
+# bring the private one back as the SHARED one, pointed at the private data
+# directory. Worse than the outage it was fixing.
+$private = Join-Path (Split-Path -Parent $here) "bella-private"
+$jobs = @(
+  @{ name = "ARC Guardian";           args = "guardian.py --port 8420" }
+)
+if (Test-Path $private) {
+  $jobs += @{ name = "ARC Guardian (private)"
+              args  = "guardian.py --port 8421 --data `"$private`" --variant private" }
+}
+
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 # RestartCount/Interval covers the guardian itself dying -- the one failure it
 # cannot report, because reporting is what it stopped doing.
@@ -45,13 +60,18 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero)
 
-Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger `
-    -Settings $settings -Description "Keeps ARC answering; logs what it had to do." -Force | Out-Null
-
-Start-ScheduledTask -TaskName $task
-Start-Sleep -Seconds 3
-$s = (Get-ScheduledTask -TaskName $task).State
-"Installed '$task' -- state: $s"
-"It checks ARC every minute. Anything it had to do is written to:"
-"  " + (Join-Path $here "guardian.log") + "   (empty means nothing went wrong)"
-"  " + (Join-Path $here "guardian-status.json") + "   (how things are right now)"
+foreach ($j in $jobs) {
+    $action = New-ScheduledTaskAction -Execute $py -Argument $j.args -WorkingDirectory $here
+    Register-ScheduledTask -TaskName $j.name -Action $action -Trigger $trigger `
+        -Settings $settings -Description "Keeps ARC answering; logs what it had to do." -Force | Out-Null
+    Start-ScheduledTask -TaskName $j.name
+}
+Start-Sleep -Seconds 4
+foreach ($j in $jobs) {
+    "Installed '" + $j.name + "' -- state: " + (Get-ScheduledTask -TaskName $j.name).State
+}
+""
+"Each one checks its own ARC every minute. What it had to do is written beside"
+"that instance's data, so the private one's log is in bella-private:"
+"  guardian.log            (empty means nothing went wrong)"
+"  guardian-status.json    (how things are right now)"

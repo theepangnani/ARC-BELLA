@@ -1030,6 +1030,47 @@
      What survives on purpose: the reactor (small, still the push-to-talk
      target, still breathing), the live line, the brand bar. ARC without the
      core is a chat window with a serif greeting. */
+  /* ---------- override ----------
+     Full bleed and slow, because the whole point is that it feels like
+     something. It is the only screen in ARC allowed to be dramatic. */
+  .ovr {
+    position: fixed; inset: 0; z-index: 90;
+    display: grid; place-items: center;
+    background: rgba(2,5,9,.93);
+    backdrop-filter: blur(3px);
+    animation: ovrin .35s ease both;
+  }
+  @keyframes ovrin { from { opacity: 0 } to { opacity: 1 } }
+  .ovr[hidden] { display: none; }
+  .ovr-box { text-align: center; padding: 0 24px; max-width: 460px; }
+  .ovr-t {
+    font-family: var(--mono); font-size: 13px; letter-spacing: .62em;
+    color: var(--rose); margin-bottom: 14px; text-indent: .62em;
+    animation: ovrpulse 2.2s ease-in-out infinite;
+  }
+  @keyframes ovrpulse { 0%,100% { opacity: .75 } 50% { opacity: 1 } }
+  .ovr-s {
+    font-family: var(--display); font-size: 21px; color: var(--ice);
+    margin-bottom: 22px; line-height: 1.35;
+  }
+  .ovr input {
+    width: 100%; text-align: center; letter-spacing: .42em;
+    font-family: var(--mono); font-size: 15px; padding: 13px;
+    background: rgba(9,19,32,.85); color: var(--ice);
+    border: 1px solid var(--cyan-dim); border-radius: 3px;
+  }
+  .ovr input:focus { outline: none; box-shadow: 0 0 0 1px var(--accent), 0 0 26px -8px var(--accent); }
+  .ovr.no input { border-color: var(--rose); animation: ovrno .32s; }
+  @keyframes ovrno {
+    0%,100% { transform: translateX(0) } 25% { transform: translateX(-7px) }
+    75% { transform: translateX(7px) }
+  }
+  .ovr-h {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .26em;
+    text-transform: uppercase; color: var(--cyan-dim); margin-top: 14px;
+  }
+  .ovr.ok .ovr-t { color: var(--accent); }
+
   /* ---------- signed-in devices ---------- */
   .devlist { display: flex; flex-direction: column; gap: 7px; margin-bottom: 11px; }
   .dev {
@@ -1302,6 +1343,21 @@
 
 <!-- ============ SPEAKER MODE ============
      Outside .shell, because speaker mode hides .shell entirely. -->
+<!-- Override. Theatre, and labelled as such in the script below: the passphrase
+     grants nothing, because you proved who you are with Google before this page
+     would load at all. What it actually does is end your other sessions, which
+     the Signed in panel does with a button. This is the same thing with a
+     drumroll. -->
+<div class="ovr" id="ovr" hidden>
+  <div class="ovr-box">
+    <div class="ovr-t">OVERRIDE</div>
+    <div class="ovr-s" id="ovrSub">Identify yourself.</div>
+    <input type="password" id="ovrKey" autocomplete="off" spellcheck="false"
+           aria-label="Passphrase">
+    <div class="ovr-h" id="ovrHint">Escape to stand down.</div>
+  </div>
+</div>
+
 <div class="speakerface" id="speakerFace">
   <span class="swake" id="spkWake">screen held awake</span>
   <button type="button" class="sexit" id="spkExit">Exit</button>
@@ -4350,8 +4406,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         recovering = false;
         rebuilds = 0;
         gaveUp = false;
-        addEntry("sys", "SYSTEM", "Microphone is back. Go ahead.");
-        cue("wake");
+        if (!quietRebuild) {
+          // A restart nobody was told about needs no all-clear either.
+          addEntry("sys", "SYSTEM", "Microphone is back. Go ahead.");
+          cue("wake");
+        }
+        quietRebuild = false;
+        nagIfPersistent();
       }
     };
     // These also feed the input meter — the only "is it hearing me" signal on
@@ -4390,6 +4451,30 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
   // Chrome's recogniser object can end up permanently broken — it stops
   // starting and stops erroring. The only cure is a fresh one.
+  // A restart the user was never told about, because it fixed itself. Reset on
+  // the recovery it belongs to, so a genuine drop right after a quiet one still
+  // announces itself properly.
+  let quietRebuild = false;
+  // When the quiet ones stop being occasional they stop being quiet. Kept as
+  // timestamps rather than a counter so "three in ten minutes" means what it
+  // says — a counter would eventually trip on three spread across a week.
+  let silentRebuilds = [];
+  let noisedAt = 0;
+
+  function nagIfPersistent() {
+    const now = Date.now();
+    silentRebuilds = silentRebuilds.filter(t => now - t < 600000);   // last 10 min
+    // Said once every twenty minutes at most. The failure being reported is a
+    // transcript filling with noise, so reporting it noisily would be a joke.
+    if (silentRebuilds.length >= 4 && now - noisedAt > 1200000) {
+      noisedAt = now;
+      addEntry("sys", "SYSTEM",
+               "The microphone keeps going quiet and I keep restarting it — " +
+               silentRebuilds.length + " times in the last ten minutes. It is " +
+               "working, but if I seem to miss things, reopen the tab.");
+    }
+  }
+
   let rebuilds = 0;
   let lastRebuildAt = 0;
   let recovering = false;
@@ -4420,7 +4505,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     state.recogRunning = false;
     startPending = false;
 
-    if (rebuilds === 1) {
+    if (rebuilds === 1 && !quietRebuild) {
       addEntry("sys", "SYSTEM", "Microphone dropped — reconnecting. Give it a moment.");
     } else if (rebuilds === 4) {
       // A fresh recogniser isn't enough any more. Let go of the microphone
@@ -4711,8 +4796,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // Even in a silent room Chrome ends and restarts sessions every few
       // seconds, so total silence here means it has gone deaf.
       if (state.wakeArmed && Date.now() - lastRecogEvent > 25000) {
+        // SILENTLY. On some machines this fires every half minute, succeeds
+        // every time, and used to write three lines to the transcript each
+        // round — "stopped responding", "dropped, reconnecting", "back" — for
+        // ever. That is not an incident log, it is the recogniser breathing,
+        // and a transcript full of it is one nobody reads on the day something
+        // real happens. Self-healing that works is not news.
+        //
+        // It is still COUNTED, and if it keeps up it gets said once, because at
+        // that point it has stopped being routine and started being a fault.
         recogAlive();
-        addEntry("sys", "SYSTEM", "Microphone stopped responding — restarting it.");
+        quietRebuild = true;
+        silentRebuilds.push(Date.now());
         rebuildRecognition();
       }
     }
@@ -5868,6 +5963,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (!text || !text.trim()) return;
     // A plain "thank you" ends the conversation — acknowledge and stand down.
     if (isDismissal(text)) { dismiss(text); return; }
+    // "Bella override" — opens the panel, spends nothing, asks the model
+    // nothing. See matchOverride: the word that follows is a flourish on top of
+    // a Google sign-in, not a way past one.
+    if (matchOverride(text)) {
+      addEntry("you", "YOU", text);
+      openOverride();
+      return;
+    }
     // "Say that again" — re-speak the last reply, no API call.
     if (isRepeatRequest(text)) {
       if (lastReply) { addEntry("arc", "ARC", lastReply); el.live.textContent = lastReply; speak(lastReply); }
@@ -7421,6 +7524,93 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       });
       paint();
     });
+  })();
+
+  /* ---------------- override ----------------
+     "Bella override, this is the true master" opens a panel; the word gets you
+     a confirmation and your other devices signed out.
+
+     IT IS THEATRE, AND THAT IS THE DESIGN, not a shortcut taken. The passphrase
+     grants NOTHING. Everything below runs in a page that only loaded because
+     Google already said who you are, and the route it ends up calling refuses
+     anyone who is not the owner regardless of what was typed. If the word were
+     load-bearing it would be a backdoor — and worse, a backdoor round the
+     sign-in, with a password that is in this repository's git history from when
+     it really was the password. It is a flourish on top of a decision that was
+     already made upstairs.
+
+     What it DOES is real: it ends every other session. Same as the button in
+     the Signed in panel, with a drumroll.
+  ------------------------------------------------------------------- */
+  const OVERRIDE_SAYS = /\b(override|true master|i am the master)\b/i;
+
+  function matchOverride(text) {
+    const t = (text || "").toLowerCase();
+    if (!OVERRIDE_SAYS.test(t)) return false;
+    // A question ABOUT the override is not the override — "bella, what is an
+    // override" should be answered, not obeyed. Same guard the view command
+    // uses, and for the same reason: this one blacks the whole screen out.
+    // Interrogatives only. "is" and "can" were in here and blocked the actual
+    // phrase — "this IS the true master" is not a question.
+    if (/\b(what|how|why|when|where|who|explain|tell)\b/.test(t)) return false;
+    // Needs ARC's name too, so "override the setting" in an ordinary sentence
+    // does not trigger it mid-conversation.
+    return /\b(bella|arc)\b/.test(t) || /\btrue master\b/.test(t);
+  }
+
+  function openOverride() {
+    const box = $("ovr");
+    if (!box) return;
+    box.hidden = false;
+    box.classList.remove("no", "ok");
+    const sub = $("ovrSub"), key = $("ovrKey");
+    // Guests get the drama and nothing else, and are told so rather than being
+    // left to type into a box that was never going to work.
+    const mayEnd = !Array.isArray(window.__arcEntitled)
+      || window.__arcEntitled.indexOf("chat") >= 0;
+    if (sub) sub.textContent = mayEnd
+      ? "Identify yourself."
+      : "This account cannot take control.";
+    if (key) { key.value = ""; key.disabled = !mayEnd; setTimeout(() => key.focus(), 60); }
+  }
+
+  function closeOverride() {
+    const box = $("ovr");
+    if (box) { box.hidden = true; box.classList.remove("no", "ok"); }
+  }
+
+  (function overrideWiring() {
+    const box = $("ovr"), key = $("ovrKey"), sub = $("ovrSub"), hint = $("ovrHint");
+    if (!box || !key) return;
+
+    key.addEventListener("keydown", async (e) => {
+      if (e.key === "Escape") { closeOverride(); return; }
+      if (e.key !== "Enter") return;
+      // Dots, spaces and case stripped: nobody types J.A.R.V.I.S the same way
+      // twice, and being pedantic about punctuation is not the drama we want.
+      const said = key.value.replace(/[.\s\-_]/g, "").toLowerCase();
+      if (said !== "jarvis") {
+        box.classList.add("no");
+        if (hint) hint.textContent = "Not recognised.";
+        setTimeout(() => box.classList.remove("no"), 400);
+        key.value = "";
+        return;
+      }
+      box.classList.add("ok");
+      if (sub) sub.textContent = "Welcome back, sir.";
+      if (hint) hint.textContent = "Standing every other device down.";
+      key.disabled = true;
+      await endSessions(false);            // the only thing here that is real
+      setTimeout(() => {
+        closeOverride();
+        const m = "Control is yours, sir. Everything else has been signed out.";
+        addEntry("arc", "ARC", m);
+        el.live.textContent = m;
+        speak(m);
+      }, 1400);
+    });
+
+    box.addEventListener("click", (e) => { if (e.target === box) closeOverride(); });
   })();
 
   /* ---------------- signed-in devices ----------------
