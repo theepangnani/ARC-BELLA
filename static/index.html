@@ -1005,6 +1005,26 @@
      What survives on purpose: the reactor (small, still the push-to-talk
      target, still breathing), the live line, the brand bar. ARC without the
      core is a chat window with a serif greeting. */
+  /* ---------- signed-in devices ---------- */
+  .devlist { display: flex; flex-direction: column; gap: 7px; margin-bottom: 11px; }
+  .dev {
+    display: flex; align-items: baseline; gap: 7px;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em;
+    color: var(--ice); padding: 5px 7px;
+    border-left: 1px solid var(--line); background: rgba(9,19,32,.4);
+  }
+  .dev.me { border-left-color: var(--accent); }
+  .dev .when { color: var(--cyan-dim); font-size: 8.5px; margin-left: auto; }
+  /* Not a warning colour. A second device is usually your own phone — this
+     marks which row is the one you are reading, not which one is wrong. */
+  .dev .tag {
+    font-size: 7.5px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .devnone { font-family: var(--mono); font-size: 9.5px; color: var(--cyan-dim); }
+  #secPanel button.danger { border-color: rgba(255,107,122,.4); color: var(--rose); }
+  #secPanel button.danger:hover { background: rgba(255,107,122,.12); }
+
   .chatgreet, .chatstatus { display: none; }
 
   /* A capability this account does not have. Dimmed and inert rather than
@@ -1458,6 +1478,19 @@
         <button id="testBtn" title="Speak a test line">Test</button>
         <button id="clearBtn" title="Clear the transcript">Clear</button>
         <button id="forgetBtn" title="Wipe everything ARC remembers about you">Forget</button>
+      </div>
+    </div>
+
+    <!-- Who is signed in as you, right now. The whole point is that a device
+         you do not recognise is VISIBLE: sessions were always revocable, but
+         nothing ever showed you there were three when you had signed in twice,
+         and a defence you never see the need for is one you never reach for. -->
+    <div class="panel" id="secPanel">
+      <h2>Signed in</h2>
+      <div class="devlist" id="devList"><div class="devnone">—</div></div>
+      <div class="btnrow">
+        <button id="endOthers" title="End every session except this one">End other devices</button>
+        <button id="endAll" class="danger" title="End every session, including this one">End all</button>
       </div>
     </div>
   </div>
@@ -7316,6 +7349,104 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     window.location.href = "/";
   }
 
+  /* ---------------- signed-in devices ----------------
+     A stolen cookie is a bearer token: whoever holds it is you, and until now
+     nothing would ever have told you somebody did. The server could always
+     revoke — this is the half that lets you notice you should.
+
+     Every value below goes in as TEXT. The user-agent is a string a client
+     chose for itself, and while it takes a Google sign-in to get one stored,
+     "an attacker had to authenticate first" is not a reason to hand their text
+     to an HTML parser. -------------------------------------------------- */
+  function deviceName(ua) {
+    const u = String(ua || "").toLowerCase();
+    const plat = u.includes("android") ? "Android"
+      : u.includes("iphone") ? "iPhone" : u.includes("ipad") ? "iPad"
+      : u.includes("windows") ? "Windows" : u.includes("macintosh") ? "Mac"
+      : u.includes("cros") ? "ChromeOS" : u.includes("linux") ? "Linux" : "Unknown";
+    // Order matters: Edge also says "chrome", and Chrome also says "safari".
+    const fam = u.includes("edg/") ? "Edge" : u.includes("opr/") ? "Opera"
+      : u.includes("firefox") ? "Firefox"
+      : (u.includes("chrome") || u.includes("chromium")) ? "Chrome"
+      : u.includes("safari") ? "Safari" : "browser";
+    return plat + " · " + fam;
+  }
+
+  function agoText(secs) {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - secs));
+    if (s < 90) return "just now";
+    if (s < 5400) return Math.round(s / 60) + " min ago";
+    if (s < 172800) return Math.round(s / 3600) + " h ago";
+    return Math.round(s / 86400) + " d ago";
+  }
+
+  async function paintDevices() {
+    const box = $("devList");
+    if (!box) return;
+    let d = null;
+    try {
+      const r = await fetch("/api/sessions");
+      if (!r.ok) { box.textContent = ""; return; }   // guests have no panel to fill
+      d = await r.json();
+    } catch (_) { return; }
+    box.textContent = "";
+    const rows = (d && d.sessions) || [];
+    if (!rows.length) {
+      const none = document.createElement("div");
+      none.className = "devnone";
+      none.textContent = "—";
+      box.appendChild(none);
+      return;
+    }
+    rows.forEach(s => {
+      const row = document.createElement("div");
+      row.className = "dev" + (s.current ? " me" : "");
+      const name = document.createElement("span");
+      name.textContent = deviceName(s.ua);
+      row.appendChild(name);
+      if (s.current) {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = "this one";
+        row.appendChild(tag);
+      }
+      const when = document.createElement("span");
+      when.className = "when";
+      when.textContent = agoText(s.last_seen);
+      row.appendChild(when);
+      box.appendChild(row);
+    });
+  }
+
+  async function endSessions(all) {
+    try {
+      const r = await fetch("/api/sessions/revoke", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: !!all }),
+      });
+      if (!r.ok) { addEntry("sys", "SYSTEM", "Couldn't end those sessions."); return; }
+      if (all) { window.location.href = "/"; return; }
+      const d = await r.json();
+      addEntry("sys", "SYSTEM", d.ended
+        ? "Signed out " + d.ended + " other device" + (d.ended === 1 ? "" : "s") +
+          ". Their Google access went with them."
+        : "Nothing else was signed in.");
+      paintDevices();
+    } catch (_) {
+      addEntry("sys", "SYSTEM", "Couldn't reach ARC to end those sessions.");
+    }
+  }
+
+  if ($("endOthers")) $("endOthers").addEventListener("click", () => endSessions(false));
+  if ($("endAll")) {
+    $("endAll").addEventListener("click", () => {
+      // The only destructive one of the two — it signs this browser out too, so
+      // it asks. "Others" does not, because getting it wrong costs a reload.
+      if (confirm("End every session, including this one? You'll sign in with Google again."))
+        endSessions(true);
+    });
+  }
+
   async function unlinkGoogle() {
     try { await fetch("/oauth/google/disconnect", { method: "POST" }); } catch (_) {}
     addEntry("sys", "SYSTEM", "Google account disconnected.");
@@ -8044,6 +8175,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         // the view as well — so the decision is made in one place for both.
         refreshChatAvailability();
       }
+      // Repainted on the same beat as the rest of the health poll rather than
+      // on a timer of its own: one fewer clock, and it refreshes at exactly the
+      // moments somebody is looking at the panel anyway.
+      if (typeof paintDevices === "function") paintDevices();
       // Show the brain the user actually picked (Smart/Fast), not just the
       // server default — the switch is client-side and per-device.
       if (typeof paintModelReadout === "function") paintModelReadout();

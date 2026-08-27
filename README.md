@@ -790,6 +790,27 @@ sometimes writes a tool call into its ordinary reply text instead of calling the
 tool, which does not error and which ARC would read out loud. Depth is set with
 effort there instead.
 
+### Who is signed in, and how to end it
+
+A sign-in cookie is a bearer token: whoever holds it is you. Two walls follow.
+
+**A session is bound to the browser it was issued to.** The cookie carries a
+coarse fingerprint of the browser — platform and family, never the version — so
+one lifted off this machine and pasted into another is refused and burned rather
+than served. Coarse on purpose: comparing whole user-agent strings would sign
+you out every time Chrome updates itself, and a control that logs you out weekly
+is one you switch off. It is a wall, not a moat — somebody on the same OS and
+browser still matches — and it costs nothing.
+
+**The Signed in panel lists every device**, marks the one you are reading, and
+ends them. *End other devices* leaves you signed in, which is what you want at
+two in the morning; *End all* includes this browser and asks first. Either way
+the Google tokens go with the sessions, so "I signed that device out" is a
+sentence about the mail it can no longer read, not just about the cookie.
+
+Sessions were always revocable. What was missing was ever being shown that there
+were three of them when you had signed in twice.
+
 ### What it costs is counted per model
 
 Each turn is priced at the rate of the model that actually answered — Haiku

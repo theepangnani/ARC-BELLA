@@ -119,5 +119,85 @@ print("\nRevocation is unchanged:")
 session.revoke_all()
 check("everyone signed out", client.get("/api/health", cookies=C2).status_code, 401)
 
+# ---------------------------------------------------------------- the walls
+# A cookie is a bearer token: whoever holds it is you. Two things follow, and
+# neither existed before — a lifted cookie should not WORK somewhere else, and
+# if one does, you should be able to SEE it and end it.
+CHROME_WIN = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+CHROME_WIN_NEWER = CHROME_WIN.replace("Chrome/141", "Chrome/142")
+EDGE_WIN = CHROME_WIN + " Edg/141.0.0.0"
+FIREFOX_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0"
+CHROME_ANDROID = ("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36")
+
+print("\nA session is bound to the browser it was issued to:")
+# Coarse ON PURPOSE. Comparing whole user-agents signs you out every time
+# Chrome updates itself, and a control that logs you out weekly is one you
+# switch off.
+check("a browser update is the SAME browser",
+      session.ua_key(CHROME_WIN), session.ua_key(CHROME_WIN_NEWER))
+check("Edge is not Chrome", session.ua_key(EDGE_WIN) == session.ua_key(CHROME_WIN), False)
+check("another machine is not this one",
+      session.ua_key(FIREFOX_MAC) == session.ua_key(CHROME_WIN), False)
+check("and the phone is not the desktop",
+      session.ua_key(CHROME_ANDROID) == session.ua_key(CHROME_WIN), False)
+
+sid = session.create("owner@example.com", CHROME_WIN)
+check("  it survives a browser update", bool(session.validate(sid, ua=CHROME_WIN_NEWER)), True)
+check("  and the cookie pasted into another machine is refused",
+      session.validate(sid, ua=FIREFOX_MAC), None)
+# Evicted, not merely refused: it is either theft or a session that can never
+# be used again, and neither is worth keeping on disk.
+check("  ...and burned, not left lying there", session.validate(sid, ua=CHROME_WIN), None)
+
+# The lockout this must never become: a request with no user-agent fingerprints
+# as "unknown", which would mismatch every real browser.
+sid = session.create("owner@example.com", CHROME_WIN)
+check("a request with no user-agent is not locked out",
+      bool(session.validate(sid, ua="")), True)
+check("...nor is one whose session predates this",
+      bool(session.validate(session.create("owner@example.com", ""), ua=CHROME_WIN)), True)
+
+print("\nYou can see who is signed in, which is the half that was missing:")
+session.revoke_all()
+mine = session.create("owner@example.com", CHROME_WIN)
+phone = session.create("owner@example.com", CHROME_ANDROID)
+rows = session.list_all(mine)
+check("both devices are listed", len(rows), 2)
+check("and the one asking is marked", [r["current"] for r in rows].count(True), 1)
+# The stored key is a hash of the cookie and still never leaves the server.
+check("no row carries anything replayable",
+      [r for r in rows if len(r.get("id", "")) > 12], [])
+check("no row carries the cookie itself",
+      [r for r in rows if mine in str(r)], [])
+
+print("\nAnd end them — others, or all:")
+check("ending others keeps this one", session.revoke_others(mine), 1)
+check("  it is still live", bool(session.validate(mine, ua=CHROME_WIN)), True)
+check("  the other is not", session.validate(phone, ua=CHROME_ANDROID), None)
+
+CK = {run.COOKIE: mine}
+HDRS = {"user-agent": CHROME_WIN}
+check("the owner may look",
+      client.get("/api/sessions", cookies=CK, headers=HDRS).status_code, 200)
+check("the owner may end",
+      client.post("/api/sessions/revoke", cookies=CK, headers=HDRS, json={}).status_code, 200)
+guest = session.create("guest@example.com", CHROME_WIN)
+GK = {run.COOKIE: guest}
+check("a guest may not see the owner's devices",
+      client.get("/api/sessions", cookies=GK, headers=HDRS).status_code, 403)
+check("nor end them",
+      client.post("/api/sessions/revoke", cookies=GK, headers=HDRS, json={}).status_code, 403)
+check("  and the owner is still signed in",
+      bool(session.validate(mine, ua=CHROME_WIN)), True)
+
+# Revoking has to take Google with it, or "I signed that device out" is a
+# sentence about the cookie and not about the mail it could still read.
+src = open(ARC / "run.py", encoding="utf-8").read()
+check("ending a session takes its Google token too",
+      "session.set_evict_hook(" in src and "unlink(missing_ok=True)" in src, True)
+session.revoke_all()
+
 print("\nALL PASS" if ok else "\nFAILURES ABOVE")
 sys.exit(0 if ok else 1)

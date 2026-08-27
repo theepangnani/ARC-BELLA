@@ -742,7 +742,11 @@ def current_session(request: Request, touch: bool | None = None):
             except Exception:
                 touch = False
     sid = request.cookies.get(COOKIE, "")
-    rec = session.validate(sid, touch=touch)
+    # The browser is handed in so the session can be bound to it. A cookie is a
+    # bearer token — whoever holds it is you — and this is what makes one lifted
+    # off this machine and pasted into another fail instead of work.
+    rec = session.validate(sid, touch=touch,
+                           ua=request.headers.get("user-agent", ""))
     # The allowlist is the authority; the session record only caches what it
     # said at sign-in. Taking an address out of .env has to end its access at
     # the next request rather than whenever its session happens to lapse —
@@ -2748,6 +2752,51 @@ async def logout(request: Request):
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(COOKIE, path="/")
     return resp
+
+
+@app.get("/api/sessions")
+async def sessions_list(request: Request, _=Depends(require_auth)):
+    """Every device currently signed in as you.
+
+    The point is VISIBILITY. Sessions have always been revocable, but nothing
+    ever showed you that there were three of them when you had signed in twice,
+    and a defence you never see the need for is one you never reach for. This
+    is the row that would be wrong.
+
+    Owner only: a guest seeing the owner's devices is exactly the leak the
+    guest tier exists to prevent.
+    """
+    if tier(request) != "owner":
+        raise HTTPException(403, "Not yours to see.")
+    sid = request.cookies.get(COOKIE, "")
+    return JSONResponse({"sessions": session.list_all(sid),
+                         "unlimited": OWNER_UNLIMITED})
+
+
+@app.post("/api/sessions/revoke")
+async def sessions_revoke(request: Request, _=Depends(require_auth)):
+    """Sign out other devices, or all of them.
+
+    Two buttons rather than one, and the difference matters at two in the
+    morning: "others" leaves you signed in, so you can look at the list again
+    and see that it worked. "all" includes you, which means fumbling a Google
+    sign-in while already worried. Others is the default the page offers.
+
+    Both take the Google tokens with them — that is the evict hook, and it is
+    why revoking is a real answer to a stolen cookie rather than a gesture.
+    """
+    if tier(request) != "owner":
+        raise HTTPException(403, "Not yours to end.")
+    payload = await request.json() if await request.body() else {}
+    sid = request.cookies.get(COOKIE, "")
+    if payload.get("all"):
+        session.revoke_all()
+        resp = JSONResponse({"ok": True, "ended": "all"})
+        resp.delete_cookie(COOKIE, path="/")
+        return resp
+    gone = session.revoke_others(sid)
+    print(f"{C_AMBER}  ! signed out {gone} other device(s) at the owner's request{C_OFF}")
+    return JSONResponse({"ok": True, "ended": gone})
 
 
 @app.post("/api/leave")

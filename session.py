@@ -239,7 +239,7 @@ def create(email: str, user_agent: str = "") -> str:
         return sid
 
 
-def validate(sid: str, touch: bool = True):
+def validate(sid: str, touch: bool = True, ua: str = None):
     """The session record if it is live, else None.
 
     touch=True refreshes the idle clock — but never the absolute one, which is
@@ -261,6 +261,24 @@ def validate(sid: str, touch: bool = True):
             return None
         now = time.time()
         if _expired(rec, now):
+            _evict(key)
+            _write()
+            return None
+        # Bound to the browser it was issued to. A cookie is a bearer token —
+        # whoever holds it is you — so the only thing that makes lifting one
+        # harder is requiring the holder to look like the machine it came from.
+        #
+        # Only checked when the caller supplies a user-agent AND the record has
+        # one to compare against, so sessions created before this existed keep
+        # working rather than everybody being signed out by an upgrade. The
+        # mismatch is EVICTED, not merely refused: a cookie presented from the
+        # wrong browser is either theft or a session that can never be used
+        # again, and neither is worth keeping on disk.
+        # `ua` must be non-empty on BOTH sides. A request that arrives without
+        # a user-agent fingerprints as "unknown", which would then mismatch
+        # every real browser and evict a perfectly good session — a lockout
+        # dressed as a security control.
+        if ua and rec.get("ua") and ua_key(ua) != ua_key(rec["ua"]):
             _evict(key)
             _write()
             return None
@@ -336,6 +354,82 @@ def describe(sid: str):
         "max_hours": None if free else ((MAX_AGE / 3600) if MAX_AGE else None),
         "idle_minutes": None if free else IDLE_AGE / 60,
     }
+
+
+def ua_key(ua: str) -> str:
+    """A STABLE fingerprint of a browser: platform and family, no version.
+
+    Used to bind a session to the browser it was issued to, so a stolen cookie
+    replayed somewhere else is refused rather than served.
+
+    Deliberately coarse. The obvious version — compare the whole user-agent —
+    signs you out every time Chrome updates itself, which is often, and a
+    security control that logs you out weekly is one you turn off. Platform and
+    family change when the cookie moves to another machine and not when the
+    browser patches itself, which is the distinction that actually matters.
+
+    It is a WALL, not a moat: an attacker on the same OS and browser as you
+    still matches. It costs nothing, it stops the cookie-pasted-into-another-
+    device case, and it is worth exactly that much.
+    """
+    u = (ua or "").lower()
+    plat = next((p for p in ("android", "iphone", "ipad", "windows", "macintosh",
+                             "cros", "linux") if p in u), "?")
+    # Order matters: Edge says "chrome" too, and Chrome says "safari".
+    fam = ("edg" if "edg/" in u else
+           "opera" if "opr/" in u else
+           "firefox" if "firefox" in u else
+           "chrome" if "chrome" in u or "chromium" in u else
+           "safari" if "safari" in u else "?")
+    return plat + "|" + fam
+
+
+def list_all(current_sid: str = "") -> list:
+    """Every live session, most recent first, with the caller's own marked.
+
+    This exists so that a stolen cookie is VISIBLE. Sessions were always
+    revocable — revoke_all(), or deleting the store — but nothing ever showed
+    you that there were three of them when you had signed in twice, and a
+    defence you never see the need for is one you never reach for.
+    """
+    cur = key_for(current_sid) if current_sid else ""
+    with _lock:
+        _load()
+        sweep()
+        out = []
+        for key, rec in _sessions.items():
+            out.append({
+                # Enough to tell two rows apart and useless for anything else.
+                # The full key is a hash of the cookie and still never leaves.
+                "id": key[:10],
+                "email": rec.get("email", ""),
+                "ua": rec.get("ua", ""),
+                "created": rec.get("created", 0),
+                "last_seen": rec.get("last_seen", 0),
+                "current": key == cur,
+            })
+        out.sort(key=lambda r: r["last_seen"], reverse=True)
+        return out
+
+
+def revoke_others(current_sid: str) -> int:
+    """Sign out every device except this one. Returns how many went.
+
+    The one you want at 2am. revoke_all() is the bigger hammer and it also
+    signs YOU out, which means fumbling a Google sign-in while worrying — so
+    this is the default the page offers and the reason it exists separately.
+    """
+    keep = key_for(current_sid) if current_sid else ""
+    with _lock:
+        _load()
+        gone = 0
+        for key in list(_sessions):
+            if key != keep:
+                _evict(key)
+                gone += 1
+        if gone:
+            _write()
+        return gone
 
 
 def live_keys() -> set:
