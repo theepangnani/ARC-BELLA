@@ -311,7 +311,12 @@ c("  and both still obey the switch when it is on",
   ["adaptive", "adaptive"])
 _run_src = io.open(ARC / "run.py", encoding="utf-8").read()
 c.truthy("  the route asks the helper rather than deciding for itself",
-         "thinking = thinking_for(model, thinking_on)" in _run_src)
+         re.search(r"\n\s*thinking = thinking_for\(model, [^)]*thinking_on", _run_src) is not None)
+# It also turns on for the written register — nobody is waiting to HEAR a reply
+# there, which is the only reason it is off by default. Pinned because it is
+# decided in run.py rather than by the page, and that is the point.
+c.truthy("  ...and chat mode turns it on too",
+         "thinking_for(model, thinking_on or chat_view)" in _run_src)
 # The summariser is hardcoded to MODEL, so an ARC_MODEL pointed at Opus would
 # have reintroduced the leak in the one place it persists: that reply is not
 # spoken and forgotten, it is written into the note and read every session.

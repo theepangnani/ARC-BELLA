@@ -342,6 +342,30 @@ SUPPORTS_EFFORT = supports_effort(MODEL)
 # clipping legitimate work â€” look at the calendar, then act on it, is two.
 MAX_TOOL_ROUNDS = int(os.getenv("ARC_MAX_TOOL_ROUNDS", "6"))
 
+# Chat mode is read rather than heard, and the two views want different
+# ceilings. A spoken reply is three sentences; a written one can be a page with
+# a code block in it, and this ceiling covers the THINKING as well as the
+# answer, so the voice-sized number would cut long replies off mid-paragraph.
+MAX_TOKENS_CHAT = int(os.getenv("ARC_MAX_TOKENS_CHAT", "16000"))
+
+# And it can afford to think harder. The voice default is 'low' because thinking
+# is the slowest part of a spoken reply and the loop is judged on how fast it
+# starts talking — nobody is waiting to hear anything here.
+EFFORT_CHAT = os.getenv("ARC_EFFORT_CHAT", "high")
+
+# The line that actually selects the register. Written by the SERVER, never by
+# the browser: it is the thing the top paid tier buys, and a page the customer
+# controls should not be able to award itself one. The rules it points at live
+# in prompts/main.md, inside the cached block — this only says which set applies
+# this turn, the way the persona and the date do.
+CHAT_REGISTER = (
+    "CHAT MODE IS ON for this turn. You are being READ, not heard — nothing "
+    "you write will be spoken aloud. Follow the CHAT MODE section of your "
+    "instructions rather than the spoken-aloud one: markdown, fenced code with "
+    "the language named, and whatever length the question actually deserves.\n\n"
+)
+
+
 # Hosting platforms (Render, Railway, Fly) hand you a PORT and expect you to
 # listen on every interface. Locally we stay on loopback so nothing on your
 # network can reach it.
@@ -762,6 +786,39 @@ def tier(request: Request) -> str:
     answer in one place rather than three checks that drift apart.
     """
     return "guest" if is_guest(request) else "owner"
+
+
+# The slot the docstring above promised. One table, so "may this account do X"
+# has one answer and not three that drift.
+#
+# Both capabilities in it are here for the same reason, and it is not that they
+# are fancy — it is that they are the two things that cost REAL MONEY PER USE.
+# Everything else ARC does is free to give away: the colours, the wake word,
+# the routines, the second screen. These are not.
+#
+#   deep — Opus, at five times Haiku's rate.
+#   chat — read rather than heard, so: thinking on, effort high, and a ceiling
+#          of 16,000 tokens instead of 8,000. A long written answer can cost
+#          more than a hundred spoken ones.
+#
+# When a paid tier exists it is a row in here, and nothing else moves. The
+# ordering is deliberate: a tier is a SET, so adding "chat" to one place cannot
+# accidentally grant "deep" as well.
+ENTITLEMENTS = {
+    "owner": {"deep", "chat"},
+    "guest": set(),
+}
+
+
+def may(request: Request, capability: str) -> bool:
+    """Whether this account is entitled to a paid capability.
+
+    Checked on the SERVER, always, and never inferred from what the browser
+    said it was doing. A switch in a page is a suggestion: the page belongs to
+    the customer, and the one that unlocks the expensive model is the first one
+    anybody would think to flip.
+    """
+    return capability in ENTITLEMENTS.get(tier(request), set())
 
 
 def is_guest(request: Request) -> bool:
@@ -1395,6 +1452,12 @@ async def health(request: Request, _=Depends(require_auth)):
         "contacts_drive": gextra.connected(),
         "telegram": tg.connected() and not guest,
         "guest": guest,
+        # What this account is entitled to. Sent so the page can grey out what
+        # it cannot have instead of offering it and failing — the honest reason
+        # for this field. It is NOT what enforces anything: every capability in
+        # here is checked again on the request that uses it, because this
+        # response reaches a browser and a browser can say whatever it likes.
+        "entitled": sorted(ENTITLEMENTS.get(tier(request), set())),
         # Computer control is real only for the local desktop; over the tunnel
         # the phone gets everything else but not shell/system control.
         "computer": pc.connected() and local,
@@ -1438,7 +1501,22 @@ def _claude_error(e) -> HTTPException:
                                   "console.anthropic.com under Plans & Billing, "
                                   "then say anything to try again.")
     if status == 401 or "authentication" in low or "invalid x-api-key" in low:
-        return HTTPException(401, "The Anthropic API key is missing or invalid. "
+        # 502, NOT 401, and the difference is not pedantry.
+        #
+        # 401 from ARC means one thing: your sign-in has ended. The page acts on
+        # it — every fetch is wrapped, and a 401 sends the browser to the
+        # sign-in page. Returning 401 because ANTHROPIC's key was rejected made
+        # a dead API key look like a dead session: ask a question, get bounced,
+        # land back on a HUD your session was still perfectly good for, press
+        # Initialize, ask again, get bounced again. Forever. And the message
+        # below — the one that says exactly what is wrong and how to fix it —
+        # was never on screen long enough to read, because the page navigated
+        # away from it.
+        #
+        # ARC is a proxy. When the thing it proxies to refuses ARC's own
+        # credentials, that is a bad gateway, and it is nothing to do with who
+        # is signed in at this end.
+        return HTTPException(502, "The Anthropic API key is missing or invalid. "
                                   "Check ANTHROPIC_API_KEY in your .env and restart me.")
     if status == 403:
         return HTTPException(403, "This Anthropic key isn't permitted to use that "
@@ -1507,8 +1585,19 @@ async def chat(request: Request, _=Depends(require_auth)):
     # refusing a whole turn over — they get the ordinary brain and an answer,
     # rather than a 403 and silence. Enforced here rather than in the page,
     # because a switch in a browser is a suggestion.
-    if brain == "deep" and tier(request) != "owner":
+    if brain == "deep" and not may(request, "deep"):
         brain, brain_why = "smart", "deep is the owner's brain"
+
+    # Read, not heard — and the top paid capability, so ASKED FOR by the browser
+    # and GRANTED here or not at all. Same shape as the deep brain above: an
+    # account without it is answered in the ordinary voice register rather than
+    # refused, and the reply says which register it actually got, because being
+    # quietly downgraded and told otherwise is worse than not having it.
+    #
+    # Decided HERE, before anything reads it, because four things follow from
+    # it — the register line, the thinking mode, the effort and the ceiling —
+    # and the day they are decided in four places is the day they disagree.
+    chat_view = bool(payload.get("chat")) and may(request, "chat")
 
     model = resolve_model(brain)
 
@@ -1630,7 +1719,10 @@ async def chat(request: Request, _=Depends(require_auth)):
     # says on the two brains that answer most turns.
     want_think = payload.get("think")
     thinking_on = want_think is True or str(want_think).lower() in ("on", "always", "adaptive", "true")
-    thinking = thinking_for(model, thinking_on)
+    # `or chat_view`: in chat mode nobody is waiting to HEAR anything, which is
+    # the only reason thinking is off by default. Server-side rather than left
+    # to the page, so it cannot come adrift from the register it belongs to.
+    thinking = thinking_for(model, thinking_on or chat_view)
 
     convo = list(messages)
 
@@ -1694,6 +1786,12 @@ async def chat(request: Request, _=Depends(require_auth)):
     # looks like it is working and isn't. So only ask when it can be granted.
     if len(base) >= MIN_CACHE_CHARS:
         head["cache_control"] = {"type": "ephemeral"}
+    if chat_view:
+        # Ahead of anything the page contributed. This is the server's statement
+        # about which register applies and it should not be arguable by text
+        # appended after it.
+        extra = CHAT_REGISTER + extra
+
     system = [head]
     if extra.strip():
         system.append({"type": "text", "text": extra})
@@ -1716,7 +1814,7 @@ async def chat(request: Request, _=Depends(require_auth)):
     for _ in range(MAX_TOOL_ROUNDS):
         kwargs = dict(
             model=model,
-            max_tokens=MAX_TOKENS,
+            max_tokens=MAX_TOKENS_CHAT if chat_view else MAX_TOKENS,
             system=system,
             messages=convo,
             thinking=thinking,
@@ -1725,7 +1823,13 @@ async def chat(request: Request, _=Depends(require_auth)):
         # send it on models that accept it — decided per-request, since the brain
         # can be switched at runtime.
         if supports_effort(model):
-            effort = EFFORT_DEEP if brain == "deep" else EFFORT
+            # Deep is what the owner explicitly reached for and outranks the
+            # view; chat mode raises the other two, because the reason they run
+            # shallow — a spoken reply that has to start quickly — is not a
+            # reason that exists when the answer is being read.
+            effort = (EFFORT_DEEP if brain == "deep"
+                      else EFFORT_CHAT if chat_view
+                      else EFFORT)
             # Guard the one combination that is a hard 400 rather than a
             # degraded answer: thinking off above 'high' on Opus 5. Belt and
             # braces now that thinking_for() never disables thinking on Opus —
@@ -1867,6 +1971,10 @@ async def chat(request: Request, _=Depends(require_auth)):
         "brain": brain,
         "auto": auto_used,
         "why": brain_why,
+        # Which register ANSWERED, not which one was asked for. A page showing
+        # chat mode over a reply written to be spoken is the same lie as showing
+        # OPUS-5 over a Sonnet answer.
+        "chat": chat_view,
         "tools": used,
         "blocked": blocked_actions,   # actions ARC wanted but that need the user's ok
         "cost_today": round(_day_cost(), 4),

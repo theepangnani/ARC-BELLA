@@ -53,7 +53,8 @@ c("  the status says payment, not bad request", h.status_code, 402)
 
 print("\nThe others a person can actually act on:")
 cases = [
-    (401, "invalid x-api-key", 401, ["ANTHROPIC_API_KEY", ".env"]),
+    # 502, not 401 — see the section below, which is the whole reason.
+    (401, "invalid x-api-key", 502, ["ANTHROPIC_API_KEY", ".env"]),
     (403, "permission denied for model", 403, ["isn't permitted"]),
     (404, "model: claude-nope not found", 404, ["doesn't exist"]),
     (429, "rate limit exceeded", 429, ["rate-limiting", "moment"]),
@@ -65,6 +66,39 @@ for status, msg, want_status, needles in cases:
     c("  %3d -> %3d" % (status, want_status), h.status_code, want_status)
     for n in needles:
         c.truthy("       says %r" % n, n.lower() in h.detail.lower())
+
+print("\n401 MEANS ONE THING, AND IT IS NOT THIS:")
+# The bug this pins cost an evening. ARC's page wraps every fetch and treats a
+# 401 as "your sign-in has ended" — it navigates to the sign-in page. When a
+# revoked ANTHROPIC key also came back as 401, asking a question sent the
+# browser away, landed it on a HUD the session was still perfectly good for,
+# and did the same on the next question. A loop, with the one message that
+# explained it never on screen long enough to read.
+#
+# ARC is a proxy. Its upstream refusing ARC's own credentials is a bad gateway,
+# and it has nothing to do with who is signed in at this end.
+for _msg in ("invalid x-api-key", "authentication_error", "API key is invalid."):
+    h = run._claude_error(Err(401, _msg))
+    c("  upstream %-20r is not a 401 here" % _msg[:20], h.status_code == 401, False)
+    c("  ...it is a bad gateway", h.status_code, 502)
+c.truthy("  and it still names the key and the file",
+         "ANTHROPIC_API_KEY" in run._claude_error(Err(401, "bad key")).detail)
+# Stated as an invariant, where it can be checked: nothing the provider does
+# may come back as 401, because 401 is spoken for.
+c("  NO provider failure maps to 401 at all",
+  [st for st, m in [(400, "credit balance too low"), (401, "invalid x-api-key"),
+                    (403, "permission denied"), (404, "model x not found"),
+                    (429, "rate limit"), (500, "boom"), (529, "Overloaded")]
+   if run._claude_error(Err(st, m)).status_code == 401], [])
+
+print("\nAnd the page checks before it throws itself away:")
+_hud = open(HUD, encoding="utf-8").read()
+c.truthy("  a 401 is confirmed against the session first",
+         'dead = (await raw("/api/session")).status === 401' in _hud)
+c.truthy("  ...through the unwrapped fetch, so it cannot recurse",
+         'raw("/api/session")' in _hud)
+c.truthy("  and only the session's own answer ends the session",
+         "if (dead) { leaving = true; signInAgain" in _hud)
 
 print("\nAn unrecognised one is trimmed, not dumped:")
 h = run._claude_error(Err(400, "messages.0.content: field required {'lots': 'of noise'}"))

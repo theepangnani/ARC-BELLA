@@ -630,7 +630,17 @@
     letter-spacing: .02em; text-align: center; min-height: 30px;
     color: var(--ice); opacity: .95; max-width: 52ch; line-height: 1.35;
     text-shadow: 0 0 16px rgba(95,217,255,.2);
+    /* A long final sentence used to grow the centre column until the bottom of
+       it went past the fold — the caption was then genuinely cut off, by the
+       window rather than by a rule. It scrolls inside itself instead: slightly
+       awkward on a very long reply, and never a sentence that ends in mid-air.
+       (The whole reply is in the transcript regardless.) */
+    max-height: 28vh; overflow-y: auto;
+    transition: opacity .4s ease;
   }
+  /* Not display:none — it fades, so a caption that has been sitting there for
+     nine seconds leaves rather than blinks out. */
+  .live.fading { opacity: 0; }
   .live:empty::after { content: "—"; color: var(--line); }
 
   /* input meter — proof ARC is hearing you, on phone as well as desktop */
@@ -677,6 +687,71 @@
   .entry.arc .body { color: var(--ice); border-left: 1px solid var(--accent); padding-left: 9px; }
   .entry.sys .body { color: var(--amber); font-size: 10.5px; letter-spacing: .05em; }
   .entry.err .body { color: var(--rose); font-size: 10.5px; }
+
+  /* ---------- rendered markdown (chat mode replies) ----------
+     Deliberately NOT scoped to html.chat. A reply rendered in chat mode is
+     still in the transcript after you switch back, and text that only has
+     styling in one of the two views is text that falls apart in the other. */
+  .mdp { margin: 0 0 .75em; }
+  .mdp:last-child { margin-bottom: 0; }
+  .mdh {
+    font-family: var(--display); font-weight: 600; color: var(--ice);
+    letter-spacing: .02em; margin: 1.15em 0 .5em; line-height: 1.3;
+  }
+  .mdh:first-child { margin-top: 0; }
+  h3.mdh { font-size: 1.35em; }
+  h4.mdh { font-size: 1.16em; }
+  h5.mdh, h6.mdh {
+    font-size: .95em; text-transform: uppercase; letter-spacing: .16em;
+    color: var(--cyan-dim);
+  }
+  .mdlist { margin: 0 0 .8em; padding-left: 1.35em; }
+  .mdlist li { margin-bottom: .34em; }
+  .mdlist li::marker { color: var(--cyan-dim); }
+  .mdquote {
+    margin: 0 0 .8em; padding: .1em 0 .1em .9em;
+    border-left: 2px solid var(--cyan-dim); color: #a8c6d8; font-style: italic;
+  }
+  .entry .body hr {
+    border: 0; border-top: 1px solid var(--line); margin: 1.1em 0;
+  }
+  .entry .body code {
+    font-family: var(--mono); font-size: .88em;
+    background: rgba(95,217,255,.09); color: var(--cyan);
+    padding: .12em .38em; border-radius: 2px;
+  }
+  .mdcode {
+    position: relative; margin: 0 0 .85em; padding: 11px 13px;
+    background: rgba(4,7,12,.72); border: 1px solid var(--line); border-radius: 3px;
+    overflow-x: auto;      /* long lines scroll here; the page never does */
+  }
+  .mdcode code {
+    background: none; color: var(--ice); padding: 0;
+    font-size: 11.5px; line-height: 1.6; white-space: pre;
+  }
+  /* The language, if the model named one. Sits in the corner rather than above,
+     so it costs no vertical space in a view that is mostly reading. */
+  .mdcode[data-lang]::before {
+    content: attr(data-lang);
+    position: absolute; top: 5px; right: 9px;
+    font-family: var(--mono); font-size: 8px; letter-spacing: .2em;
+    text-transform: uppercase; color: var(--cyan-dim); pointer-events: none;
+  }
+  .mdtwrap { overflow-x: auto; margin: 0 0 .85em; }
+  .mdtable { border-collapse: collapse; font-size: .95em; }
+  .mdtable th, .mdtable td {
+    border: 1px solid var(--line); padding: 6px 10px; text-align: left;
+    vertical-align: top;
+  }
+  .mdtable th {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--cyan-dim); font-weight: 500;
+  }
+  /* Shown, never clickable — see renderMarkdown. A live link built out of a
+     stranger's email, in ARC's own colours, is a phishing page with a
+     character reference. */
+  .mdlink { color: var(--ice); text-decoration: underline dotted var(--cyan-dim); }
+  .mdurl { color: var(--cyan-dim); font-family: var(--mono); font-size: .82em; }
 
   /* ---------- the board ----------
      Text ARC SHOWS instead of speaking. A synthesiser reading "print, open
@@ -914,6 +989,132 @@
      all of it and shows the four things that are legible from two metres: the
      time, whether it is listening, the next alarm, and the last thing said.
      Held-in-hand ARC is unchanged; this is a different posture, not a skin. */
+  /* ---------- chat mode ----------
+     The second of two alternate views, and the quieter one. Speaker mode is
+     for a phone on a table across the room; this is for sitting down and
+     talking at length, where the rails are twelve readouts you are not looking
+     at and the reactor is most of the screen.
+
+     Nothing is destroyed to get here — the shell is restyled, not rebuilt, so
+     the transcript DOM, the microphone session, running timers and every
+     setting are the same objects on both sides of the switch. That is the whole
+     reason this is CSS and a class rather than a second page: a page swap would
+     drop the mic mid-sentence and lose the conversation, which is exactly what
+     someone switching views does not expect.
+
+     What survives on purpose: the reactor (small, still the push-to-talk
+     target, still breathing), the live line, the brand bar. ARC without the
+     core is a chat window with a serif greeting. */
+  .chatgreet, .chatstatus { display: none; }
+
+  /* A capability this account does not have. Dimmed and inert rather than
+     hidden, because a control you can see and cannot use tells you it exists;
+     one that was never drawn tells you nothing at all. */
+  .toggle.locked { opacity: .42; cursor: not-allowed; }
+  .toggle.locked input { cursor: not-allowed; }
+
+  html.chat .col.left,
+  html.chat .forecast,
+  html.chat .stocks,
+  html.chat .hearmeter,
+  html.chat #txPanel > h2,
+  html.chat .col.right > .panel:not(#txPanel) { display: none !important; }
+
+  /* The whole screen, not a column down the middle of it.
+     A 900px cap made sense while this was "the quieter view"; in practice it
+     is the view you sit in to work through something long, and a transcript
+     is the one thing here that genuinely wants the width. The safe-area
+     insets stay — a notch still eats the top of a laptop-shaped browser on
+     some machines — but the horizontal padding goes, because the point is to
+     reach the edges. */
+  html.chat .shell {
+    display: flex; flex-direction: column;
+    max-width: none; width: 100%; gap: 0;
+    margin: 0;
+    padding:
+      calc(10px + env(safe-area-inset-top))
+      calc(18px + env(safe-area-inset-right))
+      calc(14px + env(safe-area-inset-bottom))
+      calc(18px + env(safe-area-inset-left));
+    height: 100vh; height: 100dvh;
+    box-sizing: border-box;
+  }
+  /* The transcript is what the extra width is for, so let it use it — but not
+     without limit: a line of text 2000px wide is unreadable, and the eye loses
+     the start of the next one. */
+  html.chat .log, html.chat .composer { max-width: 1100px; width: 100%; margin-inline: auto; }
+  html.chat .brandbar { flex: 0 0 auto; margin-bottom: 4px; }
+  html.chat .stage { flex: 0 0 auto; gap: 10px; padding: 10px 0 2px; }
+
+  /* Small enough to be a presence rather than the subject, big enough to still
+     be an obvious thing to hold. */
+  html.chat .core-wrap { width: min(42vh, 132px); }
+  html.chat .core-label .state { font-size: 8px; letter-spacing: .3em; }
+  html.chat .core-label .hint { display: none; }
+
+  html.chat .chatstatus {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .26em;
+    text-transform: uppercase; color: var(--cyan-dim);
+  }
+  html.chat .chatstatus i {
+    width: 3px; height: 3px; border-radius: 50%; background: var(--accent);
+    opacity: .55; display: block;
+  }
+
+  html.chat .col.right {
+    flex: 1 1 auto; min-height: 0; max-height: none; overflow: hidden;
+    padding-right: 0;
+  }
+  /* The panel chrome is HUD language. In here the conversation is the object,
+     so the box around it goes and the text sits on the void. */
+  html.chat #txPanel {
+    height: 100%; border: none; background: none; padding: 0;
+    box-shadow: none;
+  }
+  html.chat #txPanel::before, html.chat #txPanel::after { display: none; }
+
+  html.chat .log {
+    max-height: none; flex: 1 1 auto; min-height: 0;
+    font-size: 13.5px; line-height: 1.78; gap: 22px;
+    padding: 4px 14px 8px 2px;
+    /* Text dissolves upward instead of being guillotined by the scroll edge —
+       the one flourish in here that is purely for the look of the thing. */
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 26px);
+    mask-image: linear-gradient(180deg, transparent 0, #000 26px);
+  }
+  html.chat .entry .who { font-size: 8px; letter-spacing: .3em; margin-bottom: 6px; }
+  html.chat .entry .body { padding-left: 13px; }
+  html.chat .entry.sys .body, html.chat .entry.err .body { font-size: 11px; opacity: .8; }
+
+  html.chat .composer { margin-top: 14px; gap: 10px; }
+  html.chat .composer input {
+    padding: 14px 16px; font-size: 13px; border-radius: 3px;
+    background: rgba(9,19,32,.72);
+  }
+  html.chat .composer input:focus {
+    box-shadow: 0 0 0 1px var(--accent), 0 0 22px -6px var(--accent);
+  }
+  html.chat .composer button { padding-inline: 20px; }
+
+  /* Only while nothing has been said. :has() rather than a JS class so it can
+     never disagree with what is actually in the log. */
+  html.chat #txPanel:has(.log:empty) .chatgreet { display: block; }
+  html.chat #txPanel:has(.log:empty) .log { flex: 0 0 auto; }
+  .chatgreet { text-align: center; margin: auto 0 26px; padding: 0 12px; }
+  .chatgreet .cg-hi {
+    font-family: var(--display, inherit); font-size: clamp(21px, 3.6vw, 33px);
+    color: var(--ice); letter-spacing: .01em; margin-bottom: 12px;
+  }
+  .chatgreet .cg-sub {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .3em;
+    text-transform: uppercase; color: var(--cyan-dim);
+  }
+
+  @media (max-width: 900px) {
+    html.chat .core-wrap { width: min(30vh, 96px); }
+  }
+
   html.speaker body { overflow: hidden; }
   html.speaker .shell,
   html.speaker .forecast,
@@ -1169,6 +1370,11 @@
         <input type="checkbox" id="searchOn" checked>
       </label>
 
+      <label class="toggle" for="chatMode">
+        <span>Chat mode <small>(just the conversation)</small></span>
+        <input type="checkbox" id="chatMode">
+      </label>
+
       <label class="ctl" style="margin-top:12px">Thinking</label>
       <div class="seg" id="thinkSeg">
         <button data-think="off">Fast</button>
@@ -1308,12 +1514,25 @@
       <span class="hearlbl">HEARING</span>
       <i id="hearFill"></i>
     </div>
+    <!-- Chat mode only. The left rail is gone there, and with it the answer to
+         "which brain is this and is it hearing me" — the two readouts you
+         actually look at mid-conversation. This is those two and nothing else. -->
+    <div class="chatstatus" id="chatStatus" aria-hidden="true">
+      <span id="csModel">—</span><i></i><span id="csHear">—</span>
+    </div>
   </div>
 
   <!-- RIGHT: transcript -->
-  <div class="col">
-    <div class="panel" style="display:flex;flex-direction:column;flex:1;">
+  <div class="col right">
+    <div class="panel" id="txPanel" style="display:flex;flex-direction:column;flex:1;">
       <h2>Transcript</h2>
+      <!-- Chat mode only, and only while nothing has been said yet. An empty
+           conversation with a composer under it looks like a page that failed
+           to load; a greeting makes the same emptiness read as waiting. -->
+      <div class="chatgreet" id="chatGreet" aria-hidden="true">
+        <div class="cg-hi" id="chatHi">Good evening, sir.</div>
+        <div class="cg-sub">Ambient Response Core is listening.</div>
+      </div>
       <div class="log" id="log" dir="auto"></div>
       <div class="composer">
         <input type="text" id="typed" placeholder="Type a command…" autocomplete="off" dir="auto">
@@ -1503,6 +1722,8 @@
     rAlarm: $("rAlarm"),
     alarmSnooze: $("alarmSnooze"), alarmStop: $("alarmStop"),
     roomMode: $("roomMode"), speakerMode: $("speakerMode"),
+    chatMode: $("chatMode"), chatGreet: $("chatGreet"), chatHi: $("chatHi"),
+    csModel: $("csModel"), csHear: $("csHear"),
     speakerFace: $("speakerFace"), spkClock: $("spkClock"), spkDate: $("spkDate"),
     spkState: $("spkState"), spkAlarm: $("spkAlarm"), spkLine: $("spkLine"),
     spkExit: $("spkExit"), spkWake: $("spkWake"),
@@ -1624,6 +1845,12 @@ You are an upbeat, motivating coach in the user's corner.
     const m = MODES[modeNow];
     return m ? m.prompt : "";
   }
+
+  // NOTE: there is deliberately no chatBlock() here. The browser asks for chat
+  // mode with a flag on the request; the SERVER decides whether this account may
+  // have it and writes the register line itself. Declaring the register from
+  // here would mean the paywall was a checkbox in a page the customer controls,
+  // which is not a paywall. See ENTITLEMENTS in run.py.
 
   function applyMode(name, announce) {
     const m = MODES[name];
@@ -2010,6 +2237,13 @@ You are an upbeat, motivating coach in the user's corner.
   // transcript before the speaker block further down has executed.
   let lastAlarmInfo = null;
   let speakerMode = false;
+  // And chatMode with it, for the same reason again: addEntry reads it to
+  // decide whether a reply is markdown to be rendered or a spoken line to be
+  // shown as it is, and an alarm can write to the transcript long before the
+  // chat block further down has run.
+  let chatMode = false;
+  // And the caption's fade timer, reached by setMode() via cancelLiveHold().
+  let liveFade = null;
   // Up here with speakerMode for the same reason: onFirstInteraction is bound
   // to window from this block, and it reads both.
   let wakeLock = null;
@@ -2471,6 +2705,18 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
       (_, name) => {
         try { applyMode(/^(off|none)$/i.test(name) ? "" : name.toLowerCase(), false); }
         catch (_) {}
+        return "";
+      });
+
+    // [[view: chat|hud]] — the same switch as the toggle and the spoken
+    // command. Named "view" and not "mode" because [[mode:]] is already the
+    // persona above, and two directives one word apart doing unrelated things
+    // is a bug waiting for a tired evening. This exists for the times the
+    // request is not a bare command — "this is a lot, can we just talk" — which
+    // matchViewCommand() will never catch and should not try to.
+    out = out.replace(/\[\[\s*view\s*:\s*(chat|hud|base|full|normal)\s*\]\]/gi,
+      (_, name) => {
+        try { applyChat(/^chat$/i.test(name)); } catch (_) {}
         return "";
       });
 
@@ -3086,8 +3332,60 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   let lastSpokenText = "";     // the whole reply, for the echo guard AFTER it ends
   let echoUntil = 0;           // ignore ARC's own tail arriving late, until this
 
+  /* ---------------- the caption's dwell ----------------
+     The line under the reactor used to be wiped in the same tick the last word
+     finished playing. So the one sentence you most want a second look at — the
+     answer — was on screen for exactly as long as it took to SAY, and reading
+     is slower than listening. Anything you didn't catch by ear was gone.
+
+     It now stays for as long as it takes to read, then goes on its own.
+
+     Guarded by comparing the text rather than by cancelling a handle, because
+     the failure that matters is a stale timer wiping a caption that has since
+     been replaced. If the line has changed, this timer belongs to a sentence
+     nobody is looking at any more, and it does nothing.
+  ------------------------------------------------------------------- */
+  // liveFade is declared up with speakerMode and chatMode, for the reason
+  // written there: setMode() reaches cancelLiveHold() and setMode runs early.
+
+  function holdLive() {
+    clearTimeout(liveFade);
+    const held = el.live.textContent;
+    if (!held) return;
+    // Two and a half seconds to look at it, plus reading time. 45ms a
+    // character is around 260 words a minute — comfortably slower than the
+    // speech that just delivered it, which is the entire point.
+    const ms = Math.min(9000, 2500 + held.length * 45);
+    liveFade = setTimeout(() => {
+      if (el.live.textContent !== held) return;
+      el.live.classList.add("fading");
+      setTimeout(() => {
+        // The class comes off UNCONDITIONALLY, and that ordering is the fix for
+        // a real bug rather than tidiness. A caption written during these 420ms
+        // by a path that does not change state — an interim recognition result
+        // arriving while still in standby — would otherwise inherit opacity 0,
+        // and the guard below would then return before the class was removed.
+        // The line would be invisible from then on, permanently, with text in
+        // it. Clearing the TEXT is what has to be guarded; hiding it is not.
+        el.live.classList.remove("fading");
+        if (el.live.textContent !== held) return;
+        el.live.textContent = "";
+      }, 420);
+    }, ms);
+  }
+
+  // Any new caption cancels a pending one. Every caption that matters is
+  // preceded by a state change — listening, thinking, speaking — so this is the
+  // one place that has to know, rather than all twenty-odd writers of the line.
+  function cancelLiveHold() {
+    clearTimeout(liveFade);
+    liveFade = null;
+    if (el.live) el.live.classList.remove("fading");
+  }
+
   function setMode(m) {
     const s = STATES[m] || STATES.standby;
+    if (m && m !== "standby") cancelLiveHold();
     state.mode = STATES[m] ? m : "standby";
     el.coreState.textContent = s.label;
     // Say what actually works right now: with the mic held open for a
@@ -3100,6 +3398,161 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (state.mode === "standby") duckMedia(false);
   }
 
+  /* ---------------- markdown, for chat mode ----------------
+     In the spoken view a reply is three sentences of prose and there is nothing
+     to render. In chat mode ARC writes properly — headings, lists, tables,
+     fenced code — and that has to become something you can read.
+
+     BUILT AS NODES, NEVER AS HTML. This is the rule the whole file already
+     follows (see addBoard just below: a fixed skeleton, then textContent for
+     every value that came from outside) and it matters more here than anywhere.
+     A reply can contain the body of an email, the text of a web page, or the
+     contents of a file — none of which ARC wrote and any of which may be
+     hostile. innerHTML on that is a cross-site scripting hole that arrives by
+     email. So: elements are created, text goes in through textContent, and no
+     string from the model is ever parsed as markup.
+
+     Links are rendered as TEXT plus a visible URL rather than as anchors, for
+     the same reason. A clickable link built out of a stranger's email, wearing
+     ARC's own colours, is a phishing page with a character reference.
+  ------------------------------------------------------------------- */
+  const MD_BREAK = /^(\s*$|\s*```|\s*[-*+]\s+|\s*\d+[.)]\s+|#{1,4}\s+|\s*>\s?|\s*(-{3,}|\*{3,}|_{3,})\s*$|\s*\|.*\|\s*$)/;
+
+  function mdInline(target, text) {
+    const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*|_[^_\n]+_)|(\[[^\]\n]*\]\([^)\s]+\))/g;
+    let i = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > i) target.appendChild(document.createTextNode(text.slice(i, m.index)));
+      const s = m[0];
+      let node;
+      if (m[1]) { node = document.createElement("code"); node.textContent = s.slice(1, -1); }
+      else if (m[2]) { node = document.createElement("strong"); node.textContent = s.slice(2, -2); }
+      else if (m[3]) { node = document.createElement("em"); node.textContent = s.slice(1, -1); }
+      else {
+        const cut = s.indexOf("](");
+        node = document.createElement("span");
+        node.className = "mdlink";
+        node.textContent = s.slice(1, cut) || s.slice(cut + 2, -1);
+        const u = document.createElement("span");
+        u.className = "mdurl";
+        u.textContent = " " + s.slice(cut + 2, -1);
+        node.appendChild(u);
+      }
+      target.appendChild(node);
+      i = m.index + s.length;
+    }
+    if (i < text.length) target.appendChild(document.createTextNode(text.slice(i)));
+  }
+
+  function mdRow(table, cells, head) {
+    const tr = document.createElement("tr");
+    cells.forEach(cell => {
+      const td = document.createElement(head ? "th" : "td");
+      mdInline(td, cell.trim());
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  }
+
+  function renderMarkdown(root, text) {
+    const lines = String(text == null ? "" : text).split(/\r?\n/);
+    let i = 0, list = null;
+    while (i < lines.length) {
+      const ln = lines[i];
+
+      const fence = ln.match(/^\s*```\s*([A-Za-z0-9+#._-]*)\s*$/);
+      if (fence) {
+        list = null;
+        const buf = [];
+        i++;
+        while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]);
+        i++;   // the closing fence, or the end — an unterminated block still renders
+        const pre = document.createElement("pre");
+        pre.className = "mdcode";
+        if (fence[1]) pre.setAttribute("data-lang", fence[1]);
+        const code = document.createElement("code");
+        code.textContent = buf.join("\n");
+        pre.appendChild(code);
+        root.appendChild(pre);
+        continue;
+      }
+
+      if (/^\s*$/.test(ln)) { list = null; i++; continue; }
+
+      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(ln)) {
+        list = null; root.appendChild(document.createElement("hr")); i++; continue;
+      }
+
+      const h = ln.match(/^(#{1,4})\s+(.*)$/);
+      if (h) {
+        list = null;
+        // Mapped to h3+ so ARC's own headings never outrank the panel's.
+        const e = document.createElement("h" + Math.min(6, h[1].length + 2));
+        e.className = "mdh";
+        mdInline(e, h[2]);
+        root.appendChild(e);
+        i++; continue;
+      }
+
+      // | a | b |     A separator row is what distinguishes a table from a
+      // |---|---|     sentence that happens to contain pipes.
+      if (/^\s*\|.*\|\s*$/.test(ln) && i + 1 < lines.length &&
+          /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+        list = null;
+        const cut = (r) => r.trim().replace(/^\||\|$/g, "").split("|");
+        const table = document.createElement("table");
+        table.className = "mdtable";
+        mdRow(table, cut(ln), true);
+        i += 2;
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) mdRow(table, cut(lines[i++]), false);
+        const wrap = document.createElement("div");
+        wrap.className = "mdtwrap";     // wide tables scroll, the page never does
+        wrap.appendChild(table);
+        root.appendChild(wrap);
+        continue;
+      }
+
+      const ul = ln.match(/^\s*[-*+]\s+(.*)$/);
+      const ol = ln.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (ul || ol) {
+        const tag = ul ? "ul" : "ol";
+        if (!list || list.tagName.toLowerCase() !== tag) {
+          list = document.createElement(tag);
+          list.className = "mdlist";
+          root.appendChild(list);
+        }
+        const li = document.createElement("li");
+        mdInline(li, ul ? ul[1] : ol[1]);
+        list.appendChild(li);
+        i++; continue;
+      }
+
+      const bq = ln.match(/^\s*>\s?(.*)$/);
+      if (bq) {
+        list = null;
+        const q = document.createElement("blockquote");
+        q.className = "mdquote";
+        mdInline(q, bq[1]);
+        root.appendChild(q);
+        i++; continue;
+      }
+
+      list = null;
+      const buf = [];
+      while (i < lines.length && !MD_BREAK.test(lines[i])) buf.push(lines[i++]);
+      // A line that LOOKS like a block but was not claimed by one of the
+      // branches above — a row of pipes with no separator under it, a fence
+      // with something after the language. Take it as prose rather than
+      // skipping it: dropping a line of a reply is worse than setting it in the
+      // wrong font, and skipping without consuming would spin here forever.
+      if (!buf.length) buf.push(lines[i++]);
+      const p = document.createElement("p");
+      p.className = "mdp";
+      mdInline(p, buf.join(" "));
+      root.appendChild(p);
+    }
+  }
+
   /* ---------------- transcript ---------------- */
   function addEntry(kind, who, text) {
     const d = document.createElement("div");
@@ -3107,7 +3560,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const t = new Date().toTimeString().slice(0, 8);
     d.innerHTML = `<span class="who">${who} · ${t}</span><div class="body"></div>`;
     const bodyEl = d.querySelector(".body");
-    bodyEl.textContent = text;
+    // In chat mode ARC writes markdown, so it gets rendered. Everything else —
+    // what you said, system notices, errors — stays literal text: none of it is
+    // markdown, and a renderer could only misread it.
+    if (chatMode && kind === "arc") renderMarkdown(bodyEl, text);
+    else bodyEl.textContent = text;
     // Arabic, Hebrew, Persian and Urdu read right to left, and a transcript
     // that forces them left is not a style choice — it is unreadable. dir=auto
     // decides per line from its first strong character, which also gets mixed
@@ -4700,7 +5157,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       speakingText = "";
       echoUntil = Date.now() + 1600;   // and distrust the next moment or so
       setMode("standby");
-      el.live.textContent = "";
+      // Left up to be read, not wiped on the last syllable. Cleared at once
+      // only when the reply was INTERRUPTED — see the stop path, where leaving
+      // the words on screen would contradict the fact that you cut them off.
+      holdLive();
       if (state.wakeArmed) {
         setTimeout(startRecognition, 320);
         setTimeout(() => {
@@ -5085,7 +5545,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       speakingText = "";
       echoUntil = Date.now() + 1600;
       setMode("standby");
-      el.live.textContent = "";
+      // Left up to be read, not wiped on the last syllable. Cleared at once
+      // only when the reply was INTERRUPTED — see the stop path, where leaving
+      // the words on screen would contradict the fact that you cut them off.
+      holdLive();
       if (state.wakeArmed) {
         setTimeout(startRecognition, 300);
         // Stay open for a follow-up so a conversation doesn't need the wake
@@ -5228,12 +5691,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           prompt: "main",
           room: roomMode(),
           system: personaBlock() + modeBlock() + langBlock() + contextBlock() + threadBlock() + timerBlock() + screenBlock() + consentBlock() + voiceBlock() + learnBlock() + altBlock(alts),
+          // ASKS for chat mode. Does not grant it — the server checks the
+          // account's entitlement and answers with what it actually did.
+          chat: chatMode,
           // Only a genuine, user-approved turn may act. Background calls never set this.
           allow_actions: authorize,
           // Send the mode, not a local guess. The server turns anything but
           // "off" into adaptive thinking and lets the model judge each
           // question — it is better at that than the keyword heuristic here,
           // which now only drives the readout.
+          // Just the switch. Chat mode also turns thinking on, but the SERVER
+          // does that — it is part of what the register buys, and a capability
+          // decided in two places is one that eventually disagrees with itself.
           think: thinkMode,
           search: el.searchOn.checked,
           // Which brain to use this turn — the Smart/Fast switch. Server maps it.
@@ -5347,6 +5816,25 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       else { const m = "I haven't said anything yet, sir."; addEntry("arc", "ARC", m); speak(m); }
       return;
     }
+    // "Switch to chat mode" / "back to base mode" — this screen, not the
+    // machine, so it never leaves the browser. ARC still answers: a display
+    // that rearranges itself in silence reads as a glitch rather than an
+    // instruction being obeyed.
+    const view = matchViewCommand(text);
+    if (view) {
+      addEntry("you", "YOU", text);
+      const already = (view === "chat") === chatMode;
+      const took = applyChat(view === "chat");
+      const m = !took
+        ? "Chat mode needs a desktop, sir. This screen is too small for it."
+        : already
+        ? (chatMode ? "Already in chat mode, sir." : "Already on the full display, sir.")
+        : (view === "chat" ? "Chat mode, sir." : "Back to the full display, sir.");
+      addEntry("arc", "ARC", m);
+      el.live.textContent = m;
+      speak(m);
+      return;
+    }
     // Routines & briefing: the user says a short trigger; ARC actually runs the
     // mapped instruction (transcript still shows what they said).
     let effective = text;
@@ -5368,6 +5856,16 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       state.turns++;
       el.rTurns.textContent = state.turns;
 
+      // The server says which register actually answered. If it declined chat
+      // mode — the entitlement lapsed, or the flag was set by hand in a page
+      // that does not own that decision — leave the view rather than dressing a
+      // reply written to be SPOKEN in a layout that promises otherwise.
+      if (chatMode && out.chat === false) {
+        applyChat(false);
+        addEntry("sys", "SYSTEM",
+                 "Chat mode is part of the full subscription — answering the usual way.");
+      }
+
       // ARC can decide it wasn't being spoken to. It stays quiet, but the
       // transcript still shows it heard — silence you can't distinguish from
       // a fault is worse than a needless reply.
@@ -5375,6 +5873,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         addEntry("sys", "SYSTEM", "(not addressed to me — staying quiet)");
         el.live.textContent = "";
         setMode("standby");
+      } else if (chatMode) {
+        // Chat mode is a reading interface, and what ARC writes here is written
+        // FOR reading — headings, lists, a fenced block of Python. Reading that
+        // aloud would take five minutes and be incomprehensible in every one of
+        // them. The microphone still works; only the voice stands down.
+        addEntry("arc", "ARC", out.text);
+        setMode("standby");
+        cue("done");
       } else {
         addEntry("arc", "ARC", out.text);
         el.live.textContent = out.text;
@@ -5788,6 +6294,182 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
   if (el.speakerMode) {
     el.speakerMode.addEventListener("change", () => applySpeaker(el.speakerMode.checked));
+  }
+
+  /* ---------------- chat mode ----------------
+     A restyle of the same page, not a second one. Everything the conversation
+     depends on — the log's DOM nodes, the recogniser, the audio graph, timers,
+     alarms, the signed-in session — is untouched by the switch, which is why
+     "and everything is still there when I come back" needs no code: nothing
+     ever left. The only state this owns is which view you are in.
+  ------------------------------------------------------------------- */
+  // chatMode itself is declared far above, with speakerMode — addEntry needs it
+  // before this block has run.
+  let chatTick = 0;
+
+  function greetLine() {
+    const h = new Date().getHours();
+    return h < 5 ? "Still up, sir."
+         : h < 12 ? "Good morning, sir."
+         : h < 18 ? "Good afternoon, sir."
+         : "Good evening, sir.";
+  }
+
+  // Mirrored out of the rail readouts rather than computed again here. Two
+  // places working out the same fact is two places to disagree, and the rail
+  // is the one that is already right.
+  function paintChatStatus() {
+    if (!chatMode) return;
+    if (el.csModel && el.rModel) el.csModel.textContent = el.rModel.textContent || "—";
+    if (el.csHear && el.rHear) el.csHear.textContent = el.rHear.textContent || "—";
+  }
+
+  /**
+   * Whether this screen can host chat mode at all.
+   *
+   * Chat mode is the sit-down view: a full-height transcript, a composer you
+   * type into at length, and the reactor demoted to a corner. On a phone that
+   * is a worse version of the phone layout — the keyboard eats half the
+   * viewport, the transcript ends up shorter than it is in the normal view,
+   * and the push-to-talk target the phone is actually for gets smaller.
+   *
+   * Tested on the pointer rather than the width alone, deliberately: a large
+   * phone in landscape is over 900px across, so width by itself lets in
+   * exactly the device this is meant to keep out. A touchscreen laptop reports
+   * a fine primary pointer and is let in, which is correct — it has a keyboard.
+   */
+  function chatCapable() {
+    try {
+      if (!window.matchMedia) return true;
+      return window.matchMedia("(pointer: fine)").matches && window.innerWidth >= 820;
+    } catch (_) {
+      // No matchMedia is not a reason to lock somebody out of a view.
+      return true;
+    }
+  }
+
+  /**
+   * Greys out the chat toggle when it cannot be used, for either reason.
+   *
+   * Both gates write to the same control, so they have to be decided in one
+   * place — separately, each would keep switching the other back on.
+   */
+  function refreshChatAvailability() {
+    const entitled = !Array.isArray(window.__arcEntitled)
+      || window.__arcEntitled.indexOf("chat") >= 0;
+    const desktop = chatCapable();
+    const may = entitled && desktop;
+
+    if (el.chatMode) {
+      el.chatMode.disabled = !may;
+      const row = el.chatMode.closest(".toggle");
+      if (row) {
+        row.classList.toggle("locked", !may);
+        row.title = may ? ""
+          : (!entitled ? "Chat mode is part of the full subscription."
+                       : "Chat mode needs a desktop-sized screen and a keyboard.");
+      }
+    }
+    // Somebody who was in it and no longer can be should not be left sitting
+    // in a view that does not work on the screen they are holding.
+    if (!may && chatMode) applyChat(false);
+    return may;
+  }
+
+  /**
+   * Enters or leaves chat mode. Returns whether the requested state was taken.
+   *
+   * The return value matters because the request can be refused: a caller that
+   * assumes it worked will report "chat mode" to somebody looking at the view
+   * they were already in.
+   */
+  function applyChat(on) {
+    if (on && !chatCapable()) {
+      // The control is disabled on these screens, so this is the spoken or
+      // typed path — but leave the checkbox agreeing with reality anyway.
+      if (el.chatMode) el.chatMode.checked = false;
+      return false;
+    }
+    chatMode = !!on;
+    document.documentElement.classList.toggle("chat", chatMode);
+    if (el.chatMode) el.chatMode.checked = chatMode;
+    try { localStorage.setItem("arc.chat", chatMode ? "1" : "0"); } catch (_) {}
+
+    clearInterval(chatTick);
+    if (chatMode) {
+      // The two views want opposite things from the screen; both at once is
+      // neither. Speaker mode wins nothing by being on underneath.
+      if (speakerMode) applySpeaker(false);
+      if (el.chatHi) el.chatHi.textContent = greetLine();
+      paintChatStatus();
+      chatTick = setInterval(paintChatStatus, 1000);
+      // The log was scrolled to the bottom in a box of a different height.
+      if (el.log) requestAnimationFrame(() => { el.log.scrollTop = el.log.scrollHeight; });
+    }
+    goFullscreen(chatMode);
+    return true;
+  }
+
+  /* Chat mode takes the WHOLE screen, browser furniture included. The view is
+     a page of prose you sit and read; tabs and an address bar above it are the
+     one thing still saying "this is a website".
+
+     Best-effort on purpose. The browser only grants fullscreen inside a user
+     gesture, so the checkbox and a click get it and the SPOKEN path does not —
+     "switch to chat mode" from across the room is not a gesture and the request
+     is refused. That is a nicety failing, not the feature failing: the view is
+     already edge-to-edge within the window either way, so the refusal is
+     swallowed rather than reported. Escape leaves fullscreen without leaving
+     chat mode, which is the browser's own contract and not ours to fight. */
+  function goFullscreen(want) {
+    try {
+      const doc = document, root = doc.documentElement;
+      if (want && !doc.fullscreenElement && root.requestFullscreen) {
+        const p = root.requestFullscreen();
+        if (p && p.catch) p.catch(() => {});
+      } else if (!want && doc.fullscreenElement && doc.exitFullscreen) {
+        const p = doc.exitFullscreen();
+        if (p && p.catch) p.catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  if (el.chatMode) {
+    el.chatMode.addEventListener("change", () => applyChat(el.chatMode.checked));
+  }
+  try { if (localStorage.getItem("arc.chat") === "1") applyChat(true); } catch (_) {}
+  refreshChatAvailability();
+  // Rotating a tablet or dragging a window narrow changes the answer, and
+  // being dropped out of a view mid-sentence is better than being stuck in one
+  // that no longer fits.
+  window.addEventListener("resize", refreshChatAvailability);
+  window.addEventListener("orientationchange", refreshChatAvailability);
+
+  // Spoken and typed, without spending a turn on it. Same reasoning as the
+  // dismissal and the repeat request just above the send path: the match is
+  // unambiguous, it is a command about this screen rather than a question, and
+  // a penny plus a round trip to decide that "chat mode" means chat mode is a
+  // worse answer arriving later.
+  const VIEW_WORDS = {
+    chat: "chat", conversation: "chat", minimal: "chat", clean: "chat", simple: "chat",
+    base: "hud", basic: "hud", normal: "hud", full: "hud", standard: "hud",
+    hud: "hud", original: "hud", default: "hud",
+  };
+  function matchViewCommand(text) {
+    let t = (text || "").toLowerCase().replace(/[.,!?]/g, " ")
+      .replace(/\b(bella|arc|please|now|sir|the|a)\b/g, " ")
+      .replace(/\s+/g, " ").trim();
+    if (!t) return "";
+    // A question ABOUT a mode is not a request to be in it. Without this,
+    // "how do I use chat mode" silently rearranges the screen.
+    if (/\b(how|what|why|can|could|would|does|do|is|are|when|where|who|explain|tell)\b/.test(t)) return "";
+    const m = t.match(/^(?:(?:switch|change|go|flip|put|take|turn|back)\s+(?:back\s+)?(?:me\s+|it\s+|us\s+)?(?:to|into|in|over to|onto|on)?\s*)?([a-z]+)\s*(mode|view|layout|display|screen)?$/);
+    if (!m) return "";
+    const want = VIEW_WORDS[m[1]];
+    // A bare "normal" or "chat" with no mode word is too easy to say by
+    // accident; require one or the other to be explicit.
+    if (!want || (!m[2] && !/^(switch|change|go|flip|put|take|turn|back)\b/.test(t))) return "";
+    return want;
   }
   if (el.spkExit) {
     el.spkExit.addEventListener("click", (e) => { e.stopPropagation(); applySpeaker(false); });
@@ -6676,7 +7358,23 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     let leaving = false;
     window.fetch = async function (...args) {
       const r = await raw.apply(this, args);
-      if (r.status === 401 && !leaving) { leaving = true; signInAgain("timeout"); }
+      if (r.status === 401 && !leaving) {
+        // ASK BEFORE THROWING THE PAGE AWAY. This used to navigate on any 401
+        // at all, which was right about what 401 is supposed to mean and wrong
+        // about what actually arrives: ARC is a proxy, and for a while an
+        // Anthropic key that had been revoked came back through here as a 401
+        // too. The result was a loop — ask a question, get sent to sign in,
+        // land on a HUD the session was still valid for, ask again — with the
+        // real error never on screen long enough to read.
+        //
+        // The server no longer does that (see _claude_error). This is the belt
+        // to that braces, and it closes the whole class rather than the one
+        // case: one extra request, only ever on a 401, and only the session's
+        // own answer is allowed to end the session.
+        let dead = true;
+        try { dead = (await raw("/api/session")).status === 401; } catch (_) {}
+        if (dead) { leaving = true; signInAgain("timeout"); }
+      }
       return r;
     };
   })();
@@ -7336,6 +8034,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           && h.default_brain !== window.__arcModel) {
         window.__arcModel = h.default_brain;
         if (typeof applyModel === "function") applyModel(false);
+      }
+      // Grey out what this account cannot have rather than offering it and
+      // failing. Presentation only — the server checks again on the request
+      // that spends the money, because this reply arrived in a browser.
+      if (Array.isArray(h.entitled)) {
+        window.__arcEntitled = h.entitled;
+        // Entitlement is only half of it — the screen has to be able to host
+        // the view as well — so the decision is made in one place for both.
+        refreshChatAvailability();
       }
       // Show the brain the user actually picked (Smart/Fast), not just the
       // server default — the switch is client-side and per-device.

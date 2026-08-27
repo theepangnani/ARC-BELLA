@@ -180,6 +180,43 @@ with TestClient(run.app) as client:
     check("  ...and the reply says which brain answered",
           (r.json() or {}).get("brain"), "smart")
 
+    # Chat mode is the top paid capability: it turns thinking on, raises effort,
+    # and doubles the token ceiling, so a long written answer can cost more than
+    # a hundred spoken ones. Same rule as the deep brain — the page may ASK, the
+    # server decides, and the check that matters is what reached the API rather
+    # than what the page believed.
+    print("\nChat mode is bought, not toggled:")
+
+    def ask_in_chat(cookies, want=True):
+        sent.clear()
+        r = client.post("/api/chat", cookies=cookies, json={
+            "system": PROMPT, "allow_actions": False, "chat": want,
+            "messages": [{"role": "user", "content": "explain how caching works"}]})
+        return r, (sent[0] if sent else {})
+
+    r, kw = ask_in_chat(OWNER)
+    truthy("  the owner gets the written register", "CHAT MODE IS ON" in system_text(kw))
+    check("  ...with room to write in", kw.get("max_tokens"), run.MAX_TOKENS_CHAT)
+    truthy("  ...and thinking on, since nobody is waiting to hear it",
+           (kw.get("thinking") or {}).get("type") == "adaptive")
+    check("  ...and the reply says the register it used", (r.json() or {}).get("chat"), True)
+
+    r, kw = ask_in_chat(GUEST)
+    check("  a guest asking for it is answered, not refused", r.status_code, 200)
+    check("  ...but NOT in the written register", "CHAT MODE IS ON" in system_text(kw), False)
+    check("  ...and not at the written ceiling", kw.get("max_tokens"), run.MAX_TOKENS)
+    # Told, rather than shown a chat layout over a reply written to be spoken.
+    check("  ...and the reply says so", (r.json() or {}).get("chat"), False)
+
+    # The entitlement table is the only place that decides, so that "may this
+    # account do X" cannot drift into three answers.
+    check("  the owner is entitled to both", run.ENTITLEMENTS["owner"], {"deep", "chat"})
+    check("  a guest to neither", run.ENTITLEMENTS["guest"], set())
+    truthy("  and health tells the page which, so it can grey out the rest",
+           "entitled" in client.get("/api/health", cookies=GUEST).json())
+    check("  a guest is told it has nothing",
+          client.get("/api/health", cookies=GUEST).json().get("entitled"), [])
+
     session.revoke_all()
 
 print("\nALL PASS" if ok else "\nFAILURES ABOVE")
