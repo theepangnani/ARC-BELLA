@@ -98,6 +98,22 @@ def connected() -> bool:
     return _tok().exists()
 
 
+def ungranted(needs) -> bool:
+    """Linked, but THIS capability was not granted.
+
+    The difference matters to the person and not to the code. Google's consent
+    screen arrives with every box UNTICKED, and prompt=consent means it arrives
+    on every sign-in — so pressing Continue a moment early leaves an account
+    that is properly connected and cannot read the calendar.
+
+    Both cases currently look identical from outside: connected() is False and a
+    chip goes dark. One of them means "connect Google" and the other means "you
+    did, but you left Calendar unticked", and telling somebody to do a thing
+    they have already done is how they conclude the app is broken.
+    """
+    return _tok().exists() and not set(needs).issubset(granted_scopes())
+
+
 def service(api: str, version: str, needs=None):
     """Build a Google API client, refreshing the token if it has expired.
 

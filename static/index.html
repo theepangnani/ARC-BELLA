@@ -819,14 +819,36 @@
      at which they start drifting apart by a pixel each. Only POSITION differs
      per card, below. */
   .forecast, .stocks, .agenda, .nowplaying {
-    position: fixed; z-index: 3; width: 190px; pointer-events: auto;
+    /* --cs is the card's own scale, set by dragging its corner. Every size
+       inside a card is written against it, so a card grows the way an image in
+       Slides does — text and all — rather than becoming a wider box with the
+       same tiny type in it. */
+    --cs: 1;
+    position: fixed; z-index: 3; width: calc(190px * var(--cs)); pointer-events: auto;
     border: 1px solid rgba(95,217,255,.22);
     background: linear-gradient(180deg, rgba(9,19,32,.55), rgba(4,7,12,.4));
     backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
-    padding: 11px 13px; font-family: var(--mono);
+    padding: calc(11px * var(--cs)) calc(13px * var(--cs));
+    font-family: var(--mono);
     box-shadow: 0 0 22px rgba(4,7,12,.55), inset 0 0 22px rgba(95,217,255,.05);
   }
   .forecast { top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
+
+  .forecast::after, .stocks::after, .agenda::after, .nowplaying::after {
+    content: ""; position: absolute; right: 0; bottom: 0;
+    width: 15px; height: 15px; cursor: nwse-resize;
+    background:
+      linear-gradient(135deg, transparent 52%, var(--cyan-dim) 52%, var(--cyan-dim) 60%,
+                      transparent 60%, transparent 72%, var(--cyan-dim) 72%,
+                      var(--cyan-dim) 80%, transparent 80%);
+    opacity: 0; transition: opacity .15s;
+  }
+  .forecast:hover::after, .stocks:hover::after,
+  .agenda:hover::after, .nowplaying:hover::after { opacity: .8; }
+  .forecast.sizing, .stocks.sizing, .agenda.sizing, .nowplaying.sizing {
+    user-select: none;
+  }
+
   /* The left of the stage, mirroring the two on the right. */
   .agenda    { top: 60px;  left: calc(clamp(180px, 13vw, 250px) + 34px); }
   .nowplaying { top: 262px; left: calc(clamp(180px, 13vw, 250px) + 34px); }
@@ -835,12 +857,12 @@
      cards read as one family rather than as four things that happen to float. */
   .agenda .st-title, .nowplaying .st-title {
     display: flex; justify-content: space-between; align-items: center;
-    font-size: 8.5px; letter-spacing: .22em; text-transform: uppercase;
+    font-size: calc(8.5px * var(--cs)); letter-spacing: .22em; text-transform: uppercase;
     color: var(--cyan-dim); margin-bottom: 6px;
   }
   .agenda .ag-row {
     display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
-    font-size: 10.5px; padding: 3px 0;
+    font-size: calc(10.5px * var(--cs)); padding: 3px 0;
     border-top: 1px dashed rgba(18,41,60,.7);
   }
   .agenda .ag-row:first-of-type { border-top: none; }
@@ -854,7 +876,7 @@
   .agenda .ag-row.now .ag-at { color: #8affd4; }
   .agenda .ag-row.allday .ag-at { color: var(--cyan-dim); }
   .agenda .st-hint, .nowplaying .st-hint {
-    font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase;
+    font-size: calc(7.5px * var(--cs)); letter-spacing: .12em; text-transform: uppercase;
     color: var(--cyan-dim); opacity: .5; margin-top: 6px; text-align: center;
   }
   .forecast .fc-loc {
@@ -897,7 +919,7 @@
   .stocks { top: 262px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
   .stocks .st-title {
     display: flex; justify-content: space-between; align-items: center;
-    font-size: 8.5px; letter-spacing: .22em; text-transform: uppercase;
+    font-size: calc(8.5px * var(--cs)); letter-spacing: .22em; text-transform: uppercase;
     color: var(--cyan-dim); margin-bottom: 6px;
   }
   .stocks .st-add {
@@ -907,7 +929,7 @@
   .stocks .st-add:hover { opacity: 1; text-shadow: 0 0 8px var(--ice); }
   .stocks .st-row {
     display: flex; justify-content: space-between; gap: 6px; align-items: center;
-    font-size: 10.5px; letter-spacing: .03em; padding: 3px 0;
+    font-size: calc(10.5px * var(--cs)); letter-spacing: .03em; padding: 3px 0;
     border-top: 1px dashed rgba(18,41,60,.7);
     cursor: pointer; transition: background .15s;
   }
@@ -918,7 +940,7 @@
   .stocks .st-up { color: #8affd4; }
   .stocks .st-down { color: #ff7a8a; }
   .stocks .st-hint {
-    font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase;
+    font-size: calc(7.5px * var(--cs)); letter-spacing: .12em; text-transform: uppercase;
     color: var(--cyan-dim); opacity: .5; margin-top: 6px; text-align: center;
   }
   .stocks .st-edit {
@@ -1086,12 +1108,12 @@
   .shapepop button { font-size: 9.5px; padding: 7px 4px; letter-spacing: .1em; }
 
   .nowplaying .np-song {
-    font-family: var(--display); font-size: 14px; color: var(--ice);
+    font-family: var(--display); font-size: calc(14px * var(--cs)); color: var(--ice);
     line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
   .nowplaying .np-artist {
-    font-size: 9.5px; letter-spacing: .1em; color: var(--accent);
+    font-size: calc(9.5px * var(--cs)); letter-spacing: .1em; color: var(--accent);
     margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
@@ -8563,9 +8585,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   })();
 
   /* ---------- draggable HUD panels ----------
-     Grab the weather or stock panel anywhere and drag it. Positions persist
-     in localStorage. A small movement threshold means a plain click still
-     edits a stock — only real drags reposition. */
+     Grab any floating card anywhere and drag it — weather, markets, today,
+     now playing. Positions persist in localStorage. A small movement threshold
+     means a plain click still edits a stock: only real drags reposition, and
+     the click that follows a drag is swallowed so letting go of the markets
+     panel does not open the symbol editor. */
   (function draggablePanels() {
     const KEY = "arc.panelPos";
     let saved = {};
@@ -8583,14 +8607,36 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       el.style.bottom = "auto";
     }
 
+    // How big, as a multiple of the card's designed size. Everything inside is
+    // written against this, so a card grows the way a picture does rather than
+    // becoming a wider box with the same small print in it.
+    const MIN_SCALE = 0.7, MAX_SCALE = 2.6;
+
+    function applyScale(el, sc) {
+      el.style.setProperty("--cs", String(sc));
+    }
+
+    // The grip is drawn as a ::after, so this works out whether a press landed
+    // on it by POSITION rather than by asking what was clicked. The weather and
+    // markets cards repaint themselves by replacing their contents, and a real
+    // handle element would be swept away the next time the temperature changed.
+    function onGrip(el, e) {
+      const r = el.getBoundingClientRect();
+      return (r.right - e.clientX) <= 18 && (r.bottom - e.clientY) <= 18;
+    }
+
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
     function makeDraggable(el) {
       if (!el) return;
       const id = el.id;
-      if (saved[id]) applyPos(el, saved[id]);
+      if (saved[id]) {
+        applyPos(el, saved[id]);
+        if (saved[id].s) applyScale(el, saved[id].s);
+      }
 
       let startX, startY, baseL, baseT, dragging, pid;
+      let sizing = false, baseScale = 1, baseW = 1;
 
       el.addEventListener("pointerdown", e => {
         // Don't hijack the stock editor input or its buttons for dragging.
@@ -8600,12 +8646,28 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         baseL = r.left; baseT = r.top;
         startX = e.clientX; startY = e.clientY;
         dragging = false; pid = e.pointerId;
+        sizing = onGrip(el, e);
+        if (sizing) {
+          baseScale = parseFloat(getComputedStyle(el).getPropertyValue("--cs")) || 1;
+          baseW = r.width || 1;
+          el.classList.add("sizing");
+        }
         el.setPointerCapture(pid);
       });
 
       el.addEventListener("pointermove", e => {
         if (pid == null || e.pointerId !== pid) return;
         const dx = e.clientX - startX, dy = e.clientY - startY;
+        if (sizing) {
+          // Driven by the corner's distance from the top-left, so the card
+          // grows towards the pointer instead of away from it. Width alone,
+          // not width and height: the height is whatever the contents need at
+          // that size, and letting both be dragged would make it possible to
+          // crop the last row off a card and wonder where it went.
+          const want = (baseW + dx) / (baseW / baseScale);
+          applyScale(el, clamp(want, MIN_SCALE, MAX_SCALE));
+          return;
+        }
         if (!dragging && Math.hypot(dx, dy) < 5) return;   // still a click
         if (!dragging) { dragging = true; el.classList.add("dragging"); }
         const w = el.offsetWidth, h = el.offsetHeight;
@@ -8618,9 +8680,22 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         if (pid == null || (e && e.pointerId !== pid)) return;
         try { el.releasePointerCapture(pid); } catch (_) {}
         pid = null;
+        if (sizing) {
+          const r = el.getBoundingClientRect();
+          const sc = parseFloat(getComputedStyle(el).getPropertyValue("--cs")) || 1;
+          // The position is written too: a card resized before it was ever
+          // moved is still anchored by CSS, and saving only the scale would
+          // lose where it had got to.
+          saved[id] = { x: Math.round(r.left), y: Math.round(r.top), s: sc };
+          persist();
+          sizing = false;
+          el.classList.remove("sizing");
+          return;
+        }
         if (dragging) {
           const r = el.getBoundingClientRect();
-          saved[id] = { x: Math.round(r.left), y: Math.round(r.top) };
+          const sc = parseFloat(getComputedStyle(el).getPropertyValue("--cs")) || 1;
+          saved[id] = { x: Math.round(r.left), y: Math.round(r.top), s: sc };
           persist();
           // Swallow the click that follows a drag so it doesn't edit a stock.
           el.addEventListener("click", ev => {
@@ -8634,11 +8709,16 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       el.addEventListener("pointercancel", end);
     }
 
-    ["forecast", "stocks"].forEach(id => makeDraggable(document.getElementById(id)));
+    // Every floating card, named once. This list was written out three times
+    // below, which is exactly why the agenda and now-playing cards arrived
+    // undraggable — adding a card meant remembering three places, and the third
+    // is always the one that is missed.
+    const CARDS = ["forecast", "stocks", "agenda", "nowplaying"];
+    CARDS.forEach(id => makeDraggable(document.getElementById(id)));
 
     // Keep panels on-screen if the window shrinks.
     window.addEventListener("resize", () => {
-      ["forecast", "stocks"].forEach(id => {
+      CARDS.forEach(id => {
         const el = document.getElementById(id);
         if (!el || !saved[id]) return;
         const w = el.offsetWidth, h = el.offsetHeight;
@@ -8652,10 +8732,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const resetBtn = document.getElementById("resetPanelsBtn");
     if (resetBtn) resetBtn.addEventListener("click", () => {
       saved = {}; persist();
-      ["forecast", "stocks"].forEach(id => {
+      CARDS.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.style.left = el.style.top = el.style.right = el.style.bottom = "";
+        el.style.removeProperty("--cs");
       });
     });
   })();
@@ -8722,6 +8803,21 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         // Entitlement is only half of it — the screen has to be able to host
         // the view as well — so the decision is made in one place for both.
         refreshChatAvailability();
+      }
+      // Google is linked, but something was left unticked on the consent
+      // screen. Said once, plainly, naming the permission — the alternative is
+      // a dark chip that reads exactly like "you never connected Google", and
+      // being told to do a thing you have already done is how somebody decides
+      // the app is broken.
+      if (h.google_linked && Array.isArray(h.ungranted) && h.ungranted.length
+          && !window.__arcSaidUngranted) {
+        window.__arcSaidUngranted = true;
+        const what = h.ungranted.join(", ");
+        addEntry("sys", "SYSTEM",
+                 "Google is connected, but " + what + " " +
+                 (h.ungranted.length === 1 ? "was" : "were") +
+                 " not allowed. The consent screen starts with every box " +
+                 "unticked — sign in again and tick them to switch that back on.");
       }
       // Repainted on the same beat as the rest of the health poll rather than
       // on a timer of its own: one fewer clock, and it refreshes at exactly the

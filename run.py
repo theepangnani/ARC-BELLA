@@ -1499,6 +1499,15 @@ async def health(request: Request, _=Depends(require_auth)):
         "claude": bool(ANTHROPIC_KEY),
         "calendar": gcal.connected(),
         "email": gmail.connected(),
+        # Linked at all, and which permissions were left unticked on the way in.
+        # A dark chip could mean "no Google account" or "you pressed Continue
+        # before ticking Calendar", and those need opposite instructions.
+        "google_linked": gauth.connected(),
+        "ungranted": [n for n, needs in (("calendar", gauth.CAL_SCOPES),
+                                         ("mail", gauth.MAIL_SCOPES),
+                                         ("contacts", gauth.CONTACTS_SCOPES),
+                                         ("drive", gauth.DRIVE_SCOPES))
+                      if gauth.ungranted(needs)],
         "contacts_drive": gextra.connected(),
         "telegram": tg.connected() and not guest,
         "guest": guest,

@@ -145,4 +145,49 @@ c.truthy("  ...and now playing faster, being local", "10000" in body)
 # Rebuilding a card that has not changed makes it flicker every ten seconds.
 c.truthy("  the track is only redrawn when it changes", "key === npLast" in body)
 
+
+print("\nAnd all four can be moved:")
+# The drag machinery already existed for the weather and markets panels. The
+# two new cards arrived undraggable because the list of what drags was written
+# out THREE times, and the third copy is always the one that is missed.
+c.truthy("  the set of cards is named once",
+         'const CARDS = ["forecast", "stocks", "agenda", "nowplaying"];' in body)
+c("  ...and the hardcoded pair is gone", '["forecast", "stocks"].forEach' in body, False)
+c("  every place that iterates them uses the name", body.count("CARDS.forEach"), 3)
+# Dragging, keeping them on screen when the window shrinks, and Reset panels.
+c.truthy("  positions survive a reload", 'localStorage' in body and '"arc.panels"' in body
+         or "saved[id] = { x:" in body)
+c.truthy("  a plain click still works", "Math.hypot(dx, dy) < 5" in body)
+c.truthy("  ...and the click after a drag is swallowed",
+         "ev.stopPropagation(); ev.preventDefault();" in body)
+c.truthy("  Reset panels puts them back", 'resetPanelsBtn' in body)
+
+
+print("\nAnd resized from a corner, the way a picture is:")
+# Growing a card must grow what is IN it. A wider box with the same small print
+# is a bigger card you still cannot read from across the room.
+c.truthy("  every card carries its own scale", "--cs: 1;" in page)
+c.truthy("  the width is written against it", "width: calc(190px * var(--cs));" in page)
+for sized in ("calc(8.5px * var(--cs))", "calc(10.5px * var(--cs))",
+              "calc(14px * var(--cs))", "calc(11px * var(--cs))"):
+    c.truthy("  %-30s scales too" % sized, sized in page)
+# The weather and markets cards repaint by replacing their contents, so a real
+# handle element would be swept away the next time the temperature changed.
+c.truthy("  the grip is a pseudo-element, not a child",
+         ".forecast::after, .stocks::after, .agenda::after, .nowplaying::after {" in page)
+c.truthy("  ...so a press on it is found by position", "function onGrip" in body)
+c.truthy("  and the reason is written down", "swept away the next time the temperature" in body)
+c.truthy("  it only appears on hover", ".forecast:hover::after" in page)
+# Width only. Dragging height as well would let somebody crop the last row off
+# a card and wonder where it went.
+c.truthy("  width is what is dragged, height follows the contents",
+         "not width and height" in body)
+c.truthy("  there are stops at both ends", "MIN_SCALE = 0.7, MAX_SCALE = 2.6" in body)
+c.truthy("  the size is remembered with the position", 's: sc }' in body)
+# A card resized before it was ever moved is still anchored by CSS; saving only
+# the scale would lose where it had got to.
+c.truthy("  ...and the position is saved even when only resizing",
+         "lose where it had got to" in body)
+c.truthy("  Reset panels puts the size back too", 'removeProperty("--cs")' in body)
+
 c.done()

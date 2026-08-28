@@ -148,8 +148,25 @@ def start() -> bool:
             env["ARC_DATA_DIR"] = CHILD_DATA
         if CHILD_VARIANT:
             env["ARC_APP_VARIANT"] = CHILD_VARIANT
-        kw = {"cwd": str(ROOT), "env": env, "stdout": subprocess.DEVNULL,
-              "stderr": subprocess.DEVNULL, "stdin": subprocess.DEVNULL}
+        # The child's output goes to a FILE, not to DEVNULL. Throwing it away
+        # was a mistake found the first time something went wrong afterwards:
+        # every instance the guardian had rescued was running with no log at
+        # all, so the one question worth asking — what did it say on the way
+        # up — had no answer anywhere on the machine.
+        #
+        # Appended, so a restart does not erase the reason for the one before
+        # it, which is usually the reason for this one.
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            out = io.open(DATA_DIR / "arc-server.log", "a", encoding="utf-8",
+                          errors="replace")
+            out.write("\n===== started by the guardian at %s =====\n"
+                      % time.strftime("%Y-%m-%d %H:%M:%S"))
+            out.flush()
+        except Exception:
+            out = subprocess.DEVNULL
+        kw = {"cwd": str(ROOT), "env": env, "stdout": out,
+              "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
         if os.name == "nt":
             # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
             kw["creationflags"] = 0x00000008 | 0x00000200

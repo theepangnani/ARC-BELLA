@@ -6,6 +6,7 @@ nothing". The stub records exactly what ARC sent to Anthropic, so the tool list,
 the system prompt and the reply path can all be inspected on a guest turn and
 compared against an owner turn.
 """
+import io
 import os
 import sys
 import types
@@ -22,6 +23,7 @@ os.environ["ARC_SESSION_MAX_HOURS"] = "0"
 from starlette.testclient import TestClient  # noqa: E402
 import run       # noqa: E402
 import session   # noqa: E402
+import gauth     # noqa: E402
 
 ok = True
 sent = []          # every kwargs dict ARC handed to Anthropic
@@ -216,6 +218,98 @@ with TestClient(run.app) as client:
            "entitled" in client.get("/api/health", cookies=GUEST).json())
     check("  a guest is told it has nothing",
           client.get("/api/health", cookies=GUEST).json().get("entitled"), [])
+
+    # ---------------------------------------------------------------- Google
+    # The leak this rules out: a guest signing in and reading the OWNER's
+    # calendar and mail because their own session has no Google linked and
+    # something helpfully fell back to the account that does.
+    #
+    # gauth keeps the active token path in a CONTEXTVAR, set per request. That
+    # is the right design and it makes the obvious test wrong: reading
+    # gauth._tok() after the response reads a DIFFERENT context, where nothing
+    # was ever set, and every account appears to be using the owner's token.
+    # It has to be recorded from inside the request, which is what the spy does.
+    print("\nNobody borrows the owner's Google account:")
+    import gauth
+    seen = []
+    _real = gauth.set_active_token_path
+
+    def _spy(path):
+        seen.append(str(path) if path else None)
+        return _real(path)
+
+    gauth.set_active_token_path = _spy
+    try:
+        # A real owner token on disk, so a fallback would actually WORK and the
+        # test can catch it rather than passing because there was nothing there.
+        gauth.TOKEN.write_text('{"token": "OWNER-ONLY"}', encoding="utf-8")
+
+        seen.clear()
+        client.get("/api/health", cookies=OWNER)
+        owner_path = seen[-1] if seen else None
+        seen.clear()
+        client.get("/api/health", cookies=GUEST)
+        guest_path = seen[-1] if seen else None
+
+        truthy("    the owner is pinned to a file of their own", bool(owner_path))
+        truthy("    so is the guest", bool(guest_path))
+        check("    and they are NOT the same file", owner_path == guest_path, False)
+        # None means "use the owner's token.json". Either of these being None is
+        # the leak, and on a machine where that file exists it would work.
+        check("    neither falls back to the owner's token.json",
+              [p for p in (owner_path, guest_path) if p is None], [])
+        truthy("    ...which is a real file here, so a fallback would have worked",
+               gauth.TOKEN.exists())
+        # A guest who has not linked Google reads as not connected, rather than
+        # quietly reading somebody else's mail.
+        h = client.get("/api/health", cookies=GUEST).json()
+        check("    an unlinked guest sees no calendar", h.get("calendar"), False)
+        check("    and no mail", h.get("email"), False)
+    finally:
+        gauth.set_active_token_path = _real
+        try:
+            gauth.TOKEN.unlink()
+        except Exception:
+            pass
+
+
+    # A dark chip has two very different causes and they need opposite
+    # instructions. Google's consent screen arrives with EVERY BOX UNTICKED,
+    # and prompt=consent means it arrives on every single sign-in — so pressing
+    # Continue a moment early leaves an account that is properly connected and
+    # cannot read the calendar. Telling somebody to connect Google when they
+    # just did is how they conclude the app is broken.
+    print("\nA missing permission is not a missing account:")
+    import json as _json
+    ALL = (list(gauth.CAL_SCOPES) + list(gauth.MAIL_SCOPES)
+           + list(gauth.CONTACTS_SCOPES) + list(gauth.DRIVE_SCOPES))
+
+    def _health_with(scopes):
+        sid = session.create("owner@example.com", "browser")
+        p = run.google_path(sid)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps({"token": "x", "scopes": scopes}), encoding="utf-8")
+        return client.get("/api/health", cookies={run.COOKIE: sid}).json()
+
+    h = _health_with(ALL)
+    check("    everything ticked -> nothing to report", h.get("ungranted"), [])
+    check("    ...and linked", h.get("google_linked"), True)
+
+    h = _health_with([x for x in ALL if "calendar" not in x])
+    check("    calendar left unticked is NAMED", h.get("ungranted"), ["calendar"])
+    check("    ...the chip is still dark", h.get("calendar"), False)
+    check("    ...but the account is linked, which is the distinction",
+          h.get("google_linked"), True)
+
+    sid = session.create("owner@example.com", "browser")
+    h = client.get("/api/health", cookies={run.COOKIE: sid}).json()
+    check("    never connected -> not linked", h.get("google_linked"), False)
+    check("    ...and nothing to blame on a tick box", h.get("ungranted"), [])
+
+    hud = io.open(HUD, encoding="utf-8").read()
+    truthy("    the page says which permission it was",
+           "was\" : \"were" in hud or "not allowed. The consent screen" in hud)
+    truthy("    ...once, not on every poll", "__arcSaidUngranted" in hud)
 
     session.revoke_all()
 
