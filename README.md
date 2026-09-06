@@ -719,7 +719,7 @@ anyone else can sign in:
   can add to the rules and can never remove them.
 - **A prompt that stops changing can be cached**, and cached tokens cost about a
   tenth. Those 12,000 tokens were being re-sent on every message *and* on each
-  of the six tool rounds a single answer can take. That was most of the bill.
+  of the tool rounds a single answer can take. That was most of the bill.
 
 The page still sends the parts that genuinely vary each turn — persona, mode,
 language, the date, timers, what's on screen — and asks for the rest by name.

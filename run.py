@@ -374,8 +374,21 @@ _NO_THINK_MAX_EFFORT = ("low", "medium", "high")
 SUPPORTS_EFFORT = supports_effort(MODEL)
 
 # Tool calls take extra round trips. This bounds a runaway loop without
-# clipping legitimate work â€” look at the calendar, then act on it, is two.
-MAX_TOOL_ROUNDS = int(os.getenv("ARC_MAX_TOOL_ROUNDS", "6"))
+# clipping legitimate work -- look at the calendar, then act on it, is two.
+#
+# Six was sized for that shape of job and was too small for the other one. A
+# real task -- read the screen, find the thing, click it, check it worked, fix
+# what did not -- spends six rounds getting started, and what the user saw was
+# "that turned into more steps than I could finish", which is ARC giving up on
+# the sentence rather than on a runaway. This is a guard against a LOOP, and a
+# loop is obvious long before sixteen rounds.
+MAX_TOOL_ROUNDS = int(os.getenv("ARC_MAX_TOOL_ROUNDS", "16"))
+
+# Chat mode and the deep brain are the two places somebody has explicitly asked
+# for the considered answer rather than the quick one, so the ceiling that keeps
+# the VOICE loop snappy is the wrong ceiling there. Still bounded: DAILY_COST_CAP
+# is what actually stops a runaway, and it counts money rather than turns.
+MAX_TOOL_ROUNDS_DEEP = int(os.getenv("ARC_MAX_TOOL_ROUNDS_DEEP", "28"))
 
 # Chat mode is read rather than heard, and the two views want different
 # ceilings. A spoken reply is three sentences; a written one can be a page with
@@ -1898,7 +1911,11 @@ async def chat(request: Request, _=Depends(require_auth)):
     reply = ""
     claude = request.app.state.claude
 
-    for _ in range(MAX_TOOL_ROUNDS):
+    rounds = (MAX_TOOL_ROUNDS_DEEP if (chat_view or brain == "deep")
+              else MAX_TOOL_ROUNDS)
+    used_rounds = 0
+    for _ in range(rounds):
+        used_rounds += 1
         kwargs = dict(
             model=model,
             max_tokens=MAX_TOKENS_CHAT if chat_view else MAX_TOKENS,
@@ -2016,7 +2033,17 @@ async def chat(request: Request, _=Depends(require_auth)):
             {"role": "user", "content": results},
         ]
     else:
-        reply = reply or "That turned into more steps than I could finish, sir."
+        # Ran out of rounds. Say what was actually DONE rather than only that it
+        # stopped -- "more steps than I could finish" tells you nothing about
+        # whether the first four worked, so the only safe reading was "start
+        # again", which is how a half-finished job gets done twice.
+        if not reply:
+            did = ", ".join(dict.fromkeys(used)) if used else ""
+            reply = ("I got through %d steps and ran out of room, sir."
+                     % used_rounds)
+            if did:
+                reply += " Done so far: %s." % did
+            reply += " Say carry on and I'll pick up where I stopped."
 
     # Say which brain answered and why. An automatic choice that leaves no
     # trace is one nobody can check, and this one is spending money.

@@ -161,7 +161,11 @@ with TestClient(run.app) as client:
     # before this each of them re-sent the whole prompt at full price.
     c.truthy("  the system object is built once, outside the loop",
              run_src := io.open(ARC / "run.py", encoding="utf-8").read())
-    loop = run_src[run_src.index("for _ in range(MAX_TOOL_ROUNDS):"):]
+    # Anchored on the loop itself rather than on the constant it counts: the
+    # ceiling is chosen per turn now (16 ordinarily, 28 in chat mode or on the
+    # deep brain), which multiplies the value of building the prompt once
+    # rather than changing anything about it.
+    loop = run_src[run_src.index("for _ in range(rounds):"):]
     c("  the loop does not rebuild it", "prompt.base(" in loop[:2000], False)
     c.truthy("  it just passes it", "system=system," in loop[:2000])
 

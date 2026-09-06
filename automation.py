@@ -32,6 +32,7 @@ Windows only, for the same reason as the rest of computer control.
 import os
 import sys
 import time
+import re
 import threading
 
 import pc          # reuse the input primitives and the local-only gate
@@ -117,9 +118,42 @@ def _bounds(rate, seconds):
 
 # --- tools -----------------------------------------------------------------
 
+def _points(points, x=None, y=None):
+    """Whatever the model handed over, as [(x, y), ...] — or [] for "here".
+
+    Forgiving on purpose. This argument is written by a language model from a
+    sentence somebody said out loud, so it arrives as a list of pairs, a list of
+    {x, y} objects, or a string like "100,200 and 940,530" depending on the day.
+    Refusing three of those four shapes would make the feature work only when
+    the phrasing happened to land, which reads as ARC being unreliable rather
+    than as an argument being fussy.
+    """
+    out = []
+
+    def add(a, b):
+        try:
+            out.append((int(float(a)), int(float(b))))
+        except (TypeError, ValueError):
+            pass
+
+    if isinstance(points, str):
+        nums = re.findall(r"-?\d+(?:\.\d+)?", points)
+        for i in range(0, len(nums) - 1, 2):
+            add(nums[i], nums[i + 1])
+    elif isinstance(points, (list, tuple)):
+        for item in points:
+            if isinstance(item, dict):
+                add(item.get("x"), item.get("y"))
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                add(item[0], item[1])
+    if not out and x is not None and y is not None:
+        add(x, y)
+    return out
+
+
 def auto_click(rate: float = 5, seconds: float = 30, button: str = "left",
-               x=None, y=None) -> str:
-    """Click repeatedly, where the pointer is or at a fixed point."""
+               x=None, y=None, points=None) -> str:
+    """Click repeatedly — one spot, several in turn, or wherever the pointer is."""
     if not IS_WIN:
         return pc._unsupported("drive the mouse")
     import ctypes
@@ -127,22 +161,36 @@ def auto_click(rate: float = 5, seconds: float = 30, button: str = "left",
     b = (button or "left").strip().lower()
     down, up = (pc._ME["rdown"], pc._ME["rup"]) if b in ("right", "r") \
         else (pc._ME["ldown"], pc._ME["lup"])
-    fixed = x is not None and y is not None
-    if fixed:
-        try:
-            x, y = int(x), int(y)
-        except (TypeError, ValueError):
-            return "Give x and y as whole numbers of screen pixels."
+    spots = _points(points, x, y)
+    if (x is not None or y is not None) and not spots:
+        return "Give x and y as whole numbers of screen pixels."
 
     rate, seconds, count = _bounds(rate, seconds)
 
+    # Which spot is next. A list rather than an int because the closure below
+    # has to mutate it, and the whole job runs on one worker thread.
+    turn = [0]
+
     def one():
-        if fixed:
-            u.SetCursorPos(x, y)
+        if spots:
+            # Round-robin: click the first, then the second, then back round.
+            # A cycle rather than "all of them per tick" so the RATE still means
+            # clicks per second — otherwise asking for five a second across four
+            # spots would quietly deliver twenty.
+            sx, sy = spots[turn[0] % len(spots)]
+            turn[0] += 1
+            u.SetCursorPos(sx, sy)
         u.mouse_event(down, 0, 0, 0, 0)
         u.mouse_event(up, 0, 0, 0, 0)
 
-    where = f"at {x}, {y}" if fixed else "wherever the pointer is"
+    if not spots:
+        where = "wherever the pointer is"
+    elif len(spots) == 1:
+        where = "at %d, %d" % spots[0]
+    else:
+        where = "around %d spots (%s)" % (
+            len(spots), " then ".join("%d,%d" % p for p in spots[:4])
+            + (" ..." if len(spots) > 4 else ""))
     err = _start(f"clicking {where}", where, seconds, one, 1.0 / rate, count)
     if err:
         return err
@@ -277,13 +325,21 @@ TOOLS = [
          "Click the mouse repeatedly on its own, for gaming, idle games, or any "
          "repetitive clicking. Use for 'auto click', 'keep clicking', 'click here "
          "every second', 'clicker'. Rate is clicks per second (default 5, max 40), "
-         "seconds is how long (default 30, max 600). With x and y it clicks a fixed "
-         "point; without, wherever the pointer is. Always stoppable with "
-         "stop_automation."),
+         "seconds is how long (default 30, max 600). "
+         "SEVERAL PLACES AT ONCE: pass `points` as a list of [x, y] pairs and it "
+         "cycles through them in order, one click per tick — use that for 'click "
+         "these three buttons', 'alternate between here and there', or any job "
+         "that is not one spot. `x` and `y` still work for a single fixed point, "
+         "and with neither it clicks wherever the pointer already is. Screen "
+         "coordinates come from a screenshot, so look first if you do not know "
+         "them. Always stoppable with stop_automation."),
      "input_schema": {"type": "object", "properties": {
          "rate": {"type": "number", "description": "Clicks per second"},
          "seconds": {"type": "number", "description": "How long to run"},
          "button": {"type": "string", "description": "left or right"},
+         "points": {"type": "array",
+                    "description": "Several spots to click in turn, as [[x, y], ...]",
+                    "items": {"type": "array", "items": {"type": "number"}}},
          "x": {"type": "number"}, "y": {"type": "number"}},
          "required": []}},
 

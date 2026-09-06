@@ -98,7 +98,8 @@ The transcript still records that it heard.
 
 ### 3.2 Reasoning
 
-An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 6 (`run.py:189`, loop at
+An agentic tool loop, `ARC_MAX_TOOL_ROUNDS` = 16, and 28 in chat mode or on
+the deep brain (`run.py`, loop at
 `run.py:894`). Handles `pause_turn` resumption for server-side tools and the
 `refusal` stop reason explicitly.
 
@@ -418,7 +419,7 @@ overridden.
 **The same move pays for itself.** A prefix that no longer varies per request
 can be cached, and cache reads bill at roughly a tenth of the input rate. The
 base prompt is ~12,000 tokens and was re-sent in full on every turn *and* on
-each of the up to six tool rounds within one turn — measured at $0.036 a send,
+each of the tool rounds within one turn — measured at $0.036 a send,
 $0.0036 cached, so a six-round turn saves about $0.19. The block carries
 `cache_control: {type: ephemeral}` only when it clears `MIN_CACHE_CHARS`
 (4,000), because the API silently declines to cache a shorter prefix and a
