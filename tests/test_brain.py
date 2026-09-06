@@ -326,4 +326,32 @@ c.truthy("  the summariser goes through it too", "think = thinking_for(MODEL, Fa
 c.truthy("  with room for the thinking it may now do",
          'max_tokens=500 if think["type"] == "disabled" else 4000' in _run_src)
 
+
+print("\nWeb search is sent in the form each brain can actually take:")
+# A live 400, on the brain Auto sends most turns to, for the most ordinary
+# question there is. _20260209 filters results before they reach the context
+# window, and it runs code to do it -- which is exactly why Haiku cannot take
+# it: no programmatic tool calling, and the API refuses the whole request
+# rather than degrading.
+c("  haiku gets the version it supports",
+  run.search_tool_for("claude-haiku-4-5-20251001")["type"], "web_search_20250305")
+c("  sonnet 5 gets the filtering one",
+  run.search_tool_for("claude-sonnet-5")["type"], "web_search_20260209")
+c("  opus 5 too", run.search_tool_for("claude-opus-5")["type"], "web_search_20260209")
+c("  and an unknown model is treated as modern",
+  run.search_tool_for("claude-something-new-9")["type"], "web_search_20260209")
+c("  ...but a haiku of any vintage is not",
+  run.search_tool_for("claude-haiku-9-9-20990101")["type"], "web_search_20250305")
+c("  the name stays the same either way",
+  {run.search_tool_for(m)["name"] for m in
+   ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")}, {"web_search"})
+# The previous attempt at this shipped an allowed_callers line and a comment
+# saying it was fixed. It tested clean on Sonnet and had never been run against
+# Haiku, which is the only model it was for.
+_rsrc = io.open(ARC / "run.py", encoding="utf-8").read()
+c("  the failed allowed_callers workaround is gone",
+  '"allowed_callers"' in _rsrc, False)
+c.truthy("  and the lesson is written down, not just the fix",
+         "verified against the model that was already working" in _rsrc)
+
 c.done()

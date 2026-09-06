@@ -324,6 +324,31 @@ def resolve_model(choice) -> str:
     return MODEL_CHOICES.get(str(choice or "").strip().lower(), MODEL)
 
 
+def search_tool_for(model: str) -> dict:
+    """The web-search tool in the newest form THIS model accepts.
+
+    _20260209 filters results before they reach the context window, which is
+    worth having — it runs code under the hood to do it, and that is exactly
+    why Haiku cannot take it: it has no programmatic tool calling, and the API
+    refuses the whole request with a 400 rather than degrading.
+
+    A 400, on the brain Auto sends most turns to, for the most ordinary
+    question there is. It was already known that Haiku was fussy here — there
+    was an allowed_callers line and a comment claiming to have fixed it, which
+    tested clean on Sonnet and had never been tried on Haiku. The lesson is the
+    shape of the bug rather than the bug: a capability check written from the
+    documentation, verified against the model that was already working.
+
+    So the version is chosen per model, and the older one still searches. It
+    just brings back everything it finds instead of filtering first.
+    """
+    m = (model or "").lower()
+    modern = not ("haiku" in m or "claude-3" in m)
+    return {"type": "web_search_20260209" if modern else "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 3}
+
+
 def supports_effort(model: str) -> bool:
     # The 'effort' output control exists on Sonnet/Opus but NOT on Haiku, which
     # rejects the request outright if it's sent. Gate it on the model in use.
@@ -1798,16 +1823,7 @@ async def chat(request: Request, _=Depends(require_auth)):
         tools = []
         use_search = False
     if use_search:
-        # The dated variant matters: _20260209 filters results before they hit
-        # the context window. The older _20250305 has no such filtering.
-        tools.append({
-            "type": "web_search_20260209",
-            "name": "web_search",
-            "max_uses": 3,
-            # Haiku (and any model without programmatic tool-calling) rejects a
-            # server tool unless we say it's called directly by the model.
-            "allowed_callers": ["direct"],
-        })
+        tools.append(search_tool_for(model))
 
     # Thinking is the single biggest source of reply latency, so for a voice
     # loop it is OFF by default and only turns on when the user explicitly asks
