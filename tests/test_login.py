@@ -111,5 +111,25 @@ check("no session cookie issued",
       run.COOKIE in r.headers.get("set-cookie", ""), False)
 
 session.revoke_all()
+
+print("\nThe sign-in page answers the question it causes:")
+# Sign-in is Google, and plenty of people have never had a Gmail address. They
+# get as far as the button, find their address is not a Google account, and have
+# no way of knowing it can become one. The page is where that surfaces, so the
+# page is where the answer belongs.
+page_ = run.LOGIN_HTML
+check("  it names the addresses people actually have",
+       "Yahoo" in page_ and "Outlook" in page_, True)
+check("  ...and says a new Gmail is not needed",
+       "you do not need a new Gmail" in page_, True)
+check("  it gives the exact step that is easy to miss",
+       "Use my current email address instead" in page_, True)
+check("  and a link to do it", "accounts.google.com/signup" in page_, True)
+# An external link from a login page opened without this hands the opener a
+# window reference back.
+check("  opened without handing over the opener",
+       'rel="noopener noreferrer"' in page_, True)
+check("  and it is styled rather than raw", ".nongmail {" in page_, True)
+
 print("\nALL PASS" if ok else "\nFAILURES ABOVE")
 sys.exit(0 if ok else 1)

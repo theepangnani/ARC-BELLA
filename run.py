@@ -174,6 +174,10 @@ GUEST_TOOLS = {
     # same class as weather and news. A guest asking how long to the airport is
     # asking about roads, not about anybody's diary.
     "directions", "find_place",
+    # Same class again: an exchange rate and a sunset are facts about the world,
+    # not about the owner. A guest asking what fifty dollars is in euros is
+    # asking the European Central Bank, not looking in anybody's wallet.
+    "convert_money", "sun_times",
 }
 
 
@@ -1329,6 +1333,12 @@ h1{font-size:30px;letter-spacing:.5em;margin:0 0 8px;font-weight:400;
 .foot a{color:var(--ice);text-decoration:none;border-bottom:1px solid rgba(95,217,255,.4)}
 .foot a:hover{filter:brightness(1.15)}
 @media(max-width:420px){h1{font-size:24px}.tag{font-size:13px}}
+  .nongmail {
+    margin: 16px auto 0; max-width: 30rem; font-size: 11.5px; line-height: 1.65;
+    color: #7fa8bd; text-align: center;
+  }
+  .nongmail a { color: #5fd9ff; }
+  .nongmail b { color: #d7eefc; font-weight: 500; }
 </style></head><body>
 <div class="wrap">
   <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
@@ -1359,6 +1369,18 @@ h1{font-size:30px;letter-spacing:.5em;margin:0 0 8px;font-weight:400;
     Sign in with Google
   </a>
   <div class="err" id="e"></div>
+  <!-- Where the problem actually surfaces, so where the answer belongs. Sign-in
+       is Google, and plenty of people have never had a Gmail address — they get
+       as far as the button, find their address is not a Google account, and
+       have no way of knowing that it can become one. -->
+  <p class="nongmail">
+    Yahoo, Outlook, iCloud or a work address? Any email can be a Google
+    account — you do not need a new Gmail. Create one with the address you
+    already have at
+    <a href="https://accounts.google.com/signup" target="_blank" rel="noopener noreferrer">accounts.google.com/signup</a>,
+    choosing <b>&ldquo;Use my current email address instead&rdquo;</b>. Verify the code Google
+    sends you, then sign in here with that address.
+  </p>
   __EMAIL_FORM__
   <p class="note">__SESSION_NOTE__</p>
   <div class="trust">

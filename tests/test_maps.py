@@ -101,12 +101,59 @@ c("  both tools are known", {"directions", "find_place"} <= set(run.TOOL_OWNER),
 # diary, so it sits with weather and news rather than with mail.
 c("  a guest may ask for directions", "directions" in run.GUEST_TOOLS, True)
 c("  and where a place is", "find_place" in run.GUEST_TOOLS, True)
-c("  the guest tier is 17 now, deliberately", len(run.GUEST_TOOLS), 17)
 
 print("\nAnd it identifies itself to the services it borrows:")
 # Both are public good-will servers with usage policies. Turning up anonymously
 # at volume is how a free service stops being free for everybody.
 c.truthy("  a real User-Agent", "ARC-voice-assistant" in maps.UA.get("User-Agent", ""))
 c.truthy("  ...and the courtesy is written down", "good-will" in src)
+
+
+
+
+# --------------------------------------------------------- currency and sun
+# Two gaps against what a Google Assistant answers, and one of them is a
+# WRONG-ANSWER gap rather than a missing one.
+import extras   # noqa: E402
+
+print("\nAn exchange rate is looked up, never remembered:")
+# Asked "what is fifty dollars in euros", a model answers confidently from a
+# rate it learned months ago and is quietly wrong — which is the one failure
+# the rulebook says never to commit. A rate is a fact about TODAY.
+c.truthy("  there is a tool for it", "convert_money" in extras._DISPATCH)
+c.truthy("  ...and the description tells the model not to do it itself",
+         any("rather than working it out yourself" in t["description"]
+             for t in extras.TOOLS if t["name"] == "convert_money"))
+c.truthy("  it needs no API key",
+         "frankfurter" in io.open(ARC / "extras.py", encoding="utf-8").read())
+c.truthy("  and it admits what kind of rate it is",
+         "reference rates" in io.open(ARC / "extras.py", encoding="utf-8").read())
+# Bad input must ask, not guess.
+c.truthy("  two-letter codes are refused", "three-letter" in extras.convert_money(1, "US", "EU"))
+c.truthy("  the same currency twice is noticed", "same currency" in extras.convert_money(1, "USD", "USD"))
+c.truthy("  and a non-number asks", "How much" in extras.convert_money("lots", "USD", "EUR"))
+
+print("\nTimes are SPOKEN, which is a rule this broke twice before it worked:")
+# "1 05 in the afternoon" is exactly what the rulebook forbids, and what a
+# synthesiser makes a hash of. And the quarter checks have to know which side
+# of the hour they are on.
+for hhmm, want in [("00:00", "midnight"), ("12:00", "midday"),
+                   ("07:15", "quarter past seven"),
+                   # This one was announced as "quarter PAST six" — half an
+                   # hour out, in the sort of answer somebody sets an alarm by.
+                   ("17:45", "quarter to six"),
+                   ("07:30", "half past seven"),
+                   ("13:05", "five minutes past one"),
+                   ("19:42", "eighteen minutes to eight"),
+                   ("23:59", "one minute to twelve")]:
+    c.truthy("  %-6s -> %s" % (hhmm, want), extras._clock(hhmm).startswith(want))
+c("  and nothing digit-shaped survives",
+  any(ch.isdigit() for ch in extras._clock("13:05")), False)
+c("  rubbish is handed back untouched", extras._clock("bad"), "bad")
+
+print("\nBoth are public facts, so a guest may ask:")
+c("  currency", "convert_money" in run.GUEST_TOOLS, True)
+c("  sunset", "sun_times" in run.GUEST_TOOLS, True)
+c("  the guest tier is 19 now, deliberately", len(run.GUEST_TOOLS), 19)
 
 c.done()

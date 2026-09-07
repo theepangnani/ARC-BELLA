@@ -401,7 +401,165 @@ def news(topic: str = "", count: int = 5) -> str:
 
 # --- wire format -----------------------------------------------------------
 
+# --- currency ---------------------------------------------------------------
+
+# European Central Bank rates, republished. No key, and reference rates rather
+# than a dealer's — good enough for "is that expensive", wrong for trading, and
+# the tool says so rather than implying a precision it does not have.
+FX_URL = "https://api.frankfurter.dev/v1/latest"
+FX_UA = {"User-Agent": "ARC-voice-assistant (personal use)"}
+
+
+def convert_money(amount: float = 1, source: str = "", target: str = "") -> str:
+    """Convert an amount between currencies at today's rate.
+
+    A tool rather than arithmetic the model does from memory, and that is the
+    entire point. Asked "what is fifty dollars in euros", a model answers
+    confidently from a rate it learned months ago and is quietly wrong — which
+    is the one failure the rulebook says never to commit. A rate is a FACT about
+    today, and facts about today are looked up.
+    """
+    a, b = (source or "").strip().upper(), (target or "").strip().upper()
+    if len(a) != 3 or len(b) != 3:
+        return ("Tell me the two currencies as three-letter codes, like "
+                "'fifty USD in EUR'.")
+    if a == b:
+        return "Those are the same currency, sir."
+    try:
+        amt = float(amount if amount not in (None, "") else 1)
+    except (TypeError, ValueError):
+        return "How much would you like to convert?"
+    try:
+        with httpx.Client(timeout=12, headers=FX_UA) as c:
+            r = c.get(FX_URL, params={"base": a, "symbols": b}).json()
+        rate = (r.get("rates") or {}).get(b)
+        if not rate:
+            return f"I don't have a rate for {a} to {b}."
+        out = amt * rate
+        # Spoken, so no thousands separators and no currency symbols to read.
+        return ("%s %s is about %s %s, at today's rate of %.4f. These are "
+                "European Central Bank reference rates from %s, so a bank or a "
+                "card will give you a little less."
+                % (_money(amt), a, _money(out), b, rate, r.get("date", "today")))
+    except Exception as e:
+        return f"Couldn't reach the exchange rate service: {e}"
+
+
+def _money(n: float) -> str:
+    """Read aloud, so no separators. Two decimals only when they matter."""
+    return ("%.2f" % n).rstrip("0").rstrip(".") if n < 1000 else "%.0f" % n
+
+
+# --- sun --------------------------------------------------------------------
+
+def sun_times(location: str = "", when: str = "today") -> str:
+    """Sunrise, sunset and how much daylight is left."""
+    loc = (location or "").strip()
+    if not loc:
+        return "Which place would you like the sunrise and sunset for?"
+    day = 2 if (when or "").strip().lower() == "tomorrow" else 1
+    try:
+        with httpx.Client(timeout=12) as c:
+            g = c.get(GEO_URL, params={"name": loc, "count": 1}).json()
+            hit = (g.get("results") or [None])[0]
+            if not hit:
+                return f"I couldn't find a place called {loc}."
+            label = hit.get("name") or loc
+            d = c.get(WX_URL, params={
+                "latitude": hit["latitude"], "longitude": hit["longitude"],
+                "daily": "sunrise,sunset,daylight_duration",
+                "timezone": "auto", "forecast_days": day}).json()["daily"]
+    except Exception as e:
+        return f"Couldn't reach the weather service: {e}"
+    i = day - 1
+    rise, setx = d["sunrise"][i][11:16], d["sunset"][i][11:16]
+    hours = d["daylight_duration"][i] / 3600.0
+    word = "Tomorrow" if day == 2 else "Today"
+    return ("%s in %s the sun rises at %s and sets at %s — %.1f hours of "
+            "daylight." % (word, label, _clock(rise), _clock(setx), hours))
+
+
+_ONES = ("twelve", "one", "two", "three", "four", "five", "six", "seven",
+         "eight", "nine", "ten", "eleven")
+
+
+def _mins(m: int) -> str:
+    """Minutes, in words. Twenty-one is "twenty one", not "twenty-one": the
+    hyphen is punctuation a synthesiser has to guess at."""
+    if m < 20:
+        return ("one two three four five six seven eight nine ten eleven twelve "
+                "thirteen fourteen fifteen sixteen seventeen eighteen nineteen"
+                ).split()[m - 1]
+    tens = {2: "twenty", 3: "thirty", 4: "forty", 5: "fifty"}[m // 10]
+    return tens if m % 10 == 0 else tens + " " + _mins(m % 10)
+
+
+def _clock(hhmm: str) -> str:
+    """A time as somebody would SAY it.
+
+    The first version returned "1 05 in the afternoon", which is exactly what
+    the rulebook forbids — times are written the way they are read, so "five
+    past one", never digits. It is also what a synthesiser makes a hash of:
+    "1 05" comes out as "one five" or "one zero five", neither of which is a
+    time.
+    """
+    try:
+        h, m = int(hhmm[:2]), int(hhmm[3:5])
+    except Exception:
+        return hhmm
+    if m == 0 and h == 12:
+        return "midday"
+    if m == 0 and h == 0:
+        return "midnight"
+    part = ("in the morning" if h < 12 else
+            "in the afternoon" if h < 18 else "in the evening")
+    # Past the half hour, people count towards the NEXT hour.
+    if m > 30:
+        h, m, word = (h + 1) % 24, 60 - m, "to"
+        part = ("in the morning" if h < 12 else
+                "in the afternoon" if h < 18 else "in the evening")
+    else:
+        word = "past"
+    hour = _ONES[h % 12]
+    if m == 0:
+        return "%s o'clock %s" % (hour, part)
+    # The quarter checks must know which side of the hour they are on. Written
+    # the other way round, "quarter past" caught 17:45 before "to" ever ran, and
+    # a quarter TO six was announced as a quarter PAST six -- half an hour out,
+    # in the one kind of answer somebody sets an alarm by.
+    if m == 15:
+        return "quarter %s %s %s" % (word, hour, part)
+    if m == 30:
+        return "half past %s %s" % (hour, part)
+    unit = "minute" if m == 1 else "minutes"
+    return "%s %s %s %s %s" % (_mins(m), unit, word, hour, part)
+
+
 TOOLS = [
+    {"name": "convert_money",
+     "description": (
+         "Convert an amount from one currency to another at TODAY'S rate. Use "
+         "for 'how much is fifty dollars in euros', 'what's a hundred pounds in "
+         "yen', 'convert 20 CAD to USD'. Always use this rather than working it "
+         "out yourself — an exchange rate you remember is out of date and a "
+         "confident wrong number about money is worse than saying you'll check. "
+         "Currencies are three-letter codes (USD, EUR, GBP, CAD, JPY...)."),
+     "input_schema": {"type": "object", "properties": {
+         "amount": {"type": "number"},
+         "source": {"type": "string", "description": "Currency to convert FROM"},
+         "target": {"type": "string", "description": "Currency to convert TO"}},
+         "required": ["source", "target"]}},
+
+    {"name": "sun_times",
+     "description": (
+         "Sunrise, sunset and how many hours of daylight. Use for 'what time "
+         "does the sun set', 'when is sunrise tomorrow', 'how long until dark'. "
+         "`when` is today or tomorrow."),
+     "input_schema": {"type": "object", "properties": {
+         "location": {"type": "string"},
+         "when": {"type": "string", "description": "today or tomorrow"}},
+         "required": ["location"]}},
+
     {"name": "weather",
      "description": "Current weather and a short forecast for a place. Use for any weather question. 'when' can be 'today' or 'tomorrow'.",
      "input_schema": {"type": "object", "properties": {
@@ -444,7 +602,8 @@ TOOLS = [
          "topic": {"type": "string"}, "count": {"type": "integer"}}}},
 ]
 
-_DISPATCH = {"weather": weather, "add_todo": add_todo,
+_DISPATCH = {
+    "convert_money": convert_money, "sun_times": sun_times,"weather": weather, "add_todo": add_todo,
              "list_todos": list_todos, "complete_todo": complete_todo,
              "set_reminder": set_reminder, "list_reminders": list_reminders,
              "cancel_reminder": cancel_reminder, "stock": stock, "news": news}
