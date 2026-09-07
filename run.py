@@ -111,6 +111,7 @@ if DEFAULT_BRAIN not in ("auto", "smart", "fast"):
 # loaded â€” import them earlier and those settings silently read empty.
 import gauth
 import session
+import magic
 import gcal
 import gmail
 import gextra
@@ -1350,6 +1351,7 @@ h1{font-size:30px;letter-spacing:.5em;margin:0 0 8px;font-weight:400;
     Sign in with Google
   </a>
   <div class="err" id="e"></div>
+  __EMAIL_FORM__
   <p class="note">__SESSION_NOTE__</p>
   <div class="trust">
     <span>🔒 Self-hosted &amp; private</span>
@@ -1391,6 +1393,60 @@ else:
     _session_note = (f"Sign-in is limited to the owner's Google account. You stay signed in "
                      f"while you're using it, and are signed out after {_idle_mins} minutes idle.")
 LOGIN_HTML = LOGIN_HTML.replace("__SESSION_NOTE__", _session_note)
+
+# The second door, and only when it is open. Rendered at import rather than per
+# request because the flag cannot change without a restart, and a login page
+# that offers a way in that is switched off is a page that teaches people to
+# distrust it.
+_EMAIL_FORM = """
+  <div class="orwrap"><span>or</span></div>
+  <form class="mailform" id="mf" autocomplete="on">
+    <input type="email" id="me" placeholder="you@anywhere.com" required
+           autocomplete="email" spellcheck="false">
+    <button type="submit">Email me a link</button>
+  </form>
+  <p class="note" id="ms"></p>
+  <script>
+    document.getElementById("mf").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const box = document.getElementById("ms");
+      const em = document.getElementById("me").value.trim();
+      box.textContent = "Sending...";
+      try {
+        const r = await fetch("/auth/email", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({email: em})
+        });
+        const d = await r.json();
+        // The same sentence whatever happened, because the server says the same
+        // sentence whatever happened -- see /auth/email.
+        box.textContent = (d && d.said) || "If that address can sign in, a link is on its way.";
+      } catch (_) {
+        box.textContent = "Could not reach ARC. Try again in a moment.";
+      }
+    });
+  </script>
+"""
+
+_EMAIL_CSS = """
+  .orwrap { display:flex; align-items:center; gap:10px; margin:18px 0 14px;
+            color:#3d6d86; font-size:11px; letter-spacing:.2em; }
+  .orwrap::before, .orwrap::after { content:""; flex:1; height:1px; background:#12293c; }
+  .mailform { display:flex; gap:8px; }
+  .mailform input { flex:1; padding:12px 13px; border:1px solid #12293c; border-radius:4px;
+                    background:rgba(9,19,32,.7); color:#d7eefc; font-size:13px; }
+  .mailform input:focus { outline:none; border-color:#5fd9ff; }
+  .mailform button { padding:12px 16px; border:1px solid #1c6d8f; border-radius:4px;
+                     background:rgba(95,217,255,.1); color:#d7eefc; font-size:12px;
+                     letter-spacing:.1em; cursor:pointer; }
+  .mailform button:hover { background:rgba(95,217,255,.2); }
+"""
+
+if magic.enabled():
+    LOGIN_HTML = LOGIN_HTML.replace("__EMAIL_FORM__", _EMAIL_FORM)
+    LOGIN_HTML = LOGIN_HTML.replace("</style>", _EMAIL_CSS + "</style>", 1)
+else:
+    LOGIN_HTML = LOGIN_HTML.replace("__EMAIL_FORM__", "")
 
 
 # The second-screen display: a glanceable dashboard meant to sit on a second
@@ -2913,6 +2969,80 @@ async def oauth_callback(request: Request):
     return resp
 
 
+@app.post("/auth/email")
+async def auth_email(request: Request):
+    """Ask for a sign-in link. Public, because it is a door.
+
+    THE SAME ANSWER EVERY TIME, whatever happens inside. Not on the allowlist,
+    asked a minute ago, mail server refused it — all of them return the identical
+    sentence, because a login form that distinguishes those cases is a directory
+    of who has access. "No such user" is the single most useful thing a stranger
+    can learn from a login page, and it is free to withhold.
+
+    The real outcomes go to the server log, where the owner can read them and a
+    stranger cannot.
+    """
+    if not magic.enabled():
+        raise HTTPException(404, "Not enabled.")
+    check_login_rate(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    email = str(payload.get("email") or "").strip().lower()
+
+    SAME = JSONResponse({"ok": True, "said": "If that address can sign in, "
+                                             "a link is on its way."})
+    if "@" not in email or len(email) > 200:
+        return SAME
+    if email not in ALLOWED_EMAILS:
+        print(f"{C_DIM}  · magic link refused, not on the allowlist: {email}{C_OFF}")
+        return SAME
+    if not magic.may_ask(email):
+        print(f"{C_DIM}  · magic link asked again too soon: {email}{C_OFF}")
+        return SAME
+
+    token = magic.issue(email)
+    link = public_base_url(request).rstrip("/") + "/auth/magic?t=" + token
+    sent, why = await asyncio.get_event_loop().run_in_executor(
+        None, magic.send, email, link)
+    if sent:
+        print(f"{C_CYAN}  · magic link sent to {email}{C_OFF}")
+    else:
+        # The owner needs to know their mail sender is broken. The person at the
+        # form still gets the same sentence either way.
+        print(f"{C_AMBER}  ! magic link NOT sent to {email}: {why}{C_OFF}")
+    return SAME
+
+
+@app.get("/auth/magic")
+async def auth_magic(request: Request):
+    """Follow the link, and be signed in. Public for the same reason the OAuth
+    callback is: requiring a session to reach the route that creates one is a
+    closed loop."""
+    if not magic.enabled():
+        raise HTTPException(404, "Not enabled.")
+    check_login_rate(request)
+    # Consumed on the way in, whatever happens next. A link that still works
+    # after it has been clicked still works in whatever mailbox it passed
+    # through.
+    email = magic.consume(request.query_params.get("t", ""))
+    if not email:
+        return _auth_fail(request, "expired")
+    # Checked AGAIN here, not only when the link was sent. An address can come
+    # off the allowlist between the two, and the link is the thing that outlives
+    # the decision.
+    if email not in ALLOWED_EMAILS:
+        return _auth_fail(request, "denied")
+
+    sid = session.create(email, request.headers.get("user-agent", ""))
+    clear_login_failures(request)
+    print(f"{C_CYAN}  · signed in by link: {email}{C_OFF}")
+    resp = RedirectResponse("/", status_code=302)
+    set_session_cookie(resp, sid, request, email)
+    return resp
+
+
 @app.post("/api/logout")
 async def logout(request: Request):
     """Ends the session on the server, not merely in this browser."""
@@ -3068,7 +3198,12 @@ async def require_login(request: Request, call_next):
                      "/sw.js", "/manifest.webmanifest")
             # The sign-in round trip itself. /oauth/callback is where a session
             # is created, so gating it on having one would be a closed loop.
-            or path in ("/auth/login", "/oauth/callback")
+            # The link flow is the same shape: /auth/email is a door and
+            # /auth/magic is where the session gets made, so neither can be
+            # behind a session. Both refuse with a 404 unless ARC_MAGIC_LINK is
+            # on, so being listed here grants nothing while it is off.
+            or path in ("/auth/login", "/oauth/callback",
+                        "/auth/email", "/auth/magic")
             # Homepage, privacy policy and terms must be reachable WITHOUT
             # signing in — Google's OAuth verification crawler fetches them and
             # they are the public face of the app.

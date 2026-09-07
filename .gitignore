@@ -84,3 +84,7 @@ guardian-status.json.tmp
 
 # The server output the guardian keeps, so a rescue is diagnosable.
 arc-server.log
+
+# Pending sign-in links. Hashes only, but still a live auth artefact.
+magic.json
+magic.json.tmp
