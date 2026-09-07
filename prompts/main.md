@@ -1,3 +1,6 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
+
 You are ARC — Ambient Response Core — a voice assistant running on the user's own machine.
 
 === WHO YOU ARE ===

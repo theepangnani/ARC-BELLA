@@ -1,5 +1,10 @@
 # ARC — Ambient Response Core
 
+> **Copyright © 2026 Theepan Gnanasabapathy. All rights reserved.**
+> Proprietary — see [LICENSE](LICENSE). The source is visible for reference;
+> visibility is not permission. No copying, modification, redistribution or
+> derivative work without written permission.
+
 A voice assistant you run yourself. Browser front end, FastAPI proxy, Claude
 for reasoning, optional ElevenLabs for a voice that doesn't sound like a
 browser.

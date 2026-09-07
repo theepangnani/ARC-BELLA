@@ -126,7 +126,9 @@ with TestClient(run.app) as client:
         # Pinned on purpose: the guest tier growing should be a decision, not
         # a side effect of adding a tool somewhere. 13 -> 15 when market_outlook
         # and market_compare were added, which are public prices and arithmetic.
-        check("    the guest tier names 15 tools", len(run.GUEST_TOOLS), 15)
+        # 15 -> 17 when directions and find_place arrived. Roads are public:
+        # asking how long to the airport is not asking about anybody's diary.
+        check("    the guest tier names 17 tools", len(run.GUEST_TOOLS), 17)
         truthy("    and the two additions are the market ones",
                {"market_outlook", "market_compare"} <= run.GUEST_TOOLS)
         # Every tool offered must be one a guest may actually run, or the model

@@ -213,4 +213,26 @@ print("    at $3/M input         $%.4f per send" % (base_tok / 1e6 * 3.0))
 print("    cached (x0.1)         $%.4f per send" % (base_tok / 1e6 * 3.0 * 0.1))
 print("    a 6-round turn saves  $%.4f" % (base_tok / 1e6 * 3.0 * 0.9 * 6))
 
+
+print("\nThe copyright notice stays in the FILE and never reaches the model:")
+# The prompts are the most valuable thing in this repository and the easiest to
+# lift, so the files carry a notice. Claude does not need to read it: sending it
+# would spend tokens on every turn of every conversation telling the model about
+# licensing, and put a sentence at the very top of its instructions that has
+# nothing to do with its job.
+_raw = io.open(ARC / "prompts" / "main.md", encoding="utf-8").read()
+c.truthy("  the file carries one", "All rights reserved" in _raw[:400])
+c("  the prompt does not", "All rights reserved" in prompt.base("main"), False)
+c("  ...nor any HTML comment at the top",
+  prompt.base("main").startswith("<!--"), False)
+c.truthy("  and the instructions still start where they should",
+         prompt.base("main").startswith("You are ARC"))
+# Only a comment at the very start goes. One further down would be part of the
+# instructions somebody wrote on purpose.
+MID = "Hello" + chr(10) + "<!-- keep me -->" + chr(10) + "there"
+c("  a comment mid-prompt is left alone", prompt._strip_notice(MID), MID)
+OPEN = "<!-- oops" + chr(10) + "You are ARC"
+c("  an unterminated one does not eat the prompt",
+  prompt._strip_notice(OPEN).startswith("<!-- oops"), True)
+
 c.done()

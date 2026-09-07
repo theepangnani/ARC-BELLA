@@ -116,8 +116,15 @@ def prompt_text(name: str = "main") -> str:
     where a browser cannot edit them. The question the suites are actually
     asking — does ARC's prompt still say this — has not changed, so it gets a
     helper rather than a path each of them has to know.
+
+    Read through prompt.base() rather than off the disk, so this returns what
+    ARC actually SENDS. The files carry a copyright notice that is stripped on
+    load — a helper that reads the raw file would hand suites a prompt that
+    exists nowhere, and the failure looks like the prompt being wrong rather
+    than the helper being naive.
     """
-    return io.open(ARC / "prompts" / ("%s.md" % name), encoding="utf-8").read()
+    import prompt
+    return prompt.base(name)
 
 
 def system_text(sent) -> str:

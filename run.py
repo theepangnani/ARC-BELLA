@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
+
 """
 ARC â€” Ambient Response Core
 Local launcher + API proxy.
@@ -129,6 +132,7 @@ import push
 import alerts
 import alarm
 import market
+import maps
 import automation
 import voices
 import selfheal
@@ -139,7 +143,7 @@ import memory
 import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
-            memory)
+            memory, maps)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -166,6 +170,10 @@ GUEST_TOOLS = {
     # owner's is touched, and the honesty is in the tool's own output rather
     # than in who is asking.
     "market_outlook", "market_compare",
+    # Getting places: a public lookup with nothing of the owner's in it, the
+    # same class as weather and news. A guest asking how long to the airport is
+    # asking about roads, not about anybody's diary.
+    "directions", "find_place",
 }
 
 
@@ -3002,8 +3010,23 @@ async def auth_email(request: Request):
         print(f"{C_DIM}  · magic link asked again too soon: {email}{C_OFF}")
         return SAME
 
+    # THE LINK'S ORIGIN MUST NOT COME FROM THE REQUEST. public_base_url() falls
+    # back to x-forwarded-host, which anybody can set — and for OAuth that is
+    # survivable, because Google refuses a redirect_uri it has never seen. There
+    # is no such backstop here: ARC writes this link itself and emails it to
+    # somebody who trusts it.
+    #
+    # Forge the header, ask for a link addressed to the OWNER, and they receive
+    # a genuine-looking sign-in email pointing at your server with a valid token
+    # in it. They click; you keep the token; you replay it here and are them.
+    #
+    # So this feature requires ARC_PUBLIC_URL, and declines rather than guessing.
+    if not PUBLIC_URL:
+        print(f"{C_AMBER}  ! magic link needs ARC_PUBLIC_URL set — refusing to "
+              f"build a sign-in link from a header a caller controls{C_OFF}")
+        return SAME
     token = magic.issue(email)
-    link = public_base_url(request).rstrip("/") + "/auth/magic?t=" + token
+    link = PUBLIC_URL.rstrip("/") + "/auth/magic?t=" + token
     sent, why = await asyncio.get_event_loop().run_in_executor(
         None, magic.send, email, link)
     if sent:

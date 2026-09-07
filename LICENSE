@@ -1,0 +1,32 @@
+ARC — Ambient Response Core
+Copyright (c) 2026 Theepan Gnanasabapathy. All rights reserved.
+
+This software and its source code are proprietary. They are made visible for
+reference; visibility is not permission.
+
+NO LICENCE IS GRANTED. Without prior written permission from the copyright
+holder you may not copy, modify, merge, publish, distribute, sublicense, sell,
+host, or create derivative works from this software or any part of it, in
+source or compiled form. Reading the code, and running an instance you were
+given access to, are not permission to do any of the above.
+
+This includes, and is not limited to: reusing the prompts in prompts/, the
+tool definitions, the interface in static/, and the architecture as expressed
+in this repository.
+
+TRAINING AND AUTOMATED COLLECTION. Permission is not granted to include this
+software, its source, its prompts, or its documentation in any dataset used to
+train, fine-tune, or evaluate a machine learning model, nor to scrape or
+redistribute it for that purpose.
+
+THIRD-PARTY COMPONENTS. This software depends on separately licensed packages,
+listed in requirements.txt, each governed by its own licence. Nothing here
+alters those terms, and nothing here claims ownership of them.
+
+NO WARRANTY. The software is provided "as is", without warranty of any kind,
+express or implied, including but not limited to the warranties of
+merchantability, fitness for a particular purpose and non-infringement. In no
+event shall the copyright holder be liable for any claim, damages or other
+liability arising from the software or its use.
+
+Enquiries about licensing, evaluation, or commercial use: theepang@gmail.com

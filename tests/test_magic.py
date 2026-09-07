@@ -29,6 +29,10 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ["ARC_ALLOWED_EMAILS"] = "owner@example.com"
 os.environ["ARC_GUEST_EMAILS"] = "bala@yahoo.com"
 os.environ["ARC_MAGIC_LINK"] = "1"
+# Required, and that is the point: without a configured origin ARC will not
+# build a sign-in link at all, because the only other source of one is a
+# header the caller controls. See the last section of this file.
+os.environ["ARC_PUBLIC_URL"] = "https://arc.example.test"
 
 from starlette.testclient import TestClient   # noqa: E402
 import run       # noqa: E402
@@ -130,5 +134,21 @@ c.truthy("  they are public, like the OAuth callback, for the same reason",
          '"/auth/email", "/auth/magic"' in rsrc)
 c.truthy("  and the reason is written down", "closed loop" in rsrc)
 c.truthy("  the form only appears when it works", "if magic.enabled():" in rsrc)
+
+
+print("\nThe link's origin never comes from the request:")
+# The one that would have mattered. public_base_url() falls back to
+# x-forwarded-host, which anybody can set. For OAuth that is survivable —
+# Google refuses a redirect_uri it has never seen. There is no such backstop
+# here: ARC writes this link itself and emails it to somebody who trusts it.
+# Forge the header, ask for a link addressed to the OWNER, and they get a
+# genuine-looking email pointing at your server with a working token in it.
+rsrc = io.open(ARC / "run.py", encoding="utf-8").read()
+c("  it does NOT use public_base_url",
+  "public_base_url(request).rstrip" in rsrc, False)
+c.truthy("  it uses the configured origin", 'link = PUBLIC_URL.rstrip("/")' in rsrc)
+c.truthy("  ...and refuses outright when there isn't one", "if not PUBLIC_URL:" in rsrc)
+c.truthy("  the attack is written down, not just prevented",
+         "replay it here and are them" in rsrc)
 
 c.done()

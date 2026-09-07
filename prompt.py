@@ -44,10 +44,32 @@ NAMES = ("main", "watch")
 _cache: dict = {}
 
 
+def _strip_notice(text: str) -> str:
+    """Drop a leading HTML comment before the prompt is sent anywhere.
+
+    The prompt files carry a copyright notice, because they are the most
+    valuable thing in this repository and the easiest to lift. Claude does not
+    need to read it. Sending it would spend tokens on every turn of every
+    conversation telling the model about licensing, and put a sentence at the
+    very top of its instructions that has nothing to do with its job.
+
+    So the notice lives in the FILE and never in the PROMPT. Only a comment at
+    the very start is removed — one further down would be part of the
+    instructions somebody wrote on purpose.
+    """
+    t = text.lstrip()
+    while t.startswith("<!--"):
+        end = t.find("-->")
+        if end < 0:
+            break
+        t = t[end + 3:].lstrip()
+    return t
+
+
 def _read(name: str) -> str:
     path = PROMPTS / ("%s.md" % name)
     try:
-        return io.open(path, encoding="utf-8").read().strip()
+        return _strip_notice(io.open(path, encoding="utf-8").read()).strip()
     except Exception as e:
         # A missing prompt file is not survivable, and must not fail quietly:
         # an empty base is exactly the state this module exists to prevent.
