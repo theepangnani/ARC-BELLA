@@ -142,6 +142,8 @@ import triggers
 import memory
 import plan
 import retry
+import awake
+import redact
 import whose
 import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
@@ -664,27 +666,48 @@ async def lifespan(app: FastAPI):
     # error is swallowed so a flaky network can't take the server down.
     async def _monitor_loop():
         import anyio
-        while True:
+        # Each job below used to share ONE try. alerts.evaluate has no error
+        # handling of its own — a malformed price alert raises KeyError, a
+        # missing quote raises TypeError — and when it raised, everything after
+        # it in the block was skipped for that cycle. Alarms were after it. A
+        # persistent fault there meant alarms NEVER rang, while selfheal.beat(),
+        # outside the try, went on reporting a perfectly healthy loop. So each
+        # job has its own guard now, and alarms go first: nothing about a stock
+        # price is worth a bell not ringing.
+        failing = {}      # job -> last error, so a persistent fault is said ONCE
+
+        async def job(name, fn):
             try:
-                # Price alerts: evaluate against live quotes every cycle. This runs
-                # even without ntfy, because triggered alerts are also spoken in the
-                # browser via /api/alerts/due — phone push is a bonus on top.
-                await anyio.to_thread.run_sync(alerts.evaluate)
+                await anyio.to_thread.run_sync(fn)
+                if failing.pop(name, None) is not None:
+                    print(f"{C_DIM}  · {name} is working again{C_OFF}")
+            except Exception as e:
+                msg = f"{type(e).__name__}: {e}"[:200]
+                if failing.get(name) != msg:
+                    failing[name] = msg
+                    print(f"{C_AMBER}  ! {name} failed and was skipped this "
+                          f"cycle: {msg}{C_OFF}")
 
-                # Standing rules: "tell me if Tesla drops below 200", "warn me
-                # if I've spent five dollars today". Same cadence as the price
-                # alerts above and the same shape — it notifies, and cannot
-                # buy, sell or spend anything. See triggers.py.
-                await anyio.to_thread.run_sync(triggers.evaluate)
+        while True:
+            # Alarms: start any whose moment has come and reschedule the
+            # repeating ones. Runs unconditionally — a ringing alarm is surfaced
+            # in the browser via /api/alarms/due whether or not a phone is
+            # configured. Cheap and offline, which is another reason for it to
+            # go before the jobs that wait on the network.
+            await job("alarms", alarm.evaluate)
 
-                # Alarms: start any whose moment has come and reschedule the
-                # repeating ones. Runs unconditionally, like alerts and for the
-                # same reason — a ringing alarm is surfaced in the browser via
-                # /api/alarms/due whether or not a phone is configured. Cheap
-                # and offline, so it costs nothing on the cycles where nothing
-                # is due.
-                await anyio.to_thread.run_sync(alarm.evaluate)
+            # Price alerts: evaluate against live quotes every cycle. This runs
+            # even without ntfy, because triggered alerts are also spoken in the
+            # browser via /api/alerts/due — phone push is a bonus on top.
+            await job("price alerts", alerts.evaluate)
 
+            # Standing rules: "tell me if Tesla drops below 200", "warn me
+            # if I've spent five dollars today". Same cadence as the price
+            # alerts above and the same shape — it notifies, and cannot
+            # buy, sell or spend anything. See triggers.py.
+            await job("standing rules", triggers.evaluate)
+
+            try:
                 if push.configured():
                     # Reminders coming due → phone.
                     due = await anyio.to_thread.run_sync(extras.due_for_push)
@@ -713,6 +736,14 @@ async def lifespan(app: FastAPI):
                                                     priority="urgent"))
             except Exception:
                 pass
+
+            # While an alarm is waiting to go off, stop the PC idle-sleeping
+            # through it. Done HERE, by the loop that rings alarms, and not by a
+            # thread of its own: if this loop stops, the pinging stops, and the
+            # machine is free to sleep. Holding a computer awake for a loop that
+            # can no longer ring anything would be the worst of both. awake.py.
+            await job("keep-awake", lambda: awake.hold(alarm.armed()))
+
             # Say so, every time round. This loop is what rings alarms, and a
             # loop that has stopped is indistinguishable from a quiet morning
             # unless something is counting. See selfheal.watch().
@@ -2201,7 +2232,11 @@ async def chat(request: Request, _=Depends(require_auth)):
                         out = retry.giving_up(call.name, attempt, last_error)
             used.append(call.name)
             mark = f"{C_RED}âœ—{C_OFF}" if failed else f"{C_CYAN}âœ“{C_OFF}"
-            print(f"{C_DIM}  {mark} {call.name}{C_OFF} {C_DIM}{str(call.input)[:90]}{C_OFF}")
+            # Arguments go through redact.for_log: this line is appended to
+            # arc-server.log, and "type my password" used to arrive there as
+            # keyboard {'text': 'hunter2'} in a plain file on disk.
+            print(f"{C_DIM}  {mark} {call.name}{C_OFF} {C_DIM}"
+                  f"{redact.for_log(call.name, call.input)}{C_OFF}")
             # A tool can return rich content (a list of blocks, e.g. a
             # screenshot image); pass that straight through. Plain text is
             # capped so one tool can't blow the context window.
@@ -2582,9 +2617,18 @@ async def alarms_due(request: Request, _=Depends(require_auth)):
     nobody ever does."""
     deny_guest(request)
     try:
-        return JSONResponse({"ringing": alarm.ringing(), "next": alarm.next_up()})
+        # Missed alarms ARE consumed, unlike ringing ones: a bell goes on until
+        # somebody stops it, but "your seven o'clock didn't go off" is news, and
+        # news repeated on every poll is ignored by lunchtime. One device gets
+        # it, once, and it stays in that transcript.
+        gone = alarm.missed()
+        return JSONResponse({"ringing": alarm.ringing(), "next": alarm.next_up(),
+                             "missed": gone,
+                             "missed_said": alarm.missed_message(gone),
+                             "awake": awake.status()})
     except Exception:
-        return JSONResponse({"ringing": [], "next": None})
+        return JSONResponse({"ringing": [], "next": None, "missed": [],
+                             "missed_said": ""})
 
 
 @app.post("/api/alarms/snooze")

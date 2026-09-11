@@ -66,7 +66,10 @@ for n in NAMES:
 print("\nCommands are typed, never spoken:")
 # The whole guarantee. submit() is the shared path; if the interception ever
 # migrates into it, a routine or a schedule can run one unattended.
-sub = body[body.index("async function submit(text, alts)"):]
+# Anchored on the name, not the whole signature: submit() gained a third
+# parameter for the mid-task queue, and a check about what submit() must NOT do
+# should not stop working because of what it now also takes.
+sub = body[body.index("async function submit("):]
 sub = sub[:sub.index("\n  function ") if "\n  function " in sub else 4000]
 c("  submit() does not intercept commands", "looksLikeCommand" in sub, False)
 c("  ...nor run them", "runCommand" in sub, False)

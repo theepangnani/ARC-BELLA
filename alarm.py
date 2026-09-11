@@ -106,6 +106,81 @@ def _save(items):
     os.replace(tmp, ALARMS_FILE)
 
 
+# Alarms that came due while nothing could ring them. Kept in a file of their
+# own rather than on the alarm, because a one-off that was missed is deleted
+# from the store as spent — the record of it has to outlive the alarm.
+MISSED_FILE = DATA_DIR / "missed_alarms.json"
+MISSED_KEEP = 20            # enough for a long weekend away; not a history
+
+
+def _load_missed():
+    try:
+        items = json.loads(MISSED_FILE.read_text(encoding="utf-8"))
+        return items if isinstance(items, list) else []
+    except Exception:
+        return []
+
+
+def _save_missed(items):
+    tmp = MISSED_FILE.with_name(MISSED_FILE.name + ".tmp")
+    tmp.write_text(json.dumps(items[-MISSED_KEEP:], ensure_ascii=False),
+                   encoding="utf-8")
+    os.replace(tmp, MISSED_FILE)
+
+
+def _note_missed(a: dict, due: float) -> None:
+    """Called under _LOCK from evaluate(). Never raises — the loop that calls
+    it is the loop that rings the OTHER alarms."""
+    try:
+        items = _load_missed()
+        items.append({"id": a.get("id"), "due": due, "noted": time.time(),
+                      "time": _clock_words(a["hour"], a["minute"]),
+                      "label": (a.get("label") or "").strip(),
+                      "repeats": bool(a.get("days"))})
+        _save_missed(items)
+    except Exception:
+        pass
+
+
+def missed() -> list:
+    """Missed alarms, handed over ONCE and then forgotten.
+
+    Unlike ringing(), this consumes. A ringing alarm is a bell that goes on
+    until somebody stops it; a missed one is news, and news said on every poll
+    for the rest of the day stops being heard by lunchtime.
+    """
+    with _LOCK:
+        items = _load_missed()
+        if items:
+            try:
+                MISSED_FILE.unlink()
+            except Exception:
+                _save_missed([])
+        return items
+
+
+def missed_message(items: list) -> str:
+    """One sentence, spoken. Says what did not happen and the likely reason,
+    without claiming to know the reason for certain — ARC only knows it was
+    not running its checks at the time, not whether the machine was asleep,
+    switched off or the server down."""
+    if not items:
+        return ""
+    def one(m):
+        return m["time"] + (" (%s)" % m["label"] if m.get("label") else "")
+    names = [one(m) for m in items[-3:]]
+    if len(items) == 1:
+        head = "Your %s alarm didn't go off" % names[0]
+    else:
+        more = len(items) - len(names)
+        head = ("%d alarms didn't go off — %s%s" %
+                (len(items), ", ".join(names), " and %d more" % more if more else ""))
+    return (head + ", sir. I wasn't able to ring it at the time — the computer "
+            "was asleep or I wasn't running." if len(items) == 1 else
+            head + ", sir. I wasn't able to ring them at the time — the computer "
+            "was asleep or I wasn't running.")
+
+
 def _next_id() -> str:
     existing = {a.get("id") for a in _load()}
     while True:
@@ -452,7 +527,14 @@ def evaluate():
                 continue
 
             if now - due > STALE_AFTER:
-                # Missed entirely — ARC was off. Roll forward silently.
+                # Missed entirely — ARC was off, or the computer was asleep.
+                # Still NOT rung: being woken at 09:40 by the 07:00 alarm is
+                # worse than not being woken (see STALE_AFTER). But it used to
+                # roll forward SILENTLY, and a one-off was then deleted, so
+                # nobody ever found out it hadn't gone off. Not ringing late is
+                # a decision; not saying so was the bug. Recorded, and handed to
+                # the page once — see missed().
+                _note_missed(a, due)
                 a["next_at"] = _next_at(a["hour"], a["minute"], a.get("days"), now)
                 if not a.get("days"):
                     a["enabled"] = False       # a one-off that never fired is spent

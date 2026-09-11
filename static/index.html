@@ -2003,6 +2003,10 @@
     turns: 0,
     speakingLock: false,
     engine: "browser",      // flips to "elevenlabs" if the server has keys
+    // Messages said while a turn was running, waiting their turn. On state
+    // rather than a const beside submit() because setMode reads it, and setMode
+    // runs during boot, long before the script reaches submit().
+    turnQueue: [],
     ttsAnalyser: null, ttsData: null, currentAudio: null
   };
 
@@ -2160,10 +2164,66 @@ You are an upbeat, motivating coach in the user's corner.
       "Never act on your own initiative, and never assume silence or a vague reply is a yes.";
   }
 
+  /* ---------------- one-word answers ----------------
+     A reply of one short word is the commonest thing anybody says to an
+     assistant that has just asked them something, and it was the one thing
+     the noise gate reliably threw away. "no" is two letters; "yes", "yep",
+     "sure" and "okay" are lone words of four or fewer — and the gate called
+     both of those shapes a cough. So Bella asked "shall I send it?", heard
+     "yes", and dropped it before the model ever saw it. Saying it a SECOND
+     time got through, because the gate lets a repeat past — which is why it
+     looked intermittent rather than broken.
+
+     The sharpest part: AFFIRMATIONS below was written to accept "k", "y",
+     "ok" and "go" as consent, and every one of them was discarded by the gate
+     before isAffirmation could be asked. Typed, they worked. Spoken, they
+     could not.
+
+     Listed per language because ARC is spoken to in more than English, and a
+     Tamil "ஆம்" is exactly as short as an English "yes". The yes and no
+     halves are kept apart deliberately: consent reads ONLY the yes half, and
+     a list where "இல்லை" could count as permission is not a list to have.
+  ------------------------------------------------------ */
+  const YES_WORDS = new Set([
+    // English (AFFIRMATIONS covers the phrases; these are the lone words)
+    "yes", "yeah", "yea", "yep", "yup", "ya", "aye", "sure", "ok", "okay",
+    "okey", "k", "kk", "alright", "affirmative", "absolutely", "definitely",
+    "certainly", "indeed", "correct",
+    // French, Spanish, Italian, Portuguese, German, Dutch
+    "oui", "ouais", "d'accord", "sí", "si", "vale", "sim", "ja",
+    // Russian, Polish, Turkish
+    "да", "tak", "evet",
+    // Hindi, Tamil
+    "हाँ", "हां", "जी", "ஆம்", "ஆமா", "சரி",
+    // Arabic, Chinese, Japanese, Korean
+    "نعم", "أجل", "是", "是的", "好", "好的", "对", "对的", "はい", "うん",
+    "네", "예", "응"
+  ]);
+  const NO_WORDS = new Set([
+    "no", "nope", "nah", "nay", "non", "não", "nein", "nee", "нет", "nie",
+    "hayır", "नहीं", "नही", "ना", "இல்லை", "வேண்டாம்", "不", "不是", "不要",
+    "没有", "いいえ", "いや", "아니요", "아니", "لا"
+  ]);
+  // Short replies that are neither yes nor no but are still answers: to
+  // "which one?", "shall I go on?", "how was it?". Never noise; never consent.
+  const ANSWER_WORDS = new Set([
+    ...YES_WORDS, ...NO_WORDS,
+    "right", "wrong", "maybe", "done", "next", "more", "wait", "again",
+    "later", "both", "either", "neither", "first", "second", "third", "last",
+    "fine", "good", "great", "please", "thanks",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"
+  ]);
+
   const AFFIRMATIONS = /^(y|ya|yes|yed|yep|yeah|yup|sure|ok|okay|okey|k|kk|alright|all right|go|do it|go ahead|go for it|please do|do that|yes please|confirmed?|affirmative|permission granted|i approve|approved|proceed|make it so)\b/i;
   function isAffirmation(text) {
     const t = (text || "").toLowerCase().replace(/[.,!?]/g, "").replace(/\b(bella|arc|sir|please|now|then)\b/g, "").trim();
-    return !!t && AFFIRMATIONS.test(t) && t.split(/\s+/).length <= 4;
+    if (!t) return false;
+    // A lone yes-word in any language counts, but only as an EXACT, whole
+    // reply: the regex above is English and anchors with \b, which does not
+    // see word edges in Devanagari or Tamil at all.
+    if (YES_WORDS.has(t)) return true;
+    return AFFIRMATIONS.test(t) && t.split(/\s+/).length <= 4;
   }
 
   /* ---------------- persistent memory ----------------
@@ -2649,6 +2709,15 @@ You are an upbeat, motivating coach in the user's corner.
       const d = await r.json();
       ringing = (d && d.ringing) || [];
       next = (d && d.next) || null;
+      // An alarm that came due while the computer was asleep, or ARC was off.
+      // It is deliberately NOT rung late (see alarm.STALE_AFTER) — but it used
+      // to vanish without a word, and a one-off was deleted, so nobody found
+      // out. The server hands this over once; it goes in the transcript always
+      // and is spoken only if Bella is not in the middle of something.
+      if (d && d.missed_said) {
+        addEntry("sys", "SYSTEM", d.missed_said);
+        if (state.mode === "standby" && !chatMode) speak(d.missed_said);
+      }
     } catch (_) { return; }        // a blip must not silence a live alarm
     showNextAlarm(next);
     if (ringing.length) startAlarmRing(ringing[0]);
@@ -3694,6 +3763,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     el.rState.className = "v " + (m === "thinking" ? "warn" : "good");
     // Back to standby = the turn is over: restore any ducked media volume.
     if (state.mode === "standby") duckMedia(false);
+    // ...and let the next queued message go. The safety net for a reply that
+    // was interrupted, whose speak() onDone will never fire. See releaseTurn.
+    if (state.mode === "standby" && state.turnQueue.length) setTimeout(releaseTurn, 0);
   }
 
   /* ---------------- markdown, for chat mode ----------------
@@ -5024,10 +5096,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
 
     // Thinking sits above the request's own 90s abort, so in practice the fetch
-    // reports the failure itself and this never fires. Speaking allows a long
-    // silent gap: a middle TTS chunk can retry three times at 20s each before
-    // the voice gives up and falls back.
-    const limit = m === "thinking" ? 105000 : 70000;
+    // reports the failure itself and this never fires. Speaking allows one
+    // sentence's full render budget (TTS_BUDGET_MS, 14s) with room to spare.
+    // It was seventy seconds while a sentence could retry three times at
+    // twenty seconds each; that minute of retrying is gone, so this is too.
+    const limit = m === "thinking" ? 105000 : 30000;
     if (Date.now() - stuckSince < limit) return;
 
     stuckSince = 0; stuckMode = ""; lastAudioPos = -1;
@@ -5102,7 +5175,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const text = buf.text.trim();
     // Nothing worth sending: clear what we collected but stay open, so a
     // burst of background noise doesn't end the conversation.
-    if (text.length < 2 || isNoise(text)) {
+    if ((text.length < 2 && !isAnswer(text)) || isNoise(text)) {
       el.live.textContent = "";
       // In room mode, leaving the window open here would let the next person
       // to speak be answered without ever saying the wake word.
@@ -5207,20 +5280,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const out = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
-      const bare = w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
-      const next = words[i + 1] ? words[i + 1].toLowerCase().replace(/[^\p{L}\p{N}']/gu, "") : "";
+      const bare = w.toLowerCase().replace(/[^\p{L}\p{M}\p{N}']/gu, "");
+      const next = words[i + 1] ? words[i + 1].toLowerCase().replace(/[^\p{L}\p{M}\p{N}']/gu, "") : "";
 
       // stutter: a short fragment that is the start of the word after it
       // ("wha what", "th the", "wea weather")
       if (bare && next && bare !== next && next.startsWith(bare) && bare.length <= 3) continue;
 
       // doubled word — only collapse ones that are never meaningfully repeated
-      const prev = out.length ? out[out.length - 1].toLowerCase().replace(/[^\p{L}\p{N}']/gu, "") : "";
+      const prev = out.length ? out[out.length - 1].toLowerCase().replace(/[^\p{L}\p{M}\p{N}']/gu, "") : "";
       if (bare && bare === prev && SAFE_DUPES.has(bare)) continue;
 
       // the same word three or more times running is always a stutter
       if (bare && bare === prev && out.length > 1) {
-        const prev2 = out[out.length - 2].toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+        const prev2 = out[out.length - 2].toLowerCase().replace(/[^\p{L}\p{M}\p{N}']/gu, "");
         if (prev2 === bare) continue;
       }
 
@@ -5228,7 +5301,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
 
     // strip filler from the front, but never leave nothing behind
-    while (out.length > 1 && LEAD_FILLER.has(out[0].toLowerCase().replace(/[^\p{L}\p{N}']/gu, ""))) {
+    while (out.length > 1 && LEAD_FILLER.has(out[0].toLowerCase().replace(/[^\p{L}\p{M}\p{N}']/gu, ""))) {
       out.shift();
     }
 
@@ -5244,20 +5317,46 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   --------------------------------------------------------------------- */
   const FILLERS = new Set([
     "uh","uhh","um","umm","ah","ahh","ahem","oh","ooh","mm","mmm","hmm","hm",
-    "huh","eh","er","erm","ha","haha","hah","heh","yeah","yea","yep","yup",
-    "nah","hey","hi","so","like","the","a","and","you","okay","ok","right",
+    "huh","eh","er","erm","ha","haha","hah","heh",
+    "hey","hi","so","like","the","a","and","you",
     "well","cool","wow","ow","oops","shh","psh","tsk","mhm","uh-huh"
+    // yeah, yea, yep, yup, nah, okay, ok and right USED to be here. They are
+    // answers, not coughs: a word cannot be both something to throw away and
+    // something to act on, and that contradiction was the bug. See ANSWER_WORDS.
   ]);
+
+  // The words of an utterance, as the gate compares them.
+  //
+  // \p{M} matters as much as \p{L}. Tamil and Hindi write most vowels and the
+  // virama as COMBINING MARKS, which are not letters; the old class kept
+  // letters and numbers and turned every mark into a space. So "வானிலை என்ன"
+  // (what's the weather) arrived here as "வ ன ல என ன" — five fragments of one
+  // or two characters — and "every word is two letters or fewer" called that
+  // a cough. Ask Bella the weather in Tamil and she heard nothing.
+  function speechWords(text) {
+    const clean = (text || "").toLowerCase().replace(/[^\p{L}\p{M}\p{N}'\s-]/gu, " ").trim();
+    return clean ? clean.split(/\s+/).filter(Boolean) : [];
+  }
+  function isAnswer(text) {
+    const w = speechWords(text);
+    return !!w.length && w.some(x => ANSWER_WORDS.has(x)) &&
+           w.every(x => ANSWER_WORDS.has(x) || FILLERS.has(x));
+  }
 
   function isNoise(text, confidence) {
     // \p{L}\p{N}, not a-z0-9: with the old rule every Tamil, Arabic, Chinese,
     // Greek and Hebrew utterance normalised to an empty string, and an empty
     // string is treated as a cough — so ARC dropped every single thing said to
     // it in those languages, silently, before the model ever saw it.
-    const clean = (text || "").toLowerCase().replace(/[^\p{L}\p{N}'\s-]/gu, " ").trim();
-    if (!clean) return true;
-    const words = clean.split(/\s+/).filter(Boolean);
+    const words = speechWords(text);
     if (!words.length) return true;
+
+    // An answer is never noise, however short: see ANSWER_WORDS. Checked
+    // before every other rule, the confidence one included — Chrome reports
+    // low confidence for a clipped "yes" as readily as for a cough, and of the
+    // two mistakes available, answering a stray "yes" is the far smaller.
+    if (words.some(w => ANSWER_WORDS.has(w)) &&
+        words.every(w => ANSWER_WORDS.has(w) || FILLERS.has(w))) return false;
 
     // every word is a filler or a stray letter
     if (words.every(w => FILLERS.has(w) || w.length <= 2)) return true;
@@ -5279,7 +5378,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   // let it through no matter what the gate thinks.
   let lastRejected = "", lastRejectedAt = 0;
   function insistedOn(text) {
-    const key = (text || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+    const key = (text || "").toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, "").trim();
     if (!key) return false;
     const repeat = key === lastRejected && Date.now() - lastRejectedAt < 30000;
     lastRejected = key;
@@ -5369,7 +5468,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // Not addressed to us. Ignore noise entirely; only nudge the user if it
     // was plausibly real speech.
     el.live.textContent = "";
-    if (!isNoise(text, confidence) && text.trim().split(/\s+/).length >= 2) {
+    if (!isNoise(text, confidence) &&
+        (text.trim().split(/\s+/).length >= 2 || isAnswer(text))) {
       flashHint('SAY "' + wake.toUpperCase() + '" FIRST', 2600);
     }
   }
@@ -5443,7 +5543,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // to nothing, the overlap check always scored zero, and ARC happily
     // answered its own voice coming back off the speakers.
     lastSpokenText = (text || "").toLowerCase()
-      .replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
+      .replace(/[^\p{L}\p{M}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
     // Keep the mic open through the reply so "stop" lands, where that is safe
     // to do; otherwise close it as before so ARC cannot hear itself.
     // Android routes audio to the EARPIECE, quietly, whenever it thinks a call
@@ -5508,15 +5608,33 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       onDone && onDone();
     };
 
-    async function fetchChunk(t, tries) {
-      // Retry a couple of times: a single transient TTS hiccup on a MIDDLE
-      // sentence used to end the whole reply early (the voice "cut out" mid-
-      // thought). A brief retry recovers almost all of those before we ever give up.
-      tries = tries || 3;
-      let lastErr;
-      for (let attempt = 1; attempt <= tries; attempt++) {
+    // Rendering a sentence has no side effects, so unlike a tool call it is
+    // always SAFE to ask again. What matters is which failures are worth
+    // asking again about, and how long the silence may last while we find out.
+    //
+    // A sentence renders in one to three seconds — measured on this server.
+    // This used to allow TWENTY seconds per attempt and three attempts, so one
+    // stalled sentence could cost a minute of dead air mid-reply before the
+    // fallback took over, and the stuck-watchdog had been widened to seventy
+    // seconds to make room for exactly that. Now the whole sentence has one
+    // budget, not each attempt its own.
+    const TTS_ATTEMPT_MS = 8000;     // about three times the slowest normal render
+    const TTS_BUDGET_MS = 14000;     // the most silence one sentence may cost
+    async function fetchChunk(t) {
+      const deadline = Date.now() + TTS_BUDGET_MS;
+      let lastErr = new Error("tts: no attempt made");
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const left = deadline - Date.now();
+        if (left < 1500) break;                       // no time left for a render
         const tctrl = new AbortController();
-        const td = setTimeout(() => tctrl.abort(), 20000);
+        let superseded = false;
+        const td = setTimeout(() => tctrl.abort(), Math.min(TTS_ATTEMPT_MS, left));
+        // Said "stop" while this was rendering: abandon the download now,
+        // rather than let it run to its timeout for a sentence nobody will
+        // hear. It used to be noticed only after the attempt failed.
+        const watch = setInterval(() => {
+          if (done || gen !== speakGen) { superseded = true; tctrl.abort(); }
+        }, 200);
         try {
           const res = await fetch("/api/tts", {
             method: "POST",
@@ -5524,15 +5642,27 @@ Answer questions about the date, day, or time directly from the above. Do not sa
             body: JSON.stringify({ text: t, voice: selectedVoice, lang: speechLang() }),
             signal: tctrl.signal
           });
-          clearTimeout(td);
-          if (!res.ok) throw new Error("tts " + res.status);
-          return URL.createObjectURL(await res.blob());
+          if (!res.ok) {
+            const err = new Error("tts " + res.status);
+            // A 4xx is the server REFUSING — too much text, no text, signed
+            // out. It says the same thing every time, so asking again only
+            // adds silence. 408 and 429 are the two that mean "not yet".
+            err.permanent = res.status >= 400 && res.status < 500 &&
+                            res.status !== 408 && res.status !== 429;
+            throw err;
+          }
+          const blob = await res.blob();
+          if (!blob.size) throw new Error("tts: empty audio");
+          return URL.createObjectURL(blob);
         } catch (e) {
-          clearTimeout(td);
           lastErr = e;
-          if (done || gen !== speakGen) throw e;           // superseded — stop trying
-          if (attempt < tries) await new Promise(r => setTimeout(r, 220 * attempt));
+          if (superseded || done || gen !== speakGen) throw e;   // nobody is listening
+          if (e.permanent) throw e;
+        } finally {
+          clearTimeout(td);
+          clearInterval(watch);
         }
+        if (attempt < 3) await new Promise(r => setTimeout(r, 250 * attempt));
       }
       throw lastErr;
     }
@@ -5589,6 +5719,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         if (done || gen !== speakGen) return;
         const url = await nextFetch;
         if (done || gen !== speakGen) { try { URL.revokeObjectURL(url); } catch (_) {} return; }
+        if (i === 0 && url != null && el.rVoice.textContent === "BROWSER") {
+          el.rVoice.textContent = "NEURAL";       // back after a cooldown
+        }
         if (url == null) {
           // A later chunk failed even after retries. Don't cut the reply off
           // mid-thought — finish the REMAINING sentences in the browser voice.
@@ -5617,14 +5750,25 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       cleanupTap();
       state.currentAudio = null;
       state.speakingLock = false;
-      addEntry("sys", "SYSTEM", "Voice engine fell back to browser synthesis.");
-      state.engine = "browser";
+      // This used to set state.engine to "browser" — for good. Nothing set it
+      // back: the health check that turns the neural voice on runs at boot and
+      // on a manual reset, never on a timer. So ONE failed first sentence left
+      // Bella on the flat browser voice until somebody reloaded the page. Now
+      // it is a cooldown: this reply and the next two minutes in the browser
+      // voice, and then the proper one is tried again.
+      neuralDownUntil = Date.now() + NEURAL_COOLDOWN_MS;
+      addEntry("sys", "SYSTEM",
+               "The voice service didn't answer — using the browser voice for a couple of minutes.");
       el.rVoice.textContent = "BROWSER";
-      speak(text, onDone);
+      speak(text, onDone, true);
     }
   }
 
   let speakGen = 0;
+  // Until when the neural voice is being given a rest after failing. See the
+  // fallback in speakRemote: this replaced a switch that never switched back.
+  let neuralDownUntil = 0;
+  const NEURAL_COOLDOWN_MS = 120000;
   // Set when the user dismisses ("thank you"): speak the acknowledgement, then
   // do NOT reopen the free-follow-up window — go back to waiting for the wake word.
   let suppressFollowup = false;
@@ -5715,7 +5859,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // ARC's side only, and broke the run at exactly the words the recogniser
     // is most inconsistent about.
     return (s || "").toLowerCase().replace(/['’`]/g, "")
-      .replace(/[^\p{L}\p{N} ]/gu, " ")
+      .replace(/[^\p{L}\p{M}\p{N} ]/gu, " ")
       .split(/\s+/).filter(Boolean);
   }
 
@@ -5836,7 +5980,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
   function speak(text, onDone, forceBrowser) {
     if (!text) { onDone && onDone(); return; }
-    if (state.engine === "elevenlabs" && !forceBrowser) { speakRemote(text, onDone); return; }
+    if (state.engine === "elevenlabs" && !forceBrowser && Date.now() >= neuralDownUntil) {
+      speakRemote(text, onDone); return;
+    }
 
     const gen = ++speakGen;
     speechSynthesis.cancel();
@@ -5850,7 +5996,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     speakingText = (text || "").toLowerCase().replace(/[.,!?;:'’]/g, "");
     // Whole reply, word-normalised, kept for the after-the-fact echo check.
     lastSpokenText = (text || "").toLowerCase()
-      .replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
+      .replace(/[^\p{L}\p{M}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
     // Same narrow exception as the neural path: open only for a dismissal.
     // Android routes audio to the EARPIECE, quietly, whenever it thinks a call
     // is in progress — and an open microphone is what makes it think so. A web
@@ -6143,7 +6289,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     speak(ack);
   }
 
-  async function submit(text, alts) {
+  // `replay` is set only when the turn queue runs a message that was already
+  // shown in the transcript when it arrived — see holdTurn.
+  async function submit(text, alts, replay) {
     if (!text || !text.trim()) return;
     // A plain "thank you" ends the conversation — acknowledge and stand down.
     if (isDismissal(text)) { dismiss(text); return; }
@@ -6187,11 +6335,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (routine) { effective = routine; addEntry("sys", "SYSTEM", "Running routine…"); }
     else if (isBriefingReq(text)) { effective = BRIEFING_PROMPT; }
     // Two overlapping requests corrupt the conversation history and produce
-    // two replies talking over each other.
-    if (inFlight) { addEntry("sys", "SYSTEM", "One moment — still working on the last one."); return; }
+    // two replies talking over each other — so a second one still waits. But
+    // it used to be DROPPED: "One moment — still working on the last one", and
+    // the message was gone. Whoever said it had to notice, wait, and say it
+    // again. Now it is queued and run when this turn has finished speaking.
+    if (inFlight) { holdTurn(text, alts); return; }
     inFlight = true;
     watchPlan(true);      // the plan is only ever written mid-turn
-    addEntry("you", "YOU", text);
+    if (!replay) addEntry("you", "YOU", text);   // a queued one was shown when it arrived
     setMode("thinking");
     el.live.textContent = "";
     const t0 = performance.now();
@@ -6230,7 +6381,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       } else {
         addEntry("arc", "ARC", out.text);
         el.live.textContent = out.text;
-        speak(out.text);
+        // The next queued message goes when this one has been SAID, not when
+        // it arrived — starting a turn under a reply that is still being
+        // spoken would cut it off mid-sentence to answer the next thing.
+        speak(out.text, releaseTurn);
       }
     } catch (err) {
       cue("error");
@@ -6246,13 +6400,80 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // Say the real reason. "The link is down" when the truth is "your credit
       // ran out" sends someone to check their wifi.
       speak(plain && err.message.length < 260 ? err.message
-                                              : "I'm afraid the link is down, sir.");
+                                              : "I'm afraid the link is down, sir.",
+            releaseTurn);
     } finally {
       inFlight = false;
       // One last read after the turn: the final step is usually marked done in
       // the same round that produces the reply, so the poll before it missed it.
       watchPlan(false);
+      // A reply that was not spoken — chat mode, or "not addressed to me" —
+      // has nothing to wait for, so the next queued message can go now. A
+      // spoken one releases the queue from speak()'s onDone instead.
+      if (state.mode === "standby") setTimeout(releaseTurn, 0);
     }
+  }
+
+  /* ---------------- messages that arrive mid-task ----------------
+     Queued, in order, and run one at a time once the current turn has
+     finished — up to three, because a fourth thing said while ARC is still
+     busy is usually a sign the first three have stopped making sense.
+
+     Except a CANCEL. "Stop" said while a turn is running used to be dropped
+     like anything else, and queueing it would be worse: it would arrive after
+     the thing it was meant to stop, and be answered as if it were a fresh
+     request. It cannot recall the turn either — that is already running on the
+     server, and an action may already have happened. So it clears whatever is
+     WAITING, and says honestly that the running one can't be pulled back.
+  ------------------------------------------------------------------ */
+  const TURN_QUEUE_MAX = 3;
+  const CANCEL_PHRASES = new Set([
+    "stop", "cancel", "never mind", "nevermind", "forget it", "abort",
+    "scratch that", "dont", "don't", "no stop", "cancel that", "stop that"
+  ]);
+  function isCancel(text) {
+    const t = (text || "").toLowerCase().replace(/[.,!?]/g, " ")
+      .replace(/\b(bella|arc|sir|please)\b/g, " ").replace(/\s+/g, " ").trim();
+    return CANCEL_PHRASES.has(t);
+  }
+  function holdTurn(text, alts) {
+    addEntry("you", "YOU", text);
+    if (isCancel(text)) {
+      const had = state.turnQueue.length;
+      state.turnQueue.length = 0;
+      addEntry("sys", "SYSTEM",
+        "That one's already under way and can't be pulled back mid-way — I'll tell " +
+        "you what it did." + (had ? " The " + (had === 1 ? "thing" : had + " things") +
+        " waiting after it won't happen." : ""));
+      return;
+    }
+    if (state.turnQueue.length >= TURN_QUEUE_MAX) {
+      addEntry("sys", "SYSTEM",
+        "I've already got " + TURN_QUEUE_MAX + " things waiting — say that again once I've caught up.");
+      return;
+    }
+    state.turnQueue.push({ text, alts });
+    addEntry("sys", "SYSTEM", state.turnQueue.length === 1
+      ? "Got it — I'll do that as soon as I've finished this one."
+      : "Got it — that's number " + state.turnQueue.length + " in line.");
+  }
+  // Run the next queued message, if there is one and nothing is running. Called
+  // when a reply has been spoken, when a turn ends without speaking, and from
+  // setMode("standby") as the safety net — speak() never calls its onDone when
+  // a reply is interrupted, and a queue waiting on a callback that is never
+  // coming would hold the message for ever.
+  function releaseTurn() {
+    // Both callers can fire for the same ending — the reply finishes speaking
+    // AND the page returns to standby — and without this each would launch a
+    // queued message, the second one bouncing straight back into the queue.
+    if (inFlight || state.turnReleasing || !state.turnQueue.length) return;
+    state.turnReleasing = true;
+    const next = state.turnQueue.shift();
+    setTimeout(() => {
+      state.turnReleasing = false;
+      if (inFlight) { state.turnQueue.unshift(next); return; }   // something beat it
+      submit(next.text, next.alts, true);
+    }, 350);
   }
 
   /* ---------------- the plan ----------------

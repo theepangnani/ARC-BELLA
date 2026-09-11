@@ -34,6 +34,8 @@ import os
 import re
 import threading
 import time
+
+import redact
 from pathlib import Path
 
 ROOT = Path(__file__).parent.resolve()
@@ -43,7 +45,10 @@ STORE = DATA_DIR / "memory.json"
 _lock = threading.RLock()
 
 MAX_FACTS = 200          # per account; was 120 in the browser
-MAX_LEN = 240            # one fact, in characters
+MAX_LEN = 240
+
+REFUSED_SECRET = ("I don't keep passwords, keys or card numbers in memory — "
+                  "it's sent back to me on every turn and stored in a plain file.")            # one fact, in characters
 
 # Whose memory this request is about. Set per-request by run.py, the same
 # pattern apply_session_google uses for Google tokens — the alternative is
@@ -144,6 +149,13 @@ def remember(fact: str = "", supersede: bool = True) -> str:
     f = re.sub(r"\s+", " ", (fact or "").strip())[:MAX_LEN]
     if len(f) < 3:
         return "There was nothing to remember."
+    # Never a password, key or card number. Memory is sent back to the model at
+    # the top of every turn, so a secret remembered is a secret repeated for as
+    # long as the fact lives — and memory.json is a plain file. Refused whole
+    # rather than stored with the value blanked: "my wifi password is [redacted]"
+    # is a fact about nothing, and keeping it would suggest the rest was kept.
+    if redact.looks_secret(f):
+        return (REFUSED_SECRET + " A password manager is the right place for it.")
     with _lock:
         all_of_it = _load()
         mine = list(_mine(all_of_it))
@@ -204,7 +216,9 @@ def import_facts(items) -> int:
             # No superseding on an import: these arrived without dates and in
             # an order nobody can vouch for, so guessing which replaced which
             # would delete things on the strength of a coin toss.
-            if "already knew" not in remember(text, supersede=False):
+            # Counted only if it was actually kept — a refused secret is not
+            # an import, and saying it was would be the one lie this can tell.
+            if remember(text, supersede=False).startswith("Noted"):
                 n += 1
     return n
 

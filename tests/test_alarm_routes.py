@@ -93,8 +93,13 @@ print("\nOver HTTP, signed in as the owner:")
 alarm._save([])
 sid, C = owner()
 r = client.get("/api/alarms/due", cookies=C)
-check("poll works when nothing is set", (r.status_code, r.json()),
-      (200, {"ringing": [], "next": None}))
+# The fields this is about, rather than the whole body: the poll also carries
+# missed alarms and the keep-awake state now (see test_keepawake.py), and a
+# check pinned to the exact dict fails every time the route learns something.
+d = r.json()
+check("poll works when nothing is set",
+      (r.status_code, d.get("ringing"), d.get("next")), (200, [], None))
+check("  and nothing was missed", (d.get("missed"), d.get("missed_said")), ([], ""))
 
 ring_now()
 r = client.get("/api/alarms/due", cookies=C)

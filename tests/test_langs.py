@@ -123,9 +123,17 @@ print("\nEcho detection survives leaving the Latin alphabet:")
 # word normalised to nothing and ARC cheerfully answered its own voice.
 c("  no Latin-only filter is left anywhere in the speech path",
   len(re.findall(r"\[\^a-z0-9", body)), 0)
+# \p{M} as well as \p{L}\p{N}. The first version of this fix kept letters and
+# numbers only, and in Tamil and Hindi most vowels and the virama are COMBINING
+# MARKS — so "வானிலை என்ன" still reached the noise gate as five one-letter
+# fragments and was dropped as a cough. This check passed the whole time,
+# because it asked whether the regex was written rather than what it did to a
+# Tamil word. test_speech_gate.py now runs the real gate on real words.
 c.truthy("  replaced by unicode property escapes (%d places)"
-         % len(re.findall(r"\\p\{L\}\\p\{N\}", body)),
-         len(re.findall(r"\\p\{L\}\\p\{N\}", body)) >= 6)
+         % len(re.findall(r"\\p\{L\}\\p\{M\}\\p\{N\}", body)),
+         len(re.findall(r"\\p\{L\}\\p\{M\}\\p\{N\}", body)) >= 6)
+c("  and none of them drops combining marks any more",
+  len(re.findall(r"\[\^\\p\{L\}\\p\{N\}", body)), 0)
 c.truthy("  with the u flag they need", "/gu" in body)
 # The worst of the seven: an empty string reads as a cough, so every Tamil,
 # Arabic and Chinese utterance was dropped before the model ever saw it.

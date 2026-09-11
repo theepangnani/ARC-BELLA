@@ -1304,44 +1304,116 @@ _VK.update({w: 0x30 + i for i, w in enumerate(
 _VK.update({f"f{i}": 0x6F + i for i in range(1, 13)})       # f1 - f12
 
 
+# The HUD's <title>, which is also the title of the window it runs in. See
+# keyboard(): typing into this window means typing into ARC's own message box.
+ARC_WINDOW = "Ambient Response Core"
+
+
+def _focused() -> tuple:
+    """(hwnd, title) of the window that would receive keystrokes, or (0, "")."""
+    if not IS_WIN:
+        return 0, ""
+    import ctypes
+    u = ctypes.windll.user32
+    try:
+        hwnd = u.GetForegroundWindow()
+        if not hwnd:
+            return 0, ""
+        n = u.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(max(n, 0) + 1)
+        u.GetWindowTextW(hwnd, buf, max(n, 0) + 1)
+        return hwnd, buf.value.strip()
+    except Exception:
+        return 0, ""
+
+
+# Module level rather than inside keyboard() so a test can swap them out. A test
+# that exercised the real ones would type into whatever window was in front on
+# the machine running it.
+def _tap_unicode(ch: str) -> None:
+    import ctypes
+    u = ctypes.windll.user32
+    code = ord(ch)
+    u.keybd_event(0, code, 0x0004, 0)             # KEYEVENTF_UNICODE
+    u.keybd_event(0, code, 0x0004 | 0x0002, 0)    # ...and KEYEVENTF_KEYUP
+
+
+def _tap_vk(vk: int) -> None:
+    import ctypes
+    u = ctypes.windll.user32
+    u.keybd_event(vk, 0, 0, 0)
+    u.keybd_event(vk, 0, 0x0002, 0)               # KEYEVENTF_KEYUP
+
+
 def keyboard(text: str = "", key: str = "") -> str:
     """Type text, or press a named key, into whatever window is focused. Typing
     goes wherever the cursor is — so to type into an app, that app (a text box,
-    the address bar…) must be focused first. It types blind; it does not move
-    focus itself."""
+    the address bar…) must be focused first. It does not move focus itself.
+
+    IT TYPES BLIND, and it used to REPORT blind too: "Typed 42 character(s)",
+    true about the keystrokes and silent about where they went. The model read
+    that as success and told the user "I've typed it into the chat box" — about
+    a box it had never checked, sometimes with nothing having arrived anywhere.
+    The claim was about the destination; the tool only ever knew the keystrokes.
+
+    So the result now names the window that received them, and says whether
+    Enter was pressed — because typing into a chat box is not sending, and
+    "sent" was the other thing being claimed without being done.
+
+    And it checks BEFORE typing. When you talk to Bella in her own window, her
+    own window has focus — so text meant for another app went into Bella's own
+    message box, and a trailing Enter would have had her send herself a
+    message. That is refused outright rather than reported afterwards.
+    """
     if not IS_WIN:
         return _unsupported("type or press keys")
-    import ctypes
-    u = ctypes.windll.user32
-    KEYEVENTF_UNICODE, KEYEVENTF_KEYUP = 0x0004, 0x0002
 
-    def tap_unicode(ch):
-        code = ord(ch)
-        u.keybd_event(0, code, KEYEVENTF_UNICODE, 0)
-        u.keybd_event(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0)
-
-    def tap_vk(vk):
-        u.keybd_event(vk, 0, 0, 0)
-        u.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
-
-    if key:
-        k = key.strip().lower()
-        if k not in _VK:
-            return f"I don't know the key '{key}'. Known: {', '.join(sorted(_VK))}."
-        tap_vk(_VK[k])
-        return f"Pressed {k}."
-
-    t = str(text or "")
-    if not t:
+    k = (key or "").strip().lower()
+    if k and k not in _VK:
+        return f"I don't know the key '{key}'. Known: {', '.join(sorted(_VK))}."
+    t = "" if k else str(text or "")
+    if not k and not t:
         return "Give me text to type, or a key to press."
     if len(t) > 2000:
         return "That's too much text to type in one go."
+
+    hwnd, title = _focused()
+    # The Windows key goes to the shell whatever is in front; everything else
+    # goes to the focused window, so it matters which one that is.
+    if k != "win":
+        if not hwnd:
+            raise RuntimeError(
+                "Nothing was typed: no window has focus, so there was nowhere "
+                "for the keystrokes to go. Bring the app forward with "
+                "focus_window first.")
+        if ARC_WINDOW.lower() in title.lower():
+            raise RuntimeError(
+                "Nothing was typed. The window in front is ARC's own page, so "
+                "the keystrokes would have gone into ARC's own message box, not "
+                "the app you meant. Use focus_window to bring that app forward "
+                "first, then type.")
+    where = ("the window “%s”" % title[:80]) if title else "the focused window"
+
+    if k:
+        _tap_vk(_VK[k])
+        return f"Pressed {k} in {where}."
+
     for ch in t:
         if ch == "\n":
-            tap_vk(0x0D)
+            _tap_vk(0x0D)
         else:
-            tap_unicode(ch)
-    return f"Typed {len(t)} character(s)."
+            _tap_unicode(ch)
+    if t.endswith("\n"):
+        enter = "Enter was pressed at the end, so if that is a chat box it has been sent."
+    elif "\n" in t:
+        enter = ("Enter was pressed part-way through the text but NOT at the "
+                 "end, so anything after the last line break has not been sent.")
+    else:
+        enter = ("Enter was NOT pressed, so if that is a chat box nothing has "
+                 "been sent yet — press enter to send it.")
+    return (f"Typed {len(t)} character(s) into {where}. {enter} This confirms "
+            f"where the keystrokes were sent, not that they appeared — check "
+            f"with a screenshot before telling the user it's there.")
 
 
 # --- system control --------------------------------------------------------
