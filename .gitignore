@@ -40,6 +40,7 @@ sessions.json
 
 # quick notes (personal)
 notes.json
+plan.json
 
 # Market price alerts (personal watchlist)
 price_alerts.json

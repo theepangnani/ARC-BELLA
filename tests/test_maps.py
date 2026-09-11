@@ -154,6 +154,9 @@ c("  rubbish is handed back untouched", extras._clock("bad"), "bad")
 print("\nBoth are public facts, so a guest may ask:")
 c("  currency", "convert_money" in run.GUEST_TOOLS, True)
 c("  sunset", "sun_times" in run.GUEST_TOOLS, True)
-c("  the guest tier is 19 now, deliberately", len(run.GUEST_TOOLS), 19)
+# 23 since the plan arrived: a guest keeps their own scratch plan for a long
+# job, which contains only what they themselves asked for. This number is a
+# guard, not a fact -- it changes only when somebody decides it should.
+c("  the guest tier is 23 now, deliberately", len(run.GUEST_TOOLS), 23)
 
 c.done()

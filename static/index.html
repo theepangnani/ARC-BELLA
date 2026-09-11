@@ -818,7 +818,7 @@
      the previous two were identical but separate, and a third copy is the point
      at which they start drifting apart by a pixel each. Only POSITION differs
      per card, below. */
-  .forecast, .stocks, .agenda, .nowplaying {
+  .forecast, .stocks, .agenda, .nowplaying, .plan {
     /* --cs is the card's own scale, set by dragging its corner. Every size
        inside a card is written against it, so a card grows the way an image in
        Slides does — text and all — rather than becoming a wider box with the
@@ -834,7 +834,8 @@
   }
   .forecast { top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
 
-  .forecast::after, .stocks::after, .agenda::after, .nowplaying::after {
+  .forecast::after, .stocks::after, .agenda::after, .nowplaying::after,
+  .plan::after {
     content: ""; position: absolute; right: 0; bottom: 0;
     width: 15px; height: 15px; cursor: nwse-resize;
     background:
@@ -844,18 +845,44 @@
     opacity: 0; transition: opacity .15s;
   }
   .forecast:hover::after, .stocks:hover::after,
-  .agenda:hover::after, .nowplaying:hover::after { opacity: .8; }
-  .forecast.sizing, .stocks.sizing, .agenda.sizing, .nowplaying.sizing {
+  .agenda:hover::after, .nowplaying:hover::after,
+  .plan:hover::after { opacity: .8; }
+  .forecast.sizing, .stocks.sizing, .agenda.sizing, .nowplaying.sizing,
+  .plan.sizing {
     user-select: none;
   }
 
   /* The left of the stage, mirroring the two on the right. */
   .agenda    { top: 60px;  left: calc(clamp(180px, 13vw, 250px) + 34px); }
   .nowplaying { top: 262px; left: calc(clamp(180px, 13vw, 250px) + 34px); }
+  .plan      { top: 400px; left: calc(clamp(180px, 13vw, 250px) + 34px); }
+
+  /* A step reads as a line of a checklist: state on the left, what it is on the
+     right, the one in progress lit. The state is in the MARK as well as in the
+     colour -- a plan only readable by someone who can tell cyan from amber is a
+     plan half the people using it cannot read. */
+  .plan .pl-row {
+    display: flex; gap: calc(7px * var(--cs)); align-items: baseline;
+    font-size: calc(10px * var(--cs)); padding: calc(3px * var(--cs)) 0;
+    border-top: 1px dashed rgba(18,41,60,.7);
+    color: var(--cyan-dim);
+  }
+  .plan .pl-row:first-of-type { border-top: 0; }
+  .plan .pl-mark { flex: 0 0 auto; opacity: .8; }
+  .plan .pl-what { flex: 1 1 auto; overflow-wrap: anywhere; }
+  .plan .pl-row.doing   { color: #8affd4; }
+  .plan .pl-row.doing .pl-mark { opacity: 1; }
+  .plan .pl-row.done    { opacity: .45; text-decoration: line-through; }
+  .plan .pl-row.blocked { color: #ffb454; }
+  /* Why a step failed, which is the whole value of a blocked step. */
+  .plan .pl-note {
+    font-size: calc(8.5px * var(--cs)); opacity: .75;
+    padding-left: calc(18px * var(--cs)); color: #ffb454;
+  }
 
   /* Rows, titles and hints are the markets panel's, reused verbatim so the four
      cards read as one family rather than as four things that happen to float. */
-  .agenda .st-title, .nowplaying .st-title {
+  .agenda .st-title, .nowplaying .st-title, .plan .st-title {
     display: flex; justify-content: space-between; align-items: center;
     font-size: calc(8.5px * var(--cs)); letter-spacing: .22em; text-transform: uppercase;
     color: var(--cyan-dim); margin-bottom: 6px;
@@ -875,7 +902,7 @@
      the one that is lit rather than the one that is dimmed. */
   .agenda .ag-row.now .ag-at { color: #8affd4; }
   .agenda .ag-row.allday .ag-at { color: var(--cyan-dim); }
-  .agenda .st-hint, .nowplaying .st-hint {
+  .agenda .st-hint, .nowplaying .st-hint, .plan .st-hint {
     font-size: calc(7.5px * var(--cs)); letter-spacing: .12em; text-transform: uppercase;
     color: var(--cyan-dim); opacity: .5; margin-top: 6px; text-align: center;
   }
@@ -1478,6 +1505,7 @@
      have nothing to say rather than sitting there empty. -->
 <div class="agenda" id="agenda" aria-live="polite" hidden></div>
 <div class="nowplaying" id="nowplaying" aria-live="polite" hidden></div>
+<div class="plan" id="plan" aria-live="polite" hidden></div>
 
 <!-- ============ BOOT GATE ============ -->
 <div class="boot" id="boot">
@@ -1621,7 +1649,11 @@
         No red ring means the microphone is fine.</p>
 
         <p><b>6 · Typing works too</b><br>
-        Use the box on the right. Same assistant, no microphone needed.</p>
+        Use the box on the right. Same assistant, no microphone needed. Typed
+        lines starting with <i>/</i> are commands rather than questions — they
+        run here and cost nothing. <i>/help</i> lists them; <i>/compact</i>
+        folds a long conversation up so it stops being re-sent; <i>/check</i>
+        asks what's wrong. Only typing does this, never speech.</p>
 
         <p><b>7 · It remembers you</b><br>
         Durable things — your name, how you like answers — are kept on this
@@ -1743,7 +1775,7 @@
       </div>
       <div class="log" id="log" dir="auto"></div>
       <div class="composer">
-        <input type="text" id="typed" placeholder="Type a command…" autocomplete="off" dir="auto">
+        <input type="text" id="typed" placeholder="Ask anything, or /help" autocomplete="off" dir="auto">
         <button id="sendBtn">Send</button>
       </div>
     </div>
@@ -2216,6 +2248,11 @@ You are an upbeat, motivating coach in the user's corner.
      the shape of the current work — goals, decisions, open threads — rebuilt by
      the server every few turns and kept here so continuity survives both the
      trimming of old turns and a full reload/new session. */
+  // Which tier this session actually has, filled in by the session poll.
+  // Optimistic until then: hiding an owner's own commands for the first second
+  // of every load is worse than briefly listing one a guest cannot run.
+  let myTier = "owner";
+
   const THREAD_KEY = "arc.thread.v1";
   let threadNote = "";
   let turnsSinceDigest = 0;
@@ -2236,10 +2273,13 @@ You are an upbeat, motivating coach in the user's corner.
   }
   // Fold the recent turns into the rolling note. Runs in the background after a
   // reply so it never adds to reply latency; skipped in room mode.
+  // Returns whether a digest was actually built. /compact needs to know:
+  // it drops the old turns on the strength of the note replacing them, and a
+  // silent failure here would leave it dropping them for nothing.
   async function refreshThread() {
-    if (digestInFlight || roomMode()) return;
+    if (digestInFlight || roomMode()) return false;
     const turns = (state.history || []).filter(m => typeof m.content === "string");
-    if (turns.length < 4) return;   // nothing worth digesting yet
+    if (turns.length < 4) return false;   // nothing worth digesting yet
     digestInFlight = true;
     try {
       const r = await fetch("/api/summarize", {
@@ -2253,9 +2293,11 @@ You are an upbeat, motivating coach in the user's corner.
           threadNote = d.note.trim().slice(0, 1600);
           saveThread();
           turnsSinceDigest = 0;
+          return true;
         }
       }
     } catch (_) {} finally { digestInFlight = false; }
+    return false;
   }
   function maybeRefreshThread() {
     // Refresh every few turns, or promptly once the sent window starts dropping
@@ -6148,6 +6190,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // two replies talking over each other.
     if (inFlight) { addEntry("sys", "SYSTEM", "One moment — still working on the last one."); return; }
     inFlight = true;
+    watchPlan(true);      // the plan is only ever written mid-turn
     addEntry("you", "YOU", text);
     setMode("thinking");
     el.live.textContent = "";
@@ -6206,7 +6249,103 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                                               : "I'm afraid the link is down, sir.");
     } finally {
       inFlight = false;
+      // One last read after the turn: the final step is usually marked done in
+      // the same round that produces the reply, so the poll before it missed it.
+      watchPlan(false);
     }
+  }
+
+  /* ---------------- the plan ----------------
+     What ARC is part-way through on a long job. The other four cards show the
+     world; this one shows HER, and it is the only thing on screen that answers
+     "is it working or is it stuck" while a two-minute job runs.
+
+     Polled hard only while a turn is in flight, because that is the only time
+     it changes. A plan is not a stock price: between turns it is exactly what
+     it was, and polling it every ten seconds all evening would be spending a
+     request to be told nothing, forever.
+
+     Hides itself when there is no plan, the same rule the agenda and now-playing
+     cards follow -- a card reading "no plan" all day is a card you stop seeing.
+  ------------------------------------------------- */
+  let planTick = 0, planLast = "";
+  const PL_MARK = { todo: "\u25cb", doing: "\u25b8", done: "\u2713", blocked: "!" };
+
+  function paintPlan(d) {
+    const box = $("plan");
+    if (!box) return;
+    const steps = (d && d.steps) || [];
+    if (!steps.length) {
+      box.hidden = true; box.textContent = ""; planLast = ""; return;
+    }
+    // Rebuilt only when something actually changed, so a card nobody is
+    // touching does not flicker every three seconds mid-job.
+    const key = JSON.stringify(steps) + "|" + (d.goal || "");
+    if (key === planLast) return;
+    planLast = key;
+
+    box.textContent = "";
+    const t = document.createElement("div");
+    t.className = "st-title";
+    const tl = document.createElement("span"); tl.textContent = "PLAN";
+    const tr = document.createElement("span");
+    tr.textContent = d.done + "/" + d.total;
+    t.appendChild(tl); t.appendChild(tr);
+    box.appendChild(t);
+
+    if (d.goal) {
+      const g = document.createElement("div");
+      g.className = "pl-note";
+      g.style.paddingLeft = "0";
+      g.style.color = "";
+      g.textContent = d.goal;
+      box.appendChild(g);
+    }
+
+    steps.forEach(s => {
+      const row = document.createElement("div");
+      row.className = "pl-row " + (s.state || "todo");
+      const m = document.createElement("span");
+      m.className = "pl-mark";
+      m.textContent = PL_MARK[s.state] || PL_MARK.todo;
+      const w = document.createElement("span");
+      w.className = "pl-what";
+      // textContent throughout: these strings were written by the model.
+      w.textContent = s.what || "";
+      row.appendChild(m); row.appendChild(w);
+      box.appendChild(row);
+      if (s.state === "blocked" && s.note) {
+        const n = document.createElement("div");
+        n.className = "pl-note";
+        n.textContent = s.note;
+        box.appendChild(n);
+      }
+    });
+
+    if (d.blocked) {
+      const hint = document.createElement("div");
+      hint.className = "st-hint";
+      hint.textContent = d.blocked + (d.blocked === 1 ? " step" : " steps") + " blocked";
+      box.appendChild(hint);
+    }
+    box.hidden = false;
+  }
+
+  async function pollPlan() {
+    try {
+      const r = await fetch("/api/plan");
+      if (!r.ok) return;
+      paintPlan(await r.json());
+    } catch (_) { /* a dropped poll is not worth a line in the transcript */ }
+  }
+
+  // While a turn runs the plan is the only moving thing on screen; the rest of
+  // the time it cannot change, because only ARC writes it and ARC is idle.
+  function watchPlan(on) {
+    clearInterval(planTick);
+    planTick = 0;
+    if (on) planTick = setInterval(pollPlan, 3000);
+    pollPlan();
   }
 
   /* ---------------- push to talk ---------------- */
@@ -8091,6 +8230,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   async function refreshSession() {
     let d = null;
     try { d = await (await fetch("/api/session")).json(); } catch (_) { return; }
+    // The tier comes down this poll anyway. /help uses it so it does not
+    // advertise commands that would only come back 403 on a guest account.
+    if (d && d.tier) myTier = d.tier;
     if (!d || d.auth_mode === "open" || !d.expires_at) {
       sessionBar.style.display = "none";
       return;
@@ -8108,6 +8250,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
   refreshSession();
   setInterval(refreshSession, 60000);
+
+  // A plan outlives the page it was made on. Draw it before the first word.
+  pollPlan();
 
   // Leaving the site signs you out. pagehide is the event that actually fires
   // when a tab closes or an installed app is dismissed — beforeunload is
@@ -8344,9 +8489,216 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     addEntry("sys", "SYSTEM", "Long-term memory wiped — on every device.");
   });
 
+  /* ---------------- slash commands ----------------
+     Things you do TO ARC, rather than ask ARC to do.
+
+     /check and /repair already existed twice over — as REST routes and as
+     tools — which meant that reaching them cost a turn. You asked, the whole
+     conversation went up as input tokens, the model picked the tool, and you
+     paid for all of it to find out whether a log file had grown too big. These
+     call the route directly: no model, no tokens, and they still answer when
+     the brain cannot (no credit, no key, a provider outage), which is exactly
+     when you most want to ask what is wrong.
+
+     They live on the TYPED path only, and that is deliberate. submit() is
+     shared by the microphone, routines, the camera and the schedule runner.
+     Speech recognition never produces a "/", but a routine whose instruction
+     happened to begin with one would silently become an unattended
+     "/repair all" at seven in the morning. A command should only ever run
+     because somebody typed it.
+  ------------------------------------------------- */
+
+  // Anything SHAPED like a command is handled like one, even when it is not a
+  // command. Falling through to the model would mean a typo — /compct — reads
+  // as ARC ignoring you and quietly costs the turn this feature exists to save.
+  const SLASH = /^\/([a-z][a-z0-9-]*)\s*([\s\S]*)$/i;
+  function looksLikeCommand(text) { return SLASH.test((text || "").trim()); }
+
+  async function cmdJSON(url, opts) {
+    // 401 is already handled globally by guardFetch, which asks the session
+    // whether it is really over before throwing the page away.
+    const r = await fetch(url, opts);
+    if (r.status === 403) throw new Error("That one is owner-only, sir.");
+    if (!r.ok) throw new Error("ARC answered " + r.status + " to that.");
+    return r.json();
+  }
+
+  const COMMANDS = {
+    help:    { hint: "this list",
+               run: cmdHelp },
+    compact: { hint: "fold the conversation into its digest, so the old turns stop being re-sent",
+               run: cmdCompact },
+    check:   { hint: "what ARC thinks is wrong with ARC", owner: true,
+               run: cmdCheck },
+    repair:  { hint: "fix what /check found — /repair all, or name one", owner: true,
+               run: cmdRepair },
+    usage:   { hint: "what today has cost so far", owner: true,
+               run: cmdUsage },
+    plan:    { hint: "what ARC is part-way through, and /plan clear to drop it",
+               run: cmdPlan },
+    clear:   { hint: "empty this transcript — memory and notes are untouched",
+               run: cmdClear },
+  };
+
+  async function runCommand(text) {
+    const m = (text || "").trim().match(SLASH);
+    if (!m) return;
+    const name = m[1].toLowerCase(), arg = m[2].trim();
+    addEntry("you", "YOU", text.trim());
+    const cmd = COMMANDS[name];
+    if (!cmd) {
+      addEntry("sys", "SYSTEM",
+               "No such command: /" + name + ". Type /help for the list.");
+      return;
+    }
+    // Checked here as well as at the server, which is the side that actually
+    // decides: this only spares a guest a 403 for something they were never
+    // going to be shown in /help anyway.
+    if (cmd.owner && myTier !== "owner") {
+      addEntry("sys", "SYSTEM", "/" + name + " is owner-only, sir.");
+      return;
+    }
+    try {
+      await cmd.run(arg);
+    } catch (e) {
+      addEntry("err", "SYSTEM", (e && e.message) || "That did not work.");
+    }
+  }
+
+  function cmdHelp() {
+    const lines = Object.keys(COMMANDS)
+      .filter(k => !COMMANDS[k].owner || myTier === "owner")
+      .map(k => "/" + k + new Array(Math.max(2, 10 - k.length)).join(" ") +
+                COMMANDS[k].hint);
+    addBoard("COMMANDS", lines.join("\n") +
+      "\n\nTyped only — nothing you say out loud becomes a command.");
+  }
+
+  async function cmdCompact() {
+    if (roomMode()) {
+      addEntry("sys", "SYSTEM", "Not in room mode, sir — there is no thread to fold.");
+      return;
+    }
+    const before = (state.history || []).length;
+    if (before < 4) { addEntry("sys", "SYSTEM", "Nothing worth folding up yet, sir."); return; }
+    addEntry("sys", "SYSTEM", "Folding the conversation up…");
+    // Digest FIRST, and only trim if one actually came back. Trimming on a
+    // failed summarise would throw the conversation away and keep nothing in
+    // its place — that is not compaction, it is amnesia.
+    if (!(await refreshThread())) {
+      addEntry("err", "SYSTEM",
+               "Could not build the digest, so I have left the conversation alone.");
+      return;
+    }
+    // Keep the last exchange for continuity; the note carries everything else.
+    let keep = (state.history || []).slice(-2);
+    while (keep.length && keep[0].role !== "user") keep = keep.slice(1);
+    state.history = keep;
+    saveHistory();
+    addEntry("sys", "SYSTEM",
+      "Folded " + before + " turns into a " + threadNote.length + "-character note. " +
+      "From here each question sends " + state.history.length +
+      " turn(s) plus the note instead of " + before +
+      ". The transcript above is untouched.");
+  }
+
+  async function cmdCheck() {
+    addEntry("sys", "SYSTEM", "Checking…");
+    const d = await cmdJSON("/api/selfcheck");
+    const bad = (d.findings || []).filter(f => !f.ok);
+    const body = (d.summary || "").trim() + (bad.length ? "\n\n" + bad.map(f =>
+      "· " + f.what + (f.detail ? " — " + f.detail : "") +
+      (f.fix ? "   [/repair " + f.fix + "]" : "")).join("\n") : "");
+    addBoard("SELF-CHECK", body || "Nothing to report.");
+    if ((d.fixable || []).length) {
+      addEntry("sys", "SYSTEM", "Fixable: " + d.fixable.join(", ") +
+               ". Type /repair all, or name one.");
+    }
+  }
+
+  async function cmdRepair(arg) {
+    // A bare /repair REPORTS; it does not act. These repairs restore files
+    // from backup, rotate logs and restart the background loop. All of it is
+    // recoverable and none of it should happen because a key was pressed by
+    // accident, so acting takes a second word.
+    if (!arg) {
+      const d = await cmdJSON("/api/selfcheck");
+      const can = d.fixable || [];
+      if (!can.length) {
+        addEntry("sys", "SYSTEM", "Nothing to fix, sir. " + (d.summary || "").trim());
+        return;
+      }
+      addEntry("sys", "SYSTEM", "I can fix: " + can.join(", ") +
+               ". Type /repair all for all of it, or /repair " + can[0] + " for that one.");
+      return;
+    }
+    const what = arg.toLowerCase() === "all" ? "" : arg;
+    addEntry("sys", "SYSTEM", "Repairing…");
+    const d = await cmdJSON("/api/selfrepair", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what }),
+    });
+    const done = d.done || [];
+    if (!done.length && what) {
+      // The server matches the name against its own repair list and silently
+      // does nothing when it does not match. Say so, rather than reporting a
+      // successful repair of nothing.
+      addEntry("sys", "SYSTEM", "I do not know how to repair that. " +
+               "Type /repair on its own to see what I can.");
+      return;
+    }
+    addBoard("REPAIR", done.map(l => "· " + l).join("\n") || "Nothing needed doing.");
+    if ((d.still_broken || []).length) {
+      addEntry("sys", "SYSTEM",
+               "Still broken, and not mine to fix: " + d.still_broken.join(", ") + ".");
+    }
+  }
+
+  async function cmdUsage() {
+    const d = await cmdJSON("/api/usage?days=1");
+    const t = d.today || {}, cap = Number(d.cap || 0), cost = Number(t.cost || 0);
+    const pad = s => s + new Array(Math.max(2, 12 - s.length)).join(" ");
+    addBoard("TODAY", [
+      pad("spent") + "$" + cost.toFixed(4),
+      pad("cap") + (cap ? "$" + cap.toFixed(2) + "   " +
+                          Math.round(cost / cap * 100) + "% used" : "none set"),
+      pad("saved") + "$" + Number(t.saved || 0).toFixed(4) + "   by caching",
+      pad("turns") + (t.turns || 0),
+      pad("tokens") + (t.tok_in || 0) + " in / " + (t.tok_out || 0) + " out",
+    ].join("\n"));
+  }
+
+  async function cmdPlan(arg) {
+    if (arg.toLowerCase() === "clear") {
+      const d = await cmdJSON("/api/plan/clear", { method: "POST" });
+      planLast = "";
+      await pollPlan();
+      addEntry("sys", "SYSTEM", d.said || "Plan cleared.");
+      return;
+    }
+    const d = await cmdJSON("/api/plan");
+    if (!(d.steps || []).length) {
+      addEntry("sys", "SYSTEM", "No plan open — nothing half-finished.");
+      return;
+    }
+    paintPlan(d);
+    addBoard("PLAN" + (d.goal ? " — " + d.goal : ""),
+      d.steps.map(s => (PL_MARK[s.state] || PL_MARK.todo) + " " + s.n + ". " +
+                       s.what + (s.note ? "   (" + s.note + ")" : "")).join("\n") +
+      "\n\n" + d.said);
+  }
+
+  function cmdClear() { el.clearBtn.click(); }
+
   el.sendBtn.addEventListener("click", () => {
     const t = el.typed.value.trim();
-    if (t) { el.typed.value = ""; submit(t); }
+    if (!t) return;
+    el.typed.value = "";
+    // Commands are intercepted HERE rather than inside submit(), so that the
+    // microphone, routines, the camera and the schedule runner — which all
+    // share submit() — can never trigger one.
+    if (looksLikeCommand(t)) { runCommand(t); return; }
+    submit(t);
   });
   el.typed.addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); el.sendBtn.click(); }
@@ -8713,7 +9065,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // below, which is exactly why the agenda and now-playing cards arrived
     // undraggable — adding a card meant remembering three places, and the third
     // is always the one that is missed.
-    const CARDS = ["forecast", "stocks", "agenda", "nowplaying"];
+    const CARDS = ["forecast", "stocks", "agenda", "nowplaying", "plan"];
     CARDS.forEach(id => makeDraggable(document.getElementById(id)));
 
     // Keep panels on-screen if the window shrinks.

@@ -42,11 +42,11 @@ page = io.open(HUD, encoding="utf-8").read()
 body = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", page, re.S)[0]
 c = Check()
 
-print("Four cards, one set of chrome:")
+print("Five cards, one set of chrome:")
 # They were two identical-but-separate rules. A third copy is the point at which
 # they start drifting apart by a pixel each.
 c.truthy("  the border, blur and shadow are written once",
-         ".forecast, .stocks, .agenda, .nowplaying {" in page)
+         ".forecast, .stocks, .agenda, .nowplaying, .plan {" in page)
 c.truthy("  and only POSITION differs per card",
          ".agenda    { top: 60px;" in page and ".stocks { top: 262px;" in page)
 c.truthy("  the new ones mirror the old two across the stage",
@@ -150,8 +150,14 @@ print("\nAnd all four can be moved:")
 # The drag machinery already existed for the weather and markets panels. The
 # two new cards arrived undraggable because the list of what drags was written
 # out THREE times, and the third copy is always the one that is missed.
-c.truthy("  the set of cards is named once",
-         'const CARDS = ["forecast", "stocks", "agenda", "nowplaying"];' in body)
+# Asserted as ONE declaration containing all of them, rather than as an exact
+# string: the point of this check is that the list is written down once, and
+# a check that also pins the membership fails every time a card is added --
+# which reads as a regression when it is the opposite.
+c("  the set of cards is named once", body.count("const CARDS = ["), 1)
+c.truthy("  ...naming every card", all(
+    ('"%s"' % n) in body[body.index("const CARDS = ["):][:120]
+    for n in ("forecast", "stocks", "agenda", "nowplaying", "plan")))
 c("  ...and the hardcoded pair is gone", '["forecast", "stocks"].forEach' in body, False)
 c("  every place that iterates them uses the name", body.count("CARDS.forEach"), 3)
 # Dragging, keeping them on screen when the window shrinks, and Reset panels.
@@ -174,7 +180,8 @@ for sized in ("calc(8.5px * var(--cs))", "calc(10.5px * var(--cs))",
 # The weather and markets cards repaint by replacing their contents, so a real
 # handle element would be swept away the next time the temperature changed.
 c.truthy("  the grip is a pseudo-element, not a child",
-         ".forecast::after, .stocks::after, .agenda::after, .nowplaying::after {" in page)
+         ".forecast::after, .stocks::after, .agenda::after, .nowplaying::after," in page
+         and ".plan::after {" in page)
 c.truthy("  ...so a press on it is found by position", "function onGrip" in body)
 c.truthy("  and the reason is written down", "swept away the next time the temperature" in body)
 c.truthy("  it only appears on hover", ".forecast:hover::after" in page)

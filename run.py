@@ -140,10 +140,13 @@ import prompt
 import stats
 import triggers
 import memory
+import plan
+import retry
+import whose
 import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
-            memory, maps)
+            memory, maps, plan)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -178,6 +181,12 @@ GUEST_TOOLS = {
     # not about the owner. A guest asking what fifty dollars is in euros is
     # asking the European Central Bank, not looking in anybody's wallet.
     "convert_money", "sun_times",
+    # ARC's own scratch paper for a long job. Per account, like memory and
+    # notes, so a guest working through something gets their own plan and can
+    # neither read nor overwrite the owner's. A guest asking for something that
+    # takes six steps has the same reason to want it carried across a round
+    # limit as anybody else.
+    "plan_set", "plan_step", "plan_read", "plan_clear",
 }
 
 
@@ -231,6 +240,11 @@ PASSIVE_TOOLS = {
     "show_on_display", "clear_display",
     # capturing/reading notes is benign and user-requested; deleting stays gated.
     "add_note", "list_notes",
+    # The plan is ARC's own notepad for the job she was just asked to do.
+    # Writing it changes nothing of the user's and touches nothing on the
+    # machine — and gating it would be perverse: the consent prompt would
+    # arrive before the work, to ask permission to write down what the work is.
+    "plan_set", "plan_step", "plan_read", "plan_clear",
     # listing price alerts just reads them back; setting/clearing stays gated.
     "list_price_alerts",
     # Same split for alarms: list is a read, and silencing one that is ringing
@@ -242,6 +256,14 @@ PASSIVE_TOOLS = {
     "list_apps", "list_windows",
     # Market analysis is arithmetic on public prices.
     "market_outlook", "market_compare",
+    # Roads, places, exchange rates and sunsets: public facts, the same class as
+    # weather. These were added to GUEST_TOOLS when they arrived and never here,
+    # and this list is default-deny -- so with the ask-first lock in its default
+    # position, "how long to the airport?" was refused as an unauthorised
+    # ACTION and ARC asked permission to look up a drive time. Found by
+    # test_retry.py, which checks that everything safe to repeat is also
+    # something the gate calls passive.
+    "directions", "find_place", "convert_money", "sun_times",
     # STOPPING must never need permission. An auto-clicker you have to authorise
     # ARC to switch off is not a feature, it is a hostage situation. Starting one
     # is gated; ending one is not, and neither is asking what is running.
@@ -1070,6 +1092,14 @@ def apply_session_memory(request: Request) -> str:
         rec = current_session(request) or {}
         who = (rec.get("email") or "").strip().lower() or "owner"
     memory.use(who)
+    # And the stores that read whose.py rather than carrying their own copy of
+    # this idea — notes, and the plan. This line was missing: whose.py was
+    # written, notes.py was converted to use it, and nothing ever told it who
+    # was asking, so whose.current() answered "owner" for everybody. Nothing
+    # leaked, because the guest tool gate refuses notes to a guest outright,
+    # but the store underneath was one pile and had been since it was split.
+    whose.set_owners(OWNER_EMAILS)
+    whose.use(who)
     return who
 
 
@@ -1988,6 +2018,16 @@ async def chat(request: Request, _=Depends(require_auth)):
     # looks like it is working and isn't. So only ask when it can be granted.
     if len(base) >= MIN_CACHE_CHARS:
         head["cache_control"] = {"type": "ephemeral"}
+    # The plan she is part-way through, put in by the SERVER rather than by the
+    # page. It has to survive a reload, /compact and the trimming of old turns,
+    # and all three of those are exactly the moments the browser has stopped
+    # being able to tell her what she was doing. Volatile, so it belongs in the
+    # second block: one changed byte in the first and nothing caches.
+    if prompt_name == "main":
+        open_plan = plan.as_text()
+        if open_plan:
+            extra = open_plan + ("\n\n" + extra if extra.strip() else "")
+
     if chat_view:
         # Ahead of anything the page contributed. This is the server's statement
         # about which register applies and it should not be arguable by text
@@ -1999,6 +2039,12 @@ async def chat(request: Request, _=Depends(require_auth)):
         system.append({"type": "text", "text": extra})
 
     searched = False
+    # What has already failed this turn, so a model that asks for the same
+    # broken thing a third time is answered by the ledger rather than by the
+    # tool. This is the part that actually saves the round budget -- retrying
+    # inside one call never was the thing burning it.
+    tried = retry.Turn()
+    last_error = ""
     used: list[str] = []
     blocked_actions: list[str] = []
     tokens_in = tokens_out = 0
@@ -2112,8 +2158,47 @@ async def chat(request: Request, _=Depends(require_auth)):
                     "is_error": True,
                 })
                 continue
-            out, failed = dispatch_tool(call.name, dict(call.input or {}),
-                                        local=local, guest=guest)
+            args = dict(call.input or {})
+            # Asked again for something already settled this turn: answer from
+            # the ledger. No second call, no second failure, no round spent.
+            if tried.blocked(call.name, args):
+                out, failed = retry.already_said(call.name, last_error), True
+                print(f"{C_DIM}  {C_RED}!{C_OFF} {call.name} "
+                      f"{C_DIM}already failed this turn - refused{C_OFF}")
+            else:
+                attempt, out, failed = 1, None, True
+                while True:
+                    out, failed = dispatch_tool(call.name, args,
+                                                local=local, guest=guest)
+                    # Only a hiccup, and only on a tool that can be done twice
+                    # without consequence. See RETRYABLE in retry.py: getting
+                    # that wrong sends somebody the same message again.
+                    if not retry.may_retry(call.name, out, failed):
+                        break
+                    if attempt >= retry.ATTEMPTS:
+                        break
+                    wait = retry.wait_for(attempt)
+                    print(f"{C_DIM}  {C_AMBER}~{C_OFF} {call.name} "
+                          f"{C_DIM}{str(out)[:60]} - retrying in {wait}s"
+                          f" ({attempt}/{retry.ATTEMPTS}){C_OFF}")
+                    # asyncio.sleep, never time.sleep: this runs on the event
+                    # loop, and blocking it for a second stops everything else
+                    # the server is doing -- including the poll that rings
+                    # alarms. A retry must not become an outage.
+                    await asyncio.sleep(wait)
+                    attempt += 1
+                if failed:
+                    # The RAW error is what gets remembered, so a later repeat
+                    # is answered with what actually went wrong rather than
+                    # with the paragraph written about it.
+                    last_error = out
+                    n = tried.record(call.name, args)
+                    # Tell it to stop only once stopping is the right answer:
+                    # the retries are spent, or it has now asked twice. Saying
+                    # it on every first failure would put a paragraph of
+                    # instruction behind every transient blip.
+                    if attempt >= retry.ATTEMPTS or n >= retry.SAME_CALL_LIMIT:
+                        out = retry.giving_up(call.name, attempt, last_error)
             used.append(call.name)
             mark = f"{C_RED}âœ—{C_OFF}" if failed else f"{C_CYAN}âœ“{C_OFF}"
             print(f"{C_DIM}  {mark} {call.name}{C_OFF} {C_DIM}{str(call.input)[:90]}{C_OFF}")
@@ -2140,12 +2225,30 @@ async def chat(request: Request, _=Depends(require_auth)):
         # whether the first four worked, so the only safe reading was "start
         # again", which is how a half-finished job gets done twice.
         if not reply:
-            did = ", ".join(dict.fromkeys(used)) if used else ""
-            reply = ("I got through %d steps and ran out of room, sir."
-                     % used_rounds)
-            if did:
-                reply += " Done so far: %s." % did
-            reply += " Say carry on and I'll pick up where I stopped."
+            total, done, blocked = plan.counts()
+            if total:
+                # A written plan turns this from a count into a place. "Three
+                # of six, next is booking the flight" is something both she and
+                # the user can resume from; "six steps" is a number that tells
+                # nobody whether to start again.
+                nxt = plan.next_step()
+                reply = "%d of %d done" % (done, total)
+                if blocked:
+                    reply += ", %d I couldn't manage" % blocked
+                reply += ", and I've run out of room, sir."
+                if nxt:
+                    reply += (" Next is step %d, %s. Say carry on."
+                              % (nxt["n"], nxt["what"]))
+                else:
+                    reply += " That's as far as I can take it."
+            else:
+                did = ", ".join(dict.fromkeys(used)) if used else ""
+                reply = ("I got through %d steps and ran out of room, sir."
+                         % used_rounds)
+                if did:
+                    reply += " Done so far: %s." % did
+                reply += " Say carry on and I'll pick up where I stopped."
+
 
     # Say which brain answered and why. An automatic choice that leaves no
     # trace is one nobody can check, and this one is spending money.
@@ -2568,6 +2671,31 @@ async def memory_list(request: Request, _=Depends(require_auth)):
     apply_session_memory(request)
     return JSONResponse({"facts": memory.facts(), "count": memory.count(),
                          "max": memory.MAX_FACTS})
+
+
+@app.get("/api/plan")
+async def plan_route(request: Request, _=Depends(require_auth)):
+    """The plan ARC is part-way through, for the HUD to draw.
+
+    Whoever is asking sees their own and nobody else's, the same as memory --
+    apply_session_memory sets the address both stores read.
+
+    No deny_guest: a guest has a plan of their own now, and it contains only
+    what they themselves asked ARC to do.
+    """
+    apply_session_memory(request)
+    p = plan.current()
+    total, done, blocked = plan.counts()
+    return JSONResponse({"goal": p.get("goal", ""), "steps": p.get("steps", []),
+                         "total": total, "done": done, "blocked": blocked,
+                         "next": plan.next_step(), "said": plan.describe()})
+
+
+@app.post("/api/plan/clear")
+async def plan_clear_route(request: Request, _=Depends(require_auth)):
+    """Abandon the job. Theirs to clear, so no guest gate here either."""
+    apply_session_memory(request)
+    return JSONResponse({"said": plan.clear()})
 
 
 @app.post("/api/memory/forget")

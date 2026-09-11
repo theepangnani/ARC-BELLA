@@ -130,7 +130,7 @@ with TestClient(run.app) as client:
         # asking how long to the airport is not asking about anybody's diary.
         # 17 -> 19 with convert_money and sun_times. An exchange rate and a
         # sunset are facts about the world, not about the owner.
-        check("    the guest tier names 19 tools", len(run.GUEST_TOOLS), 19)
+        check("    the guest tier names 23 tools", len(run.GUEST_TOOLS), 23)
         truthy("    and the two additions are the market ones",
                {"market_outlook", "market_compare"} <= run.GUEST_TOOLS)
         # Every tool offered must be one a guest may actually run, or the model
