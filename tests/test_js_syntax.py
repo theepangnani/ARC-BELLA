@@ -9,9 +9,16 @@ happened, and from the server side everything looks perfect while it does.
 
 `python -m compileall` covers the Python half. This is the other half.
 
-Parser, in order of preference: `node --check` if node is on PATH, else esprima
-(pip install -r requirements-dev.txt), else say clearly that nothing was checked
-rather than reporting a pass nobody earned.
+Parser, in order of preference: `node --check` if node is on PATH; else Chrome
+or Edge, which compiles the block with `new Function` without running it; else
+esprima (pip install -r requirements-dev.txt); else say clearly that nothing
+was checked rather than reporting a pass nobody earned.
+
+The browser rung exists because the honest answer was being given too often: on
+a machine with no node, esprima could not parse the main block at all — it uses
+unicode property escapes — so every run reported it unconfirmed. A browser is
+present on every machine this ships to and is the engine that will actually run
+the page, so what it accepts here cannot fail there.
 
 node leads because esprima is from 2017 and rejects unicode property escapes —
 `\\p{L}` — which is how the echo checks are written now so they work in scripts
@@ -20,8 +27,10 @@ those escapes neutralised, so everything else is still genuinely checked and
 the gap is named rather than papered over.
 """
 import io
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,21 +74,78 @@ def parse_node(src):
         os.unlink(path)
 
 
-# node first, esprima second. esprima is from 2017 and rejects anything newer
-# than ES2017 — including \p{L} unicode property escapes, which is how the
-# echo checks are written now so they work in scripts other than Latin. A
-# parser that calls valid code invalid is worse than no parser, so where node
-# exists it wins.
+# Built from the environment for the same reason test_speech_gate does it:
+# test_meta forbids a path off this machine, Program Files is not always on C:,
+# and a per-user Chrome lives under LOCALAPPDATA.
+_ROOTS = [os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)",
+                                          "LOCALAPPDATA")]
+BROWSERS = [os.path.join(r, *parts) for r in _ROOTS if r for parts in (
+    ("Google", "Chrome", "Application", "chrome.exe"),
+    ("Microsoft", "Edge", "Application", "msedge.exe"))] + [
+    shutil.which(n) or "" for n in ("google-chrome", "chromium", "chromium-browser",
+                                    "microsoft-edge")]
+BROWSER = next((b for b in BROWSERS if b and os.path.isfile(b)), None)
+
+
+def parse_browser(src):
+    """Parse in the engine the page will actually run in.
+
+    new Function(src) compiles without executing, which is exactly the question
+    — and the engine doing the compiling is the one shipping the page, so
+    nothing it accepts here can fail there. It is second rather than first only
+    because it costs a browser launch where node costs a process.
+    """
+    work = tempfile.mkdtemp(prefix="arcjs")
+    try:
+        html = os.path.join(work, "check.html")
+        payload = json.dumps(src).replace("</", "<\\u002f")
+        io.open(html, "w", encoding="utf-8").write(
+            '<!doctype html><meta charset="utf-8"><body><pre id="r">pending</pre>'
+            '<script>try { new Function(' + payload + ');'
+            'document.getElementById("r").textContent = "OK"; }'
+            'catch (e) { document.getElementById("r").textContent = "ERR:" + e.message; }'
+            '</script></body>')
+        out = subprocess.run(
+            [BROWSER, "--headless=new", "--disable-gpu", "--no-first-run",
+             "--no-default-browser-check", "--user-data-dir=" + os.path.join(work, "p"),
+             "--dump-dom", "file:///" + html.replace("\\", "/")],
+            capture_output=True, timeout=120, encoding="utf-8", errors="replace").stdout
+        m = re.search(r'<pre id="r">(.*?)</pre>', out, re.S)
+        if not m:
+            # The browser said nothing we can read. NOT a pass: fall through to
+            # whatever parser is left rather than calling silence success.
+            raise RuntimeError("no answer from the browser")
+        if m.group(1).startswith("ERR:"):
+            raise SyntaxError(m.group(1)[4:].strip()[:400])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# node first, a real browser second, esprima third. esprima is from 2017 and
+# rejects anything newer than ES2017 — including \p{L} unicode property
+# escapes, which is how the echo checks are written now so they work in scripts
+# other than Latin. A parser that calls valid code invalid is worse than no
+# parser, so where node exists it wins.
+#
+# THE BROWSER RUNG WAS ADDED because of a real gap rather than for symmetry:
+# on a machine with no node, esprima could not confirm the main script block at
+# all and the suite said so honestly — an unconfirmed block, every run. Chrome
+# or Edge is on every Windows machine this ships to, understands every escape
+# the page uses, and is the very engine that will run it. The suite that drives
+# the speech gate already launches one; this borrows the same approach.
 parser = None
 try:
     subprocess.run(["node", "--version"], capture_output=True, check=True)
     parser, how = parse_node, "node --check"
 except Exception:
-    try:
-        import esprima                               # noqa: F401
-        parser, how = parse_esprima, "esprima"
-    except ImportError:
-        how = None
+    if BROWSER:
+        parser, how = parse_browser, os.path.basename(BROWSER) + " (new Function)"
+    else:
+        try:
+            import esprima                           # noqa: F401
+            parser, how = parse_esprima, "esprima"
+        except ImportError:
+            how = None
 
 
 # Constructs esprima cannot parse but every browser ARC supports can. Used only
