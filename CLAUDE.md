@@ -104,6 +104,17 @@ seconds. `launch-arc.ps1` and `launch-bella-private.ps1` start them;
 tool lists at import, so **config and Python changes need a restart; HUD changes
 need only a page reload.**
 
+**Do not start an instance on a machine that is only for editing.** The launch
+scripts derive `ARC_DATA_DIR` from the repo's *parent*, so a clone in a
+different place quietly creates a whole data directory beside it — on the
+second machine that was a stray `bella-private` folder in the user's profile —
+and each instance also leaves a dedicated Chromium profile in `.arc-window\`,
+which is where nearly all of the ~290 MB lives. Both are gitignored, so nothing
+reaches GitHub; they are simply confusing clutter that diverges from the real
+Bella. If a test instance is genuinely wanted, set `ARC_DATA_DIR` explicitly
+first so the files land somewhere you chose. Deleting `.arc-window\` fails while
+the Bella window is open — its Chrome processes hold the profile.
+
 ## What is not in the repo, and must never be
 
 A fresh clone will not run until these are copied onto the machine by hand —
