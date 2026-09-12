@@ -36,6 +36,7 @@ os.environ["ARC_GUEST_EMAILS"] = "guest@example.com"
 from starlette.testclient import TestClient   # noqa: E402
 import run        # noqa: E402
 import session    # noqa: E402
+import triggers   # noqa: E402
 import stats      # noqa: E402
 import triggers   # noqa: E402
 
@@ -206,6 +207,24 @@ with TestClient(run.app) as client:
         c("    %-22s guest" % path, client.get(path, cookies=GUEST).status_code, 403)
         c("    %-22s stranger" % path, client.get(path).status_code, 401)
 
+    print("\nSeeing the screen is the owner's, and stayed the owner's when the")
+    print("tier was widened on 11 Sep 2026 — a guest may now set an alarm, but:")
+    # Live screen and watch mode do not go through the tool gate at all: they
+    # ride on the chat request as see_screen, so withholding pc's tools from a
+    # guest says nothing about them. The gate that does cover them is `local`,
+    # and it is one expression used by both the health route and chat.
+    c.truthy("  local means the desktop AND not a guest",
+             run_src.count("is_local_request(request) and not guest") >= 2)
+    c.truthy("  the screen is only attached when local",
+             "if see_screen and local and pc.connected():" in run_src)
+    # And over HTTP: the HUD greys both buttons out when this is false, so a
+    # guest is not offered them in the first place.
+    c("  a guest is told there is no computer",
+      client.get("/api/health", cookies=GUEST).json().get("computer"), False)
+    c.truthy("  ...and the page disables the buttons on exactly that",
+             "liveScreenBtn.disabled = !canSeeScreen;" in body
+             and "canSeeScreen = !!h.computer;" in body)
+
     print("\nNeither poll holds a session open by itself:")
     # Arc Watch left on a second screen refreshes every minute for ever. If
     # that counted as somebody being present, "signed in until you stop using
@@ -229,9 +248,16 @@ c.truthy("  reading usage needs no permission", "usage_report" in run.PASSIVE_TO
 c.truthy("  reading rules back neither", "list_triggers" in run.PASSIVE_TOOLS)
 c("  but SETTING one does", "add_trigger" in run.PASSIVE_TOOLS, False)
 c("  and clearing one does", "clear_trigger" in run.PASSIVE_TOOLS, False)
-c("  none of it is offered to guests",
-  [t for t in ("usage_report", "add_trigger", "list_triggers", "clear_trigger")
-   if t in run.GUEST_TOOLS], [])
+# Standing rules became a guest's on 11 Sep 2026 ("all except my pc"). They
+# are safe to hand over for a reason of their own rather than by the general
+# widening: triggers.py allow-lists its OWN actions to notifying and setting a
+# reminder, both of which a guest can already do directly — so a rule grants a
+# delay, not a new power. The spending report did not move: that is the owner's
+# money, and reading it is administration.
+c("  standing rules are a guest's now", "add_trigger" in run.guest_tools(), True)
+c("  ...and what a rule may DO is still only these four",
+  sorted(triggers.ACTIONS), ["notify", "push", "remind", "say"])
+c("  the spending report is not", "usage_report" in run.guest_tools(), False)
 
 print("\nSelf-repair protects the new files too:")
 # The bug this catches: two new personal data files were added AFTER selfheal

@@ -116,12 +116,17 @@ with TestClient(run.app) as client:
         whole = system_text(kw)
         truthy("    guest is told it is a guest", "GUEST ACCOUNT" in whole)
         truthy("    no owner alarm summary leaked", "ALARMS SET" not in whole)
-        truthy("    no alarm tools offered",
-               not any((n or "").endswith("_alarm") or n == "list_alarms" for n in names))
+        # Alarms became a guest's on 11 Sep 2026. What must NOT follow is the
+        # line above: the owner's alarm summary is part of the owner's day and
+        # stays out of a guest's prompt, even though a guest may now set one.
+        truthy("    alarm tools are offered now",
+               any((n or "").endswith("_alarm") for n in names))
+        truthy("    but the owner's Telegram cannot be SENT from",
+               "tg_send_pending" not in names)
         # NOT asserted: calendar/mail. Those appear only when the signed-in
         # browser's OWN google token is present, and this suite runs against a
         # scratch data dir with no token linked -- so 3 tools here is the test
-        # environment, not the guest tier. run.GUEST_TOOLS is the contract.
+        # environment, not the guest tier. run.guest_tools() is the contract.
         truthy("    public lookups are there", "weather" in names)
         # Pinned on purpose: the guest tier growing should be a decision, not
         # a side effect of adding a tool somewhere. 13 -> 15 when market_outlook
@@ -130,12 +135,14 @@ with TestClient(run.app) as client:
         # asking how long to the airport is not asking about anybody's diary.
         # 17 -> 19 with convert_money and sun_times. An exchange rate and a
         # sunset are facts about the world, not about the owner.
-        check("    the guest tier names 23 tools", len(run.GUEST_TOOLS), 23)
+        # 19 -> 23 with the plan. 23 -> 49 on 11 Sep 2026, when the owner asked
+        # for "all except my pc" (see test_guest.py, which names each one).
+        check("    the guest tier names 49 tools", len(run.guest_tools()), 49)
         truthy("    and the two additions are the market ones",
-               {"market_outlook", "market_compare"} <= run.GUEST_TOOLS)
+               {"market_outlook", "market_compare"} <= run.guest_tools())
         # Every tool offered must be one a guest may actually run, or the model
         # will pick one and hit a refusal it cannot explain.
-        bad = [n for n in names if n and n not in run.GUEST_TOOLS]
+        bad = [n for n in names if n and n not in run.guest_tools()]
         check("    every offered tool is allowed for a guest", bad, [])
 
     print("\nThe guest asks something needing a tool it does NOT have:")

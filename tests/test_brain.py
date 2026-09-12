@@ -286,8 +286,13 @@ print("\nGated the same way as everything else:")
 c.truthy("  reading memory needs no permission", "list_memory" in run.PASSIVE_TOOLS)
 c("  forgetting does", "forget" in run.PASSIVE_TOOLS, False)
 c("  exporting does", "export_everything" in run.PASSIVE_TOOLS, False)
-c("  none of it is a guest's",
-  [t for t in ("list_memory", "forget", "export_everything") if t in run.GUEST_TOOLS], [])
+# A guest's memory is their own — memory.use() is called with the signed-in
+# address on every request — so reading and forgetting it reaches nothing of
+# the owner's. Exporting is different in kind: export_everything is every file
+# ARC holds, which is why it stayed behind when the tier was widened.
+c("  a guest may read their own memory", "list_memory" in run.guest_tools(), True)
+c("  ...and forget their own", "forget" in run.guest_tools(), True)
+c("  but never export everything", "export_everything" in run.guest_tools(), False)
 
 print("\nOpus never answers with thinking switched off:")
 # Not a preference. With thinking disabled, Opus 5 sometimes writes a tool call

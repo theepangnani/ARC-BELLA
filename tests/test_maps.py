@@ -99,8 +99,8 @@ c.truthy("  registered as a toolkit", maps in run.TOOLKITS)
 c("  both tools are known", {"directions", "find_place"} <= set(run.TOOL_OWNER), True)
 # Roads are public. Asking how long to the airport is not asking about anybody's
 # diary, so it sits with weather and news rather than with mail.
-c("  a guest may ask for directions", "directions" in run.GUEST_TOOLS, True)
-c("  and where a place is", "find_place" in run.GUEST_TOOLS, True)
+c("  a guest may ask for directions", "directions" in run.guest_tools(), True)
+c("  and where a place is", "find_place" in run.guest_tools(), True)
 
 print("\nAnd it identifies itself to the services it borrows:")
 # Both are public good-will servers with usage policies. Turning up anonymously
@@ -152,11 +152,13 @@ c("  and nothing digit-shaped survives",
 c("  rubbish is handed back untouched", extras._clock("bad"), "bad")
 
 print("\nBoth are public facts, so a guest may ask:")
-c("  currency", "convert_money" in run.GUEST_TOOLS, True)
-c("  sunset", "sun_times" in run.GUEST_TOOLS, True)
-# 23 since the plan arrived: a guest keeps their own scratch plan for a long
-# job, which contains only what they themselves asked for. This number is a
-# guard, not a fact -- it changes only when somebody decides it should.
-c("  the guest tier is 23 now, deliberately", len(run.GUEST_TOOLS), 23)
+c("  currency", "convert_money" in run.guest_tools(), True)
+c("  sunset", "sun_times" in run.guest_tools(), True)
+# 23 until 11 Sep 2026, then 49: the owner asked for guests to have "all
+# except my pc", so notes, memory, todos, reminders, Telegram (reading and
+# drafting only), the phone push, alarms, price alerts and standing rules were
+# added in one decision. This number is a guard, not a fact -- it changes only
+# when somebody decides it should, and test_guest.py names every one of them.
+c("  the guest tier is 49 now, deliberately", len(run.guest_tools()), 49)
 
 c.done()

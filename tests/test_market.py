@@ -124,7 +124,7 @@ c.truthy("both tools registered", {"market_outlook", "market_compare"} <=
          set(run.TOOL_OWNER))
 c.truthy("owned by the market module", run.TOOL_OWNER["market_outlook"] is market)
 c.truthy("a guest may use them (public prices, no owner data)",
-         {"market_outlook", "market_compare"} <= run.GUEST_TOOLS)
+         {"market_outlook", "market_compare"} <= run.guest_tools())
 c.truthy("passive — analysis changes nothing, so no consent prompt",
          {"market_outlook", "market_compare"} <= run.PASSIVE_TOOLS)
 c.truthy("still offered over the tunnel (nothing local about it)",

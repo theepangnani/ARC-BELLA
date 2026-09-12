@@ -71,6 +71,12 @@ def sandbox() -> Path:
     os.environ.setdefault("ARC_ALLOWED_EMAILS", "owner@example.com")
     os.environ.setdefault("ARC_GUEST_EMAILS", "guest@example.com")
     os.environ.setdefault("ARC_SECRET", "0" * 64)
+    # The guests' extra tools are on loan until a date (see GUEST_EXTRA_TOOLS).
+    # Pinned far ahead here so the suites that describe the wider tier keep
+    # describing it in a year's time, rather than turning red on the day the
+    # real loan runs out — test_guestweek.py is where the expiry itself is
+    # tested, by moving the date rather than by waiting for it.
+    os.environ.setdefault("ARC_GUEST_EXTRA_UNTIL", "2099-01-01")
 
     if str(ARC) not in sys.path:
         sys.path.insert(0, str(ARC))

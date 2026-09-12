@@ -124,7 +124,7 @@ c("  acting is not",
   [n for n in ["focus_window", "close_window", "message_app"] if n in run.PASSIVE_TOOLS], [])
 c("  and no guest gets any of them",
   [n for n in ["list_apps", "list_windows", "focus_window", "close_window", "message_app"]
-   if n in run.GUEST_TOOLS], [])
+   if n in run.guest_tools()], [])
 c("  none of it is offered over the tunnel",
   [n for n in ["list_apps", "message_app", "close_window"]
    if n in {t["name"] for t in run.all_tools(local=False)}], [])

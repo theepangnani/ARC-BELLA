@@ -5740,7 +5740,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         }
         // Kick off the NEXT chunk's synthesis before playing this one.
         nextFetch = (i + 1 < chunks.length) ? fetchChunk(chunks[i + 1]).catch(() => null) : null;
-        await playUrl(url, chunks[i]);
+        try {
+          await playUrl(url, chunks[i]);
+        } catch (pe) {
+          // The clip arrived and THIS DEVICE would not play it — a blocked
+          // autoplay, a decoder error. Marked so the catch below can tell it
+          // from the voice service failing, which it used to be taken for.
+          if (nextFetch) nextFetch.then(u => { if (u) URL.revokeObjectURL(u); });
+          const err = pe || new Error("audio error");
+          err.playback = true;
+          err.at = i;
+          throw err;
+        }
       }
       finish();
     } catch (e) {
@@ -5750,6 +5761,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       cleanupTap();
       state.currentAudio = null;
       state.speakingLock = false;
+      if (e && e.playback) {
+        // The service rendered the sentence; playing it is what failed. This
+        // used to fall through to the lines below: the reply started again
+        // FROM THE TOP in the browser voice — repeating whatever had already
+        // been said — the neural voice was benched for two minutes for a fault
+        // that was not its own, and the note blamed "the voice service". Now
+        // the reply carries on from the sentence that failed, and the next one
+        // tries the proper voice again.
+        console.warn("ARC voice: a clip would not play —", (e.name || "") + " " + (e.message || ""));
+        speak(chunks.slice(e.at).join(" ").trim() || text, onDone, true);
+        return;
+      }
       // This used to set state.engine to "browser" — for good. Nothing set it
       // back: the health check that turns the neural voice on runs at boot and
       // on a manual reset, never on a timer. So ONE failed first sentence left
@@ -5757,8 +5780,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // it is a cooldown: this reply and the next two minutes in the browser
       // voice, and then the proper one is tried again.
       neuralDownUntil = Date.now() + NEURAL_COOLDOWN_MS;
+      // Say WHY. "Didn't answer" alone left nothing to go on afterwards: a
+      // sign-out, a slow render and a dropped connection all read the same.
+      const code = /tts (\d{3})/.exec(String(e && e.message));
+      const why = code ? "error " + code[1]
+                : e && e.name === "AbortError" ? "it took too long"
+                : e && e.name === "TypeError" ? "no connection"
+                : "no audio came back";
       addEntry("sys", "SYSTEM",
-               "The voice service didn't answer — using the browser voice for a couple of minutes.");
+               "The voice service didn't answer (" + why + ") — using the browser voice for a couple of minutes.");
       el.rVoice.textContent = "BROWSER";
       speak(text, onDone, true);
     }
@@ -6689,6 +6719,16 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   });
 
   /* ---------------- controls ---------------- */
+  // Web search: the box ships ticked, and untick it and it was ticked again on
+  // the next reload — the same complaint as live screen, one switch over.
+  try {
+    if (localStorage.getItem("arc.search") === "0") el.searchOn.checked = false;
+  } catch (_) {}
+  el.searchOn.addEventListener("change", () => {
+    try { localStorage.setItem("arc.search", el.searchOn.checked ? "1" : "0"); } catch (_) {}
+    if (el.rSearch) el.rSearch.textContent = el.searchOn.checked ? "READY" : "OFF";
+  });
+
   el.wakeOn.addEventListener("change", () => {
     state.wakeArmed = el.wakeOn.checked;
     try { localStorage.setItem("arc.wake", el.wakeOn.checked ? "1" : "0"); } catch (_) {}
@@ -7464,6 +7504,29 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const m = localStorage.getItem("arc.livescreen.mode");
     if (m === "primary" || m === "each") liveScreenMode = m;
   } catch (_) {}
+  // WHICH screens was remembered; WHETHER it was on was not, so every reload
+  // and every restart quietly switched it off and the setting looked like it
+  // did not stick. Kept per device, like every other preference here.
+  let liveScreenWanted = false;
+  try { liveScreenWanted = localStorage.getItem("arc.livescreen.on") === "1"; } catch (_) {}
+  let liveScreenRestored = false;
+
+  // Called from the health poll, because until the server has said whether it
+  // can see a screen at all there is nothing to restore it to — on a phone the
+  // answer is no, and a remembered "on" must not survive the trip there.
+  function restoreLiveScreen() {
+    if (liveScreenRestored || !canSeeScreen) return;
+    liveScreenRestored = true;
+    if (!liveScreenWanted || liveScreen) return;
+    liveScreen = true;
+    // Said out loud, every time, and this is the point of the whole change
+    // rather than a flourish on it: live screen means a picture of the screen
+    // goes up with every message. Restoring that silently would be ARC
+    // deciding to look, so the restore announces itself and says how to stop.
+    addEntry("sys", "SYSTEM",
+             "Live screen is still on from last time — I see your screen with every "
+             + "message. Click the button to turn it off.");
+  }
 
   function liveScreenLabel() {
     if (!canSeeScreen) return "Live screen: n/a";
@@ -7488,7 +7551,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (!liveScreen) { liveScreen = true; liveScreenMode = "primary"; }
     else if (monitorCount > 1 && liveScreenMode === "primary") { liveScreenMode = "each"; }
     else { liveScreen = false; liveScreenMode = "primary"; }
-    try { localStorage.setItem("arc.livescreen.mode", liveScreenMode); } catch (_) {}
+    try {
+      localStorage.setItem("arc.livescreen.mode", liveScreenMode);
+      localStorage.setItem("arc.livescreen.on", liveScreen ? "1" : "0");
+    } catch (_) {}
+    liveScreenRestored = true;   // a deliberate click outranks what was stored
     paintLiveScreen();
     addEntry("sys", "SYSTEM",
       !liveScreen ? "Live screen off."
@@ -9423,6 +9490,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       if (liveScreenBtn) {
         liveScreenBtn.disabled = !canSeeScreen;
         if (!canSeeScreen) liveScreen = false;
+        else restoreLiveScreen();
         paintLiveScreen();
       }
       if (typeof watchBtn !== "undefined" && watchBtn) {

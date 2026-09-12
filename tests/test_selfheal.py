@@ -287,8 +287,11 @@ c.truthy("  self_check needs no permission", '"self_check",' in run_src)
 c("  self_repair DOES — it rewrites files", '"self_repair"' in
   run_src.split("PASSIVE_TOOLS = {")[1].split("}")[0], False)
 c.truthy("  ...and that distinction is explained", "quietly rewrites your notes" in run_src)
-c.truthy("  neither is offered to guests", "self_repair" not in
-         run_src.split("GUEST_TOOLS = {")[1].split("}")[0])
+# Against the live SET, not the text of the block: the block now explains in a
+# comment which tools were withheld and why, and "self_repair" appearing in
+# that explanation read as the tool being granted.
+c.truthy("  neither is offered to guests",
+         not ({"self_repair", "self_check", "export_everything"} & __import__("run").guest_tools()))
 c.truthy("  the loop reports its own heartbeat", "selfheal.beat()" in run_src)
 c.truthy("  ...and the reason it must", "indistinguishable from a quiet morning" in run_src)
 c.truthy("  a watchdog watches it from outside", "_watchdog_loop" in run_src)

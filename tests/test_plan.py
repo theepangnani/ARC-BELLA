@@ -146,7 +146,7 @@ c.truthy("  registered as a toolkit", plan in run.TOOLKITS)
 c("  all four tools are known",
   {"plan_set", "plan_step", "plan_read", "plan_clear"} <= set(run.TOOL_OWNER), True)
 for t in ("plan_set", "plan_step", "plan_read", "plan_clear"):
-    c("  a guest may %s" % t, t in run.GUEST_TOOLS, True)
+    c("  a guest may %s" % t, t in run.guest_tools(), True)
     # Gating these would be perverse: the consent prompt would arrive before the
     # work, to ask permission to write down what the work is going to be.
     c("  ...without a consent prompt for %s" % t, t in run.PASSIVE_TOOLS, True)

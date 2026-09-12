@@ -203,6 +203,34 @@ c.truthy("  closing on Escape, a click away, or a choice",
 c.truthy("  and the list kept the id the rest of the code binds to",
          'class="shapepop" id="shapes"' in page)
 
+print("\nSwitches stay where they were left:")
+# Every other preference on this panel is kept per device — the voice, the
+# wake word, the palette, the brain, room mode. Live screen kept WHICH screens
+# and forgot WHETHER it was on, so it came back off after every reload and
+# every one of the restarts the guardian performs; web search came back ticked
+# after every reload, whatever you had set it to.
+c.truthy("  live screen remembers being on", 'localStorage.setItem("arc.livescreen.on"' in body)
+c.truthy("  ...and which screens, as before", 'localStorage.setItem("arc.livescreen.mode"' in body)
+c.truthy("  web search remembers being off", 'localStorage.setItem("arc.search"' in body)
+# The restore is the part that needs care rather than the save: a remembered
+# "on" means a picture of the screen goes up with every message from the
+# moment the page loads.
+lsr = body[body.index("function restoreLiveScreen()"):]
+lsr = lsr[:lsr.index("\n  function ", 1)]
+c.truthy("  it is not restored until the server says a screen can be seen",
+         "if (liveScreenRestored || !canSeeScreen) return;" in lsr)
+c.truthy("  ...so a phone, which cannot, never inherits it",
+         "there is nothing to restore it to" in body)
+c.truthy("  and the restore says so out loud, with how to stop it",
+         "Live screen is still on from last time" in lsr and "turn it off" in lsr)
+c("  it never restores silently", "addEntry" in lsr, True)
+c.truthy("  a click beats what was stored",
+         "liveScreenRestored = true;   // a deliberate click outranks" in body)
+# Watch mode is deliberately NOT in this list: it calls the model on a timer,
+# by itself, for as long as it is on. A switch that spends money unattended
+# should be turned on by a person each time, not inherited from last week.
+c("  watch mode is NOT remembered", 'localStorage.setItem("arc.watch"' in body, False)
+
 print("\nPolygons are data, not four branches each:")
 # "hex" was written into the tick ring, the bar walk, the prism and the 3D map.
 # A triangle meant four more special cases; an octagon four more after that.

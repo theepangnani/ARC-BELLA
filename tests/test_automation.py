@@ -117,7 +117,7 @@ c.truthy("  but STOPPING is always allowed", "stop_automation" in run.PASSIVE_TO
 c.truthy("  as is asking what is running", "automation_status" in run.PASSIVE_TOOLS)
 c("  and no guest gets any of it",
   [n for n in ["auto_click", "hold_key", "key_macro", "stop_automation"]
-   if n in run.GUEST_TOOLS], [])
+   if n in run.guest_tools()], [])
 
 print("\nARC is told the rules:")
 page = open(HUD, encoding="utf-8").read()

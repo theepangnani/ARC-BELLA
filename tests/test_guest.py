@@ -46,26 +46,26 @@ check("guest list is a subset of what exists", guest_tools <= owner_tools, True)
 # The point of the whole exercise, named one by one so a future edit that
 # re-opens one of these fails loudly instead of quietly.
 print("\nThe owner's life is off limits — offered AND dispatched:")
+# NARROWED ON THE OWNER'S INSTRUCTION ("all except my pc", 11 Sep 2026), and
+# the list below is what survived that instruction rather than what is left
+# over from it. Telegram READING, notes, todos, reminders, the phone push, the
+# alarm clock, the watchlist and standing rules all moved to ALLOWED further
+# down; each one is now asserted there, so nothing fell out of the suite.
+#
+# The three kinds of thing that did NOT move:
+#   · tg_send_pending — a sent message goes out under the owner's name and
+#     cannot be taken back. Drafting is a guest's; sending stays the owner's,
+#     and that split is the whole reason this entry is still here.
+#   · the PC and everything that is the PC wearing a different hat — the
+#     shell, the keyboard, the screen, the second screen, the music.
+#   · administration — export_everything is every file ARC holds.
 FORBIDDEN = [
     ("tg_send_pending", "send Telegram as the owner"),
-    ("tg_draft_message", "draft Telegram as the owner"),
-    ("tg_read_chat", "read the owner's Telegram"),
-    ("tg_list_chats", "list the owner's chats"),
-    ("add_note", "write to the owner's memory"),
-    ("list_notes", "read the owner's memory"),
-    ("delete_note", "delete the owner's memory"),
-    ("add_todo", "add to the owner's todos"),
-    ("list_todos", "read the owner's todos"),
-    ("complete_todo", "complete the owner's todos"),
-    ("set_reminder", "set a reminder on the owner"),
-    ("list_reminders", "read the owner's reminders"),
-    ("cancel_reminder", "cancel the owner's reminders"),
-    ("notify_phone", "push to the owner's phone"),
+    ("export_everything", "export every file ARC holds"),
+    ("self_repair", "rewrite the owner's files"),
+    ("usage_report", "read the owner's spending"),
     ("show_on_display", "take over the owner's second screen"),
     ("clear_display", "clear the owner's second screen"),
-    ("set_price_alert", "edit the owner's watchlist"),
-    ("list_price_alerts", "read the owner's watchlist"),
-    ("clear_price_alert", "clear the owner's watchlist"),
     ("run_prepared", "run shell on the owner's PC"),
     ("prepare_command", "stage shell on the owner's PC"),
     ("screenshot", "see the owner's screen"),
@@ -90,10 +90,46 @@ print("\nWhat a guest DOES get — their own Google account and public lookups:"
 for name in ["list_events", "create_event", "move_event", "cancel_event",
              "search_email", "read_email", "find_contact", "find_drive",
              "read_drive", "weather", "stock", "news", "web_search"]:
-    check("%-14s allowed" % name, name in run.GUEST_TOOLS, True)
+    check("%-14s allowed" % name, name in run.guest_tools(), True)
+
+print("\nAnd what the owner opened up afterwards, named just as explicitly —")
+print("their OWN notes and memory (per account, so nothing of the owner's):")
+for name in ["add_note", "list_notes", "delete_note", "list_memory", "forget"]:
+    check("%-18s allowed" % name, name in run.guest_tools(), True)
+check("notes really are per account", "whose.use(who)" in
+      open(ARC / "run.py", encoding="utf-8").read(), True)
+
+print("\n...and the owner's SHARED things, which is the part with a cost:")
+for name, what in [("add_todo", "their todo lands in the owner's list"),
+                   ("list_todos", "they see the owner's list"),
+                   ("complete_todo", "they can tick the owner's off"),
+                   ("set_reminder", "it comes due on the owner's screen"),
+                   ("list_reminders", "they see the owner's reminders"),
+                   ("cancel_reminder", "they can cancel the owner's"),
+                   ("tg_list_chats", "the owner's chat list"),
+                   ("tg_read_chat", "the owner's messages, read"),
+                   ("tg_draft_message", "composed, not sent"),
+                   ("notify_phone", "the owner's phone buzzes"),
+                   ("set_alarm", "the owner's alarm clock"),
+                   ("list_alarms", "and they can see what is set"),
+                   ("cancel_alarm", "and unset it"),
+                   ("snooze_alarm", "or snooze a ringing one"),
+                   ("dismiss_alarm", "or silence it"),
+                   ("set_price_alert", "the owner's watchlist"),
+                   ("list_price_alerts", "read the owner's watchlist"),
+                   ("clear_price_alert", "clear the owner's watchlist"),
+                   ("add_trigger", "a standing rule; it can only notify"),
+                   ("list_triggers", "read the standing rules"),
+                   ("clear_trigger", "clear a standing rule")]:
+    check("%-18s allowed — %s" % (name, what), name in run.guest_tools(), True)
 
 print("\nThe owner is not affected by any of this:")
-for name, _ in FORBIDDEN:
+# Three are checked for the guest only: dispatching them AS THE OWNER would
+# really run them — a full export, a repair pass, a spend report — and a test
+# that performs the act it is describing is a test that will one day do it
+# somewhere it matters.
+for name, _ in [x for x in FORBIDDEN
+                if x[0] not in ("export_everything", "self_repair", "usage_report")]:
     out, failed = run.dispatch_tool(name, {}, local=True, guest=False)
     blocked = failed and "guest account" in out.lower()
     check("%-18s still reaches the owner's toolkit" % name, blocked, False)
@@ -111,7 +147,7 @@ run.GUEST_EMAILS = saved
 
 print("\nEvery guest tool is a real tool that exists:")
 known = {t["name"] for kit in run.TOOLKITS for t in kit.TOOLS} | {"web_search"}
-unknown = run.GUEST_TOOLS - known
+unknown = run.guest_tools() - known
 check("no typos in GUEST_TOOLS (%s)" % (sorted(unknown) or "none"), unknown, set())
 
 print("\nALL PASS" if ok else "\nFAILURES ABOVE")

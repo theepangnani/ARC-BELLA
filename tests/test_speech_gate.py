@@ -224,6 +224,27 @@ c.truthy("  this reply falls back without changing the engine", "speak(text, onD
 c.truthy("  and the readout says when the proper voice is back",
          'el.rVoice.textContent = "NEURAL";       // back after a cooldown' in body)
 
+print("\nA clip that will not PLAY is not the voice service failing:")
+# It was treated as one: any error inside the playback loop reached the same
+# catch as a failed render, so the reply restarted from the top in the browser
+# voice — repeating what had been said — and the neural voice was benched for
+# two minutes for a fault on the device, not the service.
+sr = between("  async function speakRemote(", "  let speakGen = 0;")
+c.truthy("  a playback failure is marked apart", "err.playback = true;" in sr)
+c.truthy("  ...and carries on from the sentence that failed, not the top",
+         'speak(chunks.slice(e.at).join(" ").trim() || text, onDone, true);' in sr)
+c.truthy("  ...before, and so without, the two-minute bench",
+         sr.index("if (e && e.playback)") < sr.index("neuralDownUntil = Date.now()"))
+c.truthy("  the clip already fetched for the next sentence is released",
+         "nextFetch.then(u => { if (u) URL.revokeObjectURL(u); });" in sr)
+c.truthy("  a real service failure says why",
+         "\"The voice service didn't answer (\" + why + \")" in sr)
+run_src = io.open(os.path.join(str(ARC), "run.py"), encoding="utf-8").read()
+tts_route = run_src[run_src.index('@app.post("/api/tts")'):run_src.index('@app.get("/api/voices")')]
+c.truthy("  and the server writes the reason down", "voice render failed:" in tts_route)
+c("  ...never the sentence, which may be anything",
+  re.search(r"print\([^\n]*\{text", tts_route) is not None, False)
+
 print("\nThe model is told:")
 import prompt   # noqa: E402
 rule = prompt.base("main")

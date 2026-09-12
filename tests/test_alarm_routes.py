@@ -79,14 +79,19 @@ check("reading them back does not", run._is_acting("list_alarms"), False)
 check("silencing a ringing one does not", run._is_acting("dismiss_alarm"), False)
 check("nor does snoozing it", run._is_acting("snooze_alarm"), False)
 
-print("\nAlarms belong to the owner, not to guests:")
+print("\nThe alarm clock is the OWNER'S, and a guest may now set it:")
+# Changed on 11 Sep 2026 on the owner's instruction ("all except my pc").
+# There is one alarm list per instance, so a guest's alarm rings on the
+# owner's machine at the owner's bedside — which is the grant, not a bug.
 for name in ["set_alarm", "list_alarms", "cancel_alarm", "snooze_alarm", "dismiss_alarm"]:
-    check("%-14s withheld from guests" % name, name in run.GUEST_TOOLS, False)
+    check("%-14s allowed to guests now" % name, name in run.guest_tools(), True)
     out, err = run.dispatch_tool(name, {}, local=False, guest=True)
-    check("%-14s refused at dispatch too" % name, (err, "guest account" in out), (True, True))
-truthy("and not in a guest's tool list",
-       not any(t["name"].endswith("_alarm") or t["name"] == "list_alarms"
-               for t in run.all_tools(local=False, guest=True)))
+    check("%-14s and not blocked as a guest's" % name, "guest account" in out, False)
+truthy("and offered in a guest's tool list",
+       any(t["name"].endswith("_alarm") for t in run.all_tools(local=False, guest=True)))
+# What did NOT move with them: the HUD's own alarm routes below are still
+# owner-only, so the ringing, the Stop button and the countdown stay on the
+# owner's screen. A guest sets the alarm; the owner is the one it wakes.
 
 # --------------------------------------------------------------------------
 print("\nOver HTTP, signed in as the owner:")

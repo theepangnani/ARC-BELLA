@@ -192,6 +192,111 @@ GUEST_TOOLS = {
 }
 
 
+# Lent to guests for a week, not given to them. The owner asked for guests to
+# have "all except my pc" and then, the next day, that it "should be for a week"
+# — so this is a second set with a clock on it rather than more names in the set
+# above, and when the clock runs out the tier goes back to what it was with
+# nobody having to remember to take anything away.
+#
+# ARC_GUEST_EXTRA_UNTIL is a date (2026-09-19) or a moment (2026-09-19T18:00).
+# UNSET MEANS OFF, which is the important half: a fresh install, a new instance
+# or a typo in the date hands guests the plain tier, never this one. Extending
+# it is editing one line in .env; nothing here needs to change.
+GUEST_EXTRA_TOOLS = {
+    # ---- widened deliberately, on the owner's instruction: "all except my pc"
+    # Their own notes and their own remembered facts. Per account through
+    # whose.py and memory.use(), the same as the plan above — a guest's note is
+    # filed under their address and the owner's is invisible to them.
+    "add_note", "list_notes", "delete_note",
+    "list_memory", "forget",
+    # SHARED, and that is not an oversight: todos and reminders live in one
+    # file per instance, not one per person. A guest's todo appears in the
+    # owner's list and a guest's reminder comes due on the owner's screen.
+    # Granted because a household that shares a shopping list is the case this
+    # is for; it is the first thing to take back if it is ever misused.
+    "add_todo", "list_todos", "complete_todo",
+    "set_reminder", "list_reminders", "cancel_reminder",
+    # The owner's Telegram, READ ONLY plus a draft. Reading the owner's chats
+    # is a real grant and was asked for in those words.
+    #
+    # tg_send_pending is deliberately NOT here, and it is the one line in this
+    # block that withholds something. Everything else a guest can now do is
+    # visible to the owner afterwards and undoable by them; a sent message is
+    # neither — it goes out under the owner's name, to somebody who has no way
+    # of knowing a guest wrote it. So a guest may compose; the owner sends.
+    "tg_list_chats", "tg_read_chat", "tg_draft_message",
+    # The owner's phone, and the owner's alarm clock and watchlist. These act
+    # on the owner's attention rather than the owner's data: a push arrives on
+    # their phone, an alarm makes a noise at the time it is set for.
+    "notify_phone",
+    "set_alarm", "list_alarms", "cancel_alarm", "snooze_alarm", "dismiss_alarm",
+    "set_price_alert", "list_price_alerts", "clear_price_alert",
+    # Standing "if this, then that" rules. They can only notify or set a
+    # reminder — triggers.py allow-lists its own actions — so this grants
+    # nothing a guest cannot already do directly, only on a delay.
+    "add_trigger", "list_triggers", "clear_trigger",
+    # STILL WITHHELD, and why, so the next person to read this does not have to
+    # guess whether the omissions were decisions:
+    #   pc, automation  — the owner's machine, including typing and the shell.
+    #                     The one thing the owner excluded, in those words.
+    #   media, display  — youtube, spotify and the second screen play on that
+    #                     same machine, so they are the PC by another name.
+    #   selfheal, stats — export_everything is every file ARC holds, and
+    #                     self_repair rewrites them; usage_report is the
+    #                     owner's spending. Administration, which the owner
+    #                     ruled out separately.
+}
+
+
+def _until_stamp(raw: str):
+    """A date or a moment, as a timestamp. Anything else is None — which reads
+    as "the loan is off", because a grant nobody can parse should lapse rather
+    than run for ever on a typo."""
+    raw = (raw or "").strip().replace("/", "-")
+    if not raw:
+        return None
+    for fmt, end_of_day in (("%Y-%m-%dT%H:%M", False), ("%Y-%m-%d %H:%M", False),
+                            ("%Y-%m-%d", True)):
+        try:
+            t = time.strptime(raw, fmt)
+        except ValueError:
+            continue
+        stamp = time.mktime(t)
+        # A bare date means the END of that day: "until the 19th" is how a
+        # person says it, and expiring at midnight as the 19th begins would
+        # take the week back a day early.
+        return stamp + 86399 if end_of_day else stamp
+    print(f"{C_AMBER}  ! ARC_GUEST_EXTRA_UNTIL is not a date I understand "
+          f"({raw[:32]!r}) — guests keep the plain tier{C_OFF}")
+    return None
+
+
+GUEST_EXTRA_UNTIL = _until_stamp(os.getenv("ARC_GUEST_EXTRA_UNTIL", ""))
+_extra_lapsed_said = False
+
+
+def guest_extra_live(now: float | None = None) -> bool:
+    """Whether the week is still running. Asked on every request rather than
+    settled at import: this process stays up for days at a time, so a grant
+    that was checked once at boot would outlive its own expiry."""
+    global _extra_lapsed_said
+    if GUEST_EXTRA_UNTIL is None:
+        return False
+    if (now or time.time()) <= GUEST_EXTRA_UNTIL:
+        return True
+    if not _extra_lapsed_said:
+        _extra_lapsed_said = True
+        print(f"{C_AMBER}  guests' extra access ran out "
+              f"({time.strftime('%d %b %H:%M', time.localtime(GUEST_EXTRA_UNTIL))}) "
+              f"— back to their own Google account and public lookups{C_OFF}")
+    return False
+
+
+def guest_tools(now: float | None = None) -> set:
+    """What a guest may touch at this moment."""
+    return (GUEST_TOOLS | GUEST_EXTRA_TOOLS) if guest_extra_live(now) else GUEST_TOOLS
+
+
 def all_tools(local: bool = True, guest: bool = False):
     """Only offer what is actually authorised â€” a signed-in calendar with no
     mail should produce calendar tools, not tools that fail on contact. Computer
@@ -201,7 +306,7 @@ def all_tools(local: bool = True, guest: bool = False):
             if kit.connected() and (local or kit not in (pc, automation))]
     tools = [t for kit in kits for t in kit.TOOLS]
     if guest:
-        tools = [t for t in tools if t["name"] in GUEST_TOOLS]
+        tools = [t for t in tools if t["name"] in guest_tools()]
     return tools
 
 
@@ -211,7 +316,7 @@ def dispatch_tool(name: str, args: dict, local: bool = True,
     # The tool list is built per turn from a request the client shapes; this is
     # the point where the work would actually happen, so this is where a guest
     # has to be stopped for the refusal to mean anything.
-    if guest and name not in GUEST_TOOLS:
+    if guest and name not in guest_tools():
         return "Not available on a guest account.", True
     kit = TOOL_OWNER.get(name)
     if kit is None:
@@ -926,6 +1031,11 @@ def tier(request: Request) -> str:
     every tool, every toolkit, no session clock, no idle timeout, no cap on
     what it may read or change. Guests get the default-deny list in GUEST_TOOLS
     and nothing else. There is deliberately no middle.
+
+    THERE IS NOW A TEMPORARY middle, and it is temporary on purpose: see
+    GUEST_EXTRA_TOOLS, which the owner lent to guests for a week. It is a loan
+    with an expiry rather than a third tier, so it cannot quietly become one —
+    when the date passes, guest_tools() returns the list above again.
 
     ONE THING IS STILL WITHHELD FROM THE OWNER, and it is worth being explicit
     that it is not an oversight: computer control and input automation are
@@ -2510,8 +2620,13 @@ async def tts(request: Request, _=Depends(require_auth)):
         try:
             audio = await _edge_tts(text, voice, lang)
         except Exception as e:
+            # Written down, because the page falls back to the browser voice
+            # and until now nothing on this side recorded why. The sentence
+            # itself is NOT logged — it may be anything Bella was saying.
+            print(f"{C_AMBER}  ! voice render failed: {type(e).__name__}: {str(e)[:160]}{C_OFF}")
             raise HTTPException(502, f"Text-to-speech failed: {str(e)[:200]}")
     if not audio:
+        print(f"{C_AMBER}  ! voice render returned no audio ({len(text)} chars){C_OFF}")
         raise HTTPException(502, "Text-to-speech produced no audio.")
     return Response(content=audio, media_type="audio/mpeg")
 
@@ -3745,8 +3860,14 @@ def banner(port: int):
     # the whole point is that it should never be mistaken for a second owner.
     guest_line = ""
     if GUEST_EMAILS and AUTH_MODE != "open":
+        # What they can do RIGHT NOW, and until when if it is on loan — the
+        # banner is where the owner looks to see what they have handed out.
+        _lent = guest_extra_live()
+        _until = (" until " + time.strftime("%d %b", time.localtime(GUEST_EXTRA_UNTIL))
+                  if _lent else "")
         guest_line = (f"\n  {C_DIM}guests{C_OFF}      {C_AMBER}{', '.join(sorted(GUEST_EMAILS))}{C_OFF} "
-                      f"{C_DIM}({len(GUEST_TOOLS)} tools — own google + lookups only"
+                      f"{C_DIM}({len(guest_tools())} tools — "
+                      f"{'all except the pc' + _until if _lent else 'own google + lookups only'}"
                       # Guests keep the clocks the owner is exempt from, so say so
                       # here rather than leaving the line above to speak for both.
                       f"{f', {session.IDLE_AGE / 60:g}m idle' if OWNER_UNLIMITED else ''}){C_OFF}")
