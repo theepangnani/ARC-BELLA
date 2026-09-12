@@ -129,6 +129,21 @@ never through git, never through email:
 `.gitignore` already refuses all of them. If you add a file that holds a
 secret or personal data, add it there in the same change.
 
+## Start of every session: assume something changed
+
+The owner works from two machines with a Claude on each, and moves between
+them. So when they come to you, the other one has usually been working — and
+nothing of that session reaches this one. Before editing, and before answering
+"how is she doing":
+
+1. `git fetch` and compare with `origin/main`. Say what arrived, if anything.
+2. On the desktop, compare what is RUNNING with what is on disk: the live
+   instances serve from this working tree, so pulling changes the page on the
+   next reload but the Python only on the next restart. "It is pushed" and "she
+   is running it" are different sentences.
+
+Guessing here is how the owner gets told a fix is live when it is not.
+
 ## Working from two machines
 
 The owner edits from a desktop at home and a laptop when out. Both clone this
