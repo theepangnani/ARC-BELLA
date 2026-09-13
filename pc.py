@@ -1797,6 +1797,97 @@ _DISPATCH = {
 }
 
 
+# --- checking her own work ----------------------------------------------------
+#
+# "Type this on my screen" used to end with the keystrokes sent and a sentence
+# telling the model to check with a screenshot before saying it worked. Whether
+# it checked was up to the model, and a model that has just done something is
+# exactly the one most inclined to believe it went fine. So the check is no
+# longer a suggestion: after anything that changes what is on the screen, the
+# tool itself waits for the screen to settle, photographs the window now in
+# front, and hands that picture back WITH its result. The reply cannot be
+# written without the evidence having been in front of it.
+#
+# ARC_VERIFY_ACTIONS=0 turns it off (each check is one image, which costs money).
+
+VERIFY = os.getenv("ARC_VERIFY_ACTIONS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# How long the screen needs before the picture means anything, per tool. An app
+# takes a second or two to draw its window; a keystroke is on screen at once.
+_SETTLE = {"keyboard": 0.45, "mouse_control": 0.6, "focus_window": 0.35,
+           "close_window": 0.6, "open_app": 1.8, "open_website": 2.2,
+           "open_file": 1.8, "message_app": 1.5}
+
+# Only the mouse actions that change something. Asking where the pointer is
+# needs no photograph.
+_SEEN_MOUSE = {"click", "left", "left_click", "double", "double_click", "doubleclick",
+               "right", "right_click", "rightclick", "scroll"}
+
+_CHECK = (
+    "CHECK YOUR WORK. The picture below was taken {secs:.1f}s after that, of {what}. "
+    "Look at it before you tell the user anything. If it shows the thing done — the "
+    "text is in the box, the page or app is open, the click landed where it should — "
+    "say so in a few words. If it does not — the text went into a different window, "
+    "nothing opened, a dialog or sign-in is in the way, or you cannot tell — say "
+    "exactly what you see instead, then fix it or ask. Never say it worked when the "
+    "picture does not show it. If the picture shows a password or other secret, "
+    "do not read it out.")
+
+
+def _needs_look(name: str, args: dict) -> bool:
+    if not VERIFY or name not in _SETTLE:
+        return False
+    if name == "mouse_control":
+        return str((args or {}).get("action") or "").strip().lower() in _SEEN_MOUSE
+    return True
+
+
+def _grab_front():
+    """(image, label, origin) of the window in front, or of the primary monitor
+    when the window is minimised, tiny, or cannot be measured. Module level so a
+    test can swap it: the real one photographs the machine running the test."""
+    from PIL import ImageGrab
+    hwnd, title = _focused()
+    rect = None
+    if IS_WIN and hwnd:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        try:
+            u.SetProcessDPIAware()        # rects in real pixels, like the capture
+        except Exception:
+            pass
+        r = wintypes.RECT()
+        if not u.IsIconic(hwnd) and u.GetWindowRect(hwnd, ctypes.byref(r)):
+            if r.right - r.left >= 160 and r.bottom - r.top >= 80:
+                rect = (r.left, r.top, r.right, r.bottom)
+    if rect:
+        label = "the window in front, “%s”" % (title[:80] or "untitled")
+        return ImageGrab.grab(bbox=rect, all_screens=True), label, (rect[0], rect[1])
+    mons = _list_monitors()
+    b = mons[0] if mons else None
+    if b:
+        return ImageGrab.grab(bbox=b, all_screens=True), "the primary screen", (b[0], b[1])
+    return ImageGrab.grab(), "the screen", (0, 0)
+
+
+def _look_after(name: str, said: str) -> list:
+    """The tool's own result, then the picture that checks it. Never raises: a
+    check that cannot be taken says so, and the action it was checking still
+    stands as done."""
+    secs = _SETTLE.get(name, 0.5)
+    try:
+        time.sleep(secs)
+        img, label, origin = _grab_front()
+        shot = _encode_shot(img, label, origin)
+    except Exception as e:
+        return [{"type": "text", "text": said + (
+            "\n\nI could not take a picture to check this (%s: %s), so it is NOT "
+            "confirmed — tell the user you could not check it, rather than that it "
+            "worked." % (type(e).__name__, str(e)[:120]))}]
+    return [{"type": "text", "text": said + "\n\n" + _CHECK.format(secs=secs, what=label)}] + shot
+
+
 def run_tool(name: str, args: dict, local: bool = True) -> tuple[str, bool]:
     if CLOUD:
         return "Computer control isn't available on the hosted version of ARC.", True
@@ -1812,6 +1903,9 @@ def run_tool(name: str, args: dict, local: bool = True) -> tuple[str, bool]:
         # pass that through untouched. Everything else is plain text.
         if isinstance(result, list):
             return result, False
+        # Something on the screen changed: hand back the picture that checks it.
+        if _needs_look(name, args):
+            return _look_after(name, str(result)), False
         return str(result), False
     except TypeError as e:
         return f"Wrong arguments for {name}: {e}", True
