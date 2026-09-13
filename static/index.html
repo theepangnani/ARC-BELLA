@@ -818,7 +818,7 @@
      the previous two were identical but separate, and a third copy is the point
      at which they start drifting apart by a pixel each. Only POSITION differs
      per card, below. */
-  .forecast, .stocks, .agenda, .nowplaying, .plan {
+  .forecast, .stocks, .agenda, .nowplaying, .plan, .chart {
     /* --cs is the card's own scale, set by dragging its corner. Every size
        inside a card is written against it, so a card grows the way an image in
        Slides does — text and all — rather than becoming a wider box with the
@@ -835,7 +835,7 @@
   .forecast { top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
 
   .forecast::after, .stocks::after, .agenda::after, .nowplaying::after,
-  .plan::after {
+  .plan::after, .chart::after {
     content: ""; position: absolute; right: 0; bottom: 0;
     width: 15px; height: 15px; cursor: nwse-resize;
     background:
@@ -846,9 +846,9 @@
   }
   .forecast:hover::after, .stocks:hover::after,
   .agenda:hover::after, .nowplaying:hover::after,
-  .plan:hover::after { opacity: .8; }
+  .plan:hover::after, .chart:hover::after { opacity: .8; }
   .forecast.sizing, .stocks.sizing, .agenda.sizing, .nowplaying.sizing,
-  .plan.sizing {
+  .plan.sizing, .chart.sizing {
     user-select: none;
   }
 
@@ -923,9 +923,50 @@
   /* below the 3-rail breakpoint the centre is cramped — hide it */
   @media (max-width: 1180px) { .forecast { display: none; } }
 
+  /* One stock, over time. Wider than the other cards because a line squeezed
+     into 190px is a decoration rather than a chart — you cannot read a trend
+     off forty pixels of width. */
+  .chart { top: 470px; right: calc(clamp(240px, 19vw, 380px) + 34px);
+           width: calc(268px * var(--cs)); }
+  .chart .ch-top {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 6px;
+    font-size: calc(8.5px * var(--cs)); letter-spacing: .22em; text-transform: uppercase;
+    color: var(--cyan-dim); margin-bottom: calc(4px * var(--cs));
+  }
+  .chart .ch-sym { color: var(--ice); }
+  .chart .ch-line { display: flex; align-items: baseline; gap: calc(7px * var(--cs)); }
+  .chart .ch-price {
+    font-family: var(--display); font-size: calc(21px * var(--cs));
+    line-height: 1; color: var(--accent);
+  }
+  .chart .ch-move { font-size: calc(10px * var(--cs)); letter-spacing: .04em; }
+  .chart .ch-up { color: #8affd4; }
+  .chart .ch-down { color: #ff7a8a; }
+  .chart canvas {
+    display: block; width: 100%; height: calc(96px * var(--cs));
+    margin: calc(7px * var(--cs)) 0 calc(3px * var(--cs));
+  }
+  .chart .ch-ranges { display: flex; gap: calc(4px * var(--cs)); }
+  .chart .ch-r {
+    flex: 1; text-align: center; cursor: pointer;
+    font-size: calc(8px * var(--cs)); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--cyan-dim); border: 1px solid rgba(95,217,255,.18);
+    padding: calc(2px * var(--cs)) 0; transition: color .15s, border-color .15s;
+  }
+  .chart .ch-r:hover { color: var(--ice); border-color: rgba(95,217,255,.4); }
+  .chart .ch-r.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
+  /* The caption is not decoration. A line going up invites a conclusion the
+     line cannot support, so the card says what it is every time it is read. */
+  .chart .ch-foot {
+    font-size: calc(7.5px * var(--cs)); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--cyan-dim); opacity: .55; margin-top: calc(5px * var(--cs));
+    text-align: center;
+  }
+  @media (max-width: 1180px) { .chart { display: none; } }
+
   /* draggable HUD panels — grab anywhere to reposition */
-  .forecast, .stocks { cursor: grab; }
-  .forecast.dragging, .stocks.dragging {
+  .forecast, .stocks, .chart { cursor: grab; }
+  .forecast.dragging, .stocks.dragging, .chart.dragging {
     cursor: grabbing; z-index: 30;
     box-shadow: 0 0 34px rgba(95,217,255,.28), inset 0 0 22px rgba(95,217,255,.08);
     border-color: rgba(95,217,255,.5);
@@ -1500,6 +1541,10 @@
 <!-- live weather, floating in the top-right of the main area (Stark-style) -->
 <div class="forecast" id="forecast" aria-live="polite"></div>
 <div class="stocks" id="stocks" aria-live="polite"></div>
+<!-- One stock, drawn. The markets panel above answers "what is it at"; this
+     answers "what has it been doing", which is the question a number on its
+     own cannot. Hidden until a stock is being watched. -->
+<div class="chart" id="chart" aria-live="polite" hidden></div>
 <!-- The rest of today, and what is playing — the left of the stage, mirroring
      the weather and the markets on the right. Both hide themselves when they
      have nothing to say rather than sitting there empty. -->
@@ -3021,9 +3066,17 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
       return "";
     });
 
-    out = out.replace(/\[\[\s*market\s*:\s*(add|remove|del|delete|drop)\s+([^\]]+?)\s*\]\]/gi, (_, op, name) => {
+    out = out.replace(/\[\[\s*market\s*:\s*(add|remove|del|delete|drop|watch|chart)\s+([^\]]+?)\s*\]\]/gi, (_, op, name) => {
       if (window.arcMarket) {
         if (/^add$/i.test(op)) window.arcMarket.add(name);
+        // "watch Nvidia" puts it on the chart AND on the panel: asking to
+        // watch something you are not tracking and getting a chart that
+        // vanishes on reload would be a trapdoor.
+        else if (/^(watch|chart)$/i.test(op)) {
+          Promise.resolve(window.arcMarket.add(name)).then(sym => {
+            if (sym && window.arcChart) window.arcChart.watch(sym);
+          });
+        }
         else window.arcMarket.remove(name);
       }
       return "";
@@ -9115,7 +9168,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           '" autocomplete="off" spellcheck="false">';
         html += '<div class="st-hint">enter to set · esc to cancel</div>';
       } else {
-        html += '<div class="st-hint">＋ add · click to change · ✕ to remove</div>';
+        html += '<div class="st-hint">＋ add · name to chart · price to change · ✕ remove</div>';
       }
       box.innerHTML = html;
       if (editIdx !== null) {
@@ -9152,6 +9205,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       if (isNaN(i) || i >= tickers.length) return;
       // The ✕ button (or the old shift-click) removes this market.
       if (e.target.closest(".st-del") || e.shiftKey) { removeAt(i); return; }
+      // The NAME puts it on the chart; the price still opens the editor. Two
+      // actions in one row, split where the meaning already is: you point at
+      // what a thing is called to say "that one", and at its number to change
+      // it.
+      if (e.target.closest(".st-sym")) {
+        if (window.arcChart) window.arcChart.watch(tickers[i]);
+        render();
+        return;
+      }
       editIdx = i;
       render();
     });
@@ -9217,11 +9279,206 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       removeAt(i);
       return gone;
     }
-    window.arcMarket = { add: addTicker, remove: removeTicker, list: () => tickers.slice() };
+    window.arcMarket = { add: addTicker, remove: removeTicker, list: () => tickers.slice(),
+                         watch: sym => window.arcChart && window.arcChart.watch(sym),
+                         watching: () => window.arcChart && window.arcChart.watching() };
 
     render();
     load();
     setInterval(load, 60000);
+  })();
+
+  /* ---------------- one stock, drawn ----------------
+     The markets panel says what a stock is at. That is the smaller half of the
+     question: "NVDA 178, +1.2%" tells you nothing about whether it has been
+     climbing all quarter or fell off a cliff on Tuesday and is bouncing. This
+     draws the one stock being watched, from the same daily closes the outlook
+     tool measures — so the picture and the words can never disagree.
+
+     WHAT IT DELIBERATELY IS NOT: a forecast. The line stops at today. Nothing
+     is extrapolated, no trend line is drawn forward, and the caption says so
+     on every render, because a rising line invites a conclusion it cannot
+     support and the person reading it is deciding what to do with money. The
+     honest forward-looking answer lives in market_outlook, which gives a RANGE
+     and says out loud that nobody knows. */
+  (function stockChart() {
+    const box = document.getElementById("chart");
+    if (!box) return;
+    const RANGES = ["1m", "3m", "6m", "1y"];
+    let symbol = "";
+    let range = "6m";
+    try {
+      symbol = localStorage.getItem("arc.chart.symbol") || "";
+      const r = localStorage.getItem("arc.chart.range");
+      if (RANGES.indexOf(r) >= 0) range = r;
+    } catch (_) {}
+    let data = null;          // last good answer; kept through a blip like the panel above
+    let loading = false;
+    let failed = false;
+
+    function save() {
+      try {
+        localStorage.setItem("arc.chart.symbol", symbol);
+        localStorage.setItem("arc.chart.range", range);
+      } catch (_) {}
+    }
+
+    function money(v) {
+      if (v == null) return "—";
+      return v >= 1000 ? Math.round(v).toLocaleString()
+                       : (Math.round(v * 100) / 100).toString();
+    }
+
+    async function load() {
+      if (!symbol || loading) return;
+      loading = true;
+      try {
+        const r = await fetch("/api/stock-history?symbol=" + encodeURIComponent(symbol) +
+                              "&range=" + encodeURIComponent(range));
+        if (!r.ok) throw new Error("http " + r.status);
+        const d = await r.json();
+        if (d && d.days && d.days.length) { data = d; failed = false; }
+        else failed = !data;         // an unknown ticker, or Yahoo having a moment
+      } catch (_) {
+        failed = !data;              // keep the last good line rather than blanking it
+      } finally {
+        loading = false;
+        render();
+      }
+    }
+
+    function draw(canvas) {
+      const days = (data && data.days) || [];
+      if (days.length < 2) return;
+      // Canvases are sized in CSS pixels and drawn in device pixels; skipping
+      // this is why a chart looks soft on a phone and on any scaled display.
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h) return;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      const g = canvas.getContext("2d");
+      if (!g) return;
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, w, h);
+
+      const css = getComputedStyle(document.documentElement);
+      const accent = (css.getPropertyValue("--accent") || "#5fd9ff").trim();
+      const up = "#8affd4", down = "#ff7a8a";
+      const rising = days[days.length - 1].c >= days[0].c;
+      const line = rising ? up : down;
+
+      const lo = Math.min.apply(null, days.map(d => d.c));
+      const hi = Math.max.apply(null, days.map(d => d.c));
+      // A flat series would divide by zero and draw a line off the top.
+      const span = (hi - lo) || Math.max(hi * 0.01, 0.01);
+      const padT = 8, padB = 8;
+      // padR exists for the dot on today: drawn at exactly w it is half
+      // outside the canvas and reads as a clipped smudge, on the one point
+      // that matters most.
+      const padR = 4;
+      const x = i => (i / (days.length - 1)) * (w - padR);
+      const y = c => padT + (1 - (c - lo) / span) * (h - padT - padB);
+
+      // The opening price as a dashed baseline: it turns "the line is up here"
+      // into "it is above where this window started", which is the comparison
+      // somebody actually makes.
+      g.setLineDash([3, 4]);
+      g.strokeStyle = "rgba(95,217,255,.30)";
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(0, y(days[0].c)); g.lineTo(w, y(days[0].c)); g.stroke();
+      g.setLineDash([]);
+
+      g.beginPath();
+      days.forEach((d, i) => { i ? g.lineTo(x(i), y(d.c)) : g.moveTo(x(i), y(d.c)); });
+      const fill = g.createLinearGradient(0, 0, 0, h);
+      fill.addColorStop(0, rising ? "rgba(138,255,212,.22)" : "rgba(255,122,138,.20)");
+      fill.addColorStop(1, "rgba(0,0,0,0)");
+      g.save();
+      g.lineTo(x(days.length - 1), h); g.lineTo(0, h); g.closePath();
+      g.fillStyle = fill; g.fill();
+      g.restore();
+
+      g.beginPath();
+      days.forEach((d, i) => { i ? g.lineTo(x(i), y(d.c)) : g.moveTo(x(i), y(d.c)); });
+      g.strokeStyle = line; g.lineWidth = 1.6; g.lineJoin = "round"; g.stroke();
+
+      // Today, marked. Without it the eye lands on the highest point rather
+      // than the last one, which is the opposite of what matters.
+      const lastX = x(days.length - 1), lastY = y(days[days.length - 1].c);
+      g.beginPath(); g.arc(lastX, lastY, 2.6, 0, Math.PI * 2);
+      g.fillStyle = accent; g.fill();
+    }
+
+    function render() {
+      if (!symbol) { box.hidden = true; return; }
+      box.hidden = false;
+      const sym = symbol.replace("-USD", "");
+      if (failed && !data) {
+        box.innerHTML = '<div class="ch-top"><span class="ch-sym">' + sym + '</span>' +
+          '<span>no data</span></div>' +
+          '<div class="ch-foot">Nothing came back for that ticker.</div>';
+        return;
+      }
+      const d = data || {};
+      const pct = (d.pct == null) ? "" : (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
+      const cls = (d.pct == null) ? "" : (d.pct >= 0 ? "ch-up" : "ch-down");
+      let html = '<div class="ch-top"><span class="ch-sym">' + sym + '</span>' +
+        '<span>' + range + ' · ' + (d.currency || "") + '</span></div>' +
+        '<div class="ch-line"><span class="ch-price">' + money(d.last) + '</span>' +
+        '<span class="ch-move ' + cls + '">' + pct + '</span></div>' +
+        '<canvas></canvas><div class="ch-ranges">';
+      RANGES.forEach(r => {
+        html += '<span class="ch-r' + (r === range ? " on" : "") + '" data-r="' + r + '">' +
+                r + '</span>';
+      });
+      html += '</div><div class="ch-foot">' +
+        (d.low != null ? "Low " + money(d.low) + " · high " + money(d.high) + " · " : "") +
+        'past prices, not a forecast</div>';
+      box.innerHTML = html;
+      const canvas = box.querySelector("canvas");
+      if (canvas) requestAnimationFrame(() => draw(canvas));
+    }
+
+    box.addEventListener("click", e => {
+      const r = e.target.closest(".ch-r");
+      if (!r) return;
+      const want = r.getAttribute("data-r");
+      if (!want || want === range) return;
+      range = want; save(); render(); load();
+    });
+
+    // The card is resizable and the window moves; a canvas does not reflow, it
+    // stretches, so it has to be redrawn rather than left to scale.
+    let redrawTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(redrawTimer);
+      redrawTimer = setTimeout(render, 150);
+    });
+
+    function watch(sym) {
+      const want = String(sym || "").trim().toUpperCase();
+      if (!want || want === symbol) return symbol;
+      symbol = want; data = null; failed = false;
+      save(); render(); load();
+      return symbol;
+    }
+
+    window.arcChart = { watch, watching: () => symbol, refresh: load };
+
+    // Nothing watched yet: take the first ticker on the markets panel, so the
+    // card arrives with something real in it rather than asking to be set up.
+    if (!symbol) {
+      try {
+        const list = (window.arcMarket && window.arcMarket.list()) || [];
+        if (list.length) { symbol = String(list[0]).toUpperCase(); save(); }
+      } catch (_) {}
+    }
+    render();
+    load();
+    // Daily closes change once a day; this is for the last point moving during
+    // trading hours, and matches the outlook's own five-minute cache.
+    setInterval(load, 5 * 60 * 1000);
   })();
 
   /* ---------- draggable HUD panels ----------
@@ -9353,7 +9610,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // below, which is exactly why the agenda and now-playing cards arrived
     // undraggable — adding a card meant remembering three places, and the third
     // is always the one that is missed.
-    const CARDS = ["forecast", "stocks", "agenda", "nowplaying", "plan"];
+    const CARDS = ["forecast", "stocks", "agenda", "nowplaying", "plan", "chart"];
     CARDS.forEach(id => makeDraggable(document.getElementById(id)));
 
     // Keep panels on-screen if the window shrinks.

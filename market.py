@@ -26,6 +26,8 @@ Free data, no key: the same Yahoo chart endpoint the quote widget already uses.
 
 import math
 import statistics
+import threading
+import time
 
 import httpx
 
@@ -57,12 +59,34 @@ def connected() -> bool:
 
 # --- data ------------------------------------------------------------------
 
-def _history(symbol: str):
-    """Daily closes for the last year. Returns (symbol, currency, [closes]) or
-    None. Closes are cleaned of the nulls Yahoo returns for halted days."""
+# A year of daily closes is ~250 numbers and changes once a day. The chart on
+# the HUD asks for the same series every time somebody switches range or opens
+# the panel, and the outlook tool asks for it again — so one fetch is kept for
+# a few minutes and handed to all of them. Yahoo is free and ungoverned by any
+# agreement with us; hammering it for a number that moves once a day would be
+# rude as well as slow.
+_SERIES_TTL = 300
+_series_cache: dict[str, tuple[float, dict]] = {}
+_series_lock = threading.RLock()
+
+
+def series(symbol: str):
+    """A year of daily closes WITH their dates, cached.
+
+    Returns {"symbol", "currency", "days": [{"t": unix, "c": close}, ...]} or
+    None. The dates are what separates this from _history: a chart drawn on
+    evenly spaced points quietly lies about weekends, holidays and halted days,
+    and the gap between Christmas and New Year is exactly where a line looks
+    like it did something it did not.
+    """
     sym = (symbol or "").strip().upper()
     if not sym:
         return None
+    now = time.time()
+    with _series_lock:
+        hit = _series_cache.get(sym)
+        if hit and now - hit[0] < _SERIES_TTL:
+            return hit[1]
     try:
         with httpx.Client(timeout=12, headers={"User-Agent": "Mozilla/5.0"}) as c:
             d = c.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
@@ -74,10 +98,33 @@ def _history(symbol: str):
         return None
     meta = res.get("meta", {})
     quotes = (res.get("indicators", {}).get("quote") or [{}])[0]
-    closes = [c for c in (quotes.get("close") or []) if isinstance(c, (int, float))]
-    if len(closes) < 30:
+    stamps = res.get("timestamp") or []
+    raw = quotes.get("close") or []
+    # Zip rather than filter each list on its own: dropping a null close
+    # without dropping its date shifts every later point one day to the left,
+    # which is a wrong chart rather than a gappy one.
+    days = [{"t": int(t), "c": float(c)}
+            for t, c in zip(stamps, raw)
+            if isinstance(c, (int, float)) and isinstance(t, (int, float))]
+    if len(days) < 30:
         return None
-    return meta.get("symbol", sym), meta.get("currency", ""), closes
+    out = {"symbol": meta.get("symbol", sym),
+           "currency": meta.get("currency", ""), "days": days}
+    with _series_lock:
+        _series_cache[sym] = (now, out)
+    return out
+
+
+def _history(symbol: str):
+    """Daily closes for the last year. Returns (symbol, currency, [closes]) or
+    None. Closes are cleaned of the nulls Yahoo returns for halted days.
+
+    Now a thin view over series(), so the measurements and the chart cannot
+    disagree about what the price did — and so they share one fetch."""
+    got = series(symbol)
+    if not got:
+        return None
+    return got["symbol"], got["currency"], [d["c"] for d in got["days"]]
 
 
 # --- the measurements ------------------------------------------------------

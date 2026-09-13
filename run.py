@@ -2673,6 +2673,47 @@ async def stocks(request: Request, _=Depends(require_auth)):
     return JSONResponse({"quotes": quotes})
 
 
+@app.get("/api/stock-history")
+async def stock_history(request: Request, _=Depends(require_auth)):
+    """Daily closes for one ticker, for the chart on the HUD.
+
+    Same reason as the quote proxy above — the browser cannot call Yahoo
+    directly — with the window applied HERE rather than in the page. A year is
+    about 250 points; sending all of them so the browser can draw thirty is a
+    waste of a phone's data allowance on a tunnel, every time somebody taps a
+    range button.
+    """
+    sym = (request.query_params.get("symbol") or "").strip().upper()[:16]
+    if not sym:
+        raise HTTPException(400, "Which ticker?")
+    # Trading days, not calendar days: the series itself is trading days.
+    WINDOWS = {"1m": 21, "3m": 63, "6m": 126, "1y": 252}
+    window = WINDOWS.get((request.query_params.get("range") or "6m").lower(), 126)
+
+    def _fetch():
+        return market.series(sym)
+
+    try:
+        import anyio
+        got = await anyio.to_thread.run_sync(_fetch)
+    except Exception:
+        got = None
+    if not got:
+        # Not an error the page should shout about: an unknown ticker and a
+        # Yahoo hiccup look the same from here, and both mean "no line today".
+        return JSONResponse({"symbol": sym, "days": [], "currency": ""})
+    days = got["days"][-window:]
+    first, last = (days[0]["c"], days[-1]["c"]) if days else (None, None)
+    return JSONResponse({
+        "symbol": got["symbol"], "currency": got["currency"], "days": days,
+        "first": first, "last": last,
+        "change": (last - first) if (first is not None and last is not None) else None,
+        "pct": ((last - first) / first * 100) if first else None,
+        "high": max((d["c"] for d in days), default=None),
+        "low": min((d["c"] for d in days), default=None),
+    })
+
+
 @app.get("/api/stock-search")
 async def stock_search(request: Request, _=Depends(require_auth)):
     """Resolve a typed name/ticker to a real symbol for the widget's editor,
