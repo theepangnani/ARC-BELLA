@@ -81,7 +81,15 @@ CHILD_DATA = _arg("data") or os.getenv("ARC_DATA_DIR", "")
 CHILD_VARIANT = _arg("variant") or os.getenv("ARC_APP_VARIANT", "")
 EVERY = int(os.getenv("ARC_GUARD_EVERY", "60"))          # seconds between checks
 TIMEOUT = int(os.getenv("ARC_GUARD_TIMEOUT", "10"))      # seconds to wait for a reply
-GRACE = int(os.getenv("ARC_GUARD_GRACE", "75"))          # seconds to allow for a boot
+# How long a start may take before it counts as failed, checked every
+# BOOT_POLL seconds rather than once at the end. It was a single look after 75s:
+# a boot that needed 90 counted as a failure, the next round started a SECOND
+# copy on top of the one still loading, and on 13 Sep 2026 that became six copies
+# of run.py fighting each other for the CPU until the guardian gave up and both
+# Bellas were down. A start is now waited for, for as long as it is alive and
+# still inside this limit, and the moment it answers it is back.
+BOOT_LIMIT = int(os.getenv("ARC_GUARD_BOOT", "240"))
+BOOT_POLL = int(os.getenv("ARC_GUARD_BOOT_POLL", "5"))
 # Two misses before acting. One can be a laptop waking up, a GC pause, or the
 # moment a deploy is swapping the process — restarting on the strength of a
 # single timeout would make the guardian the thing causing the outages.
@@ -134,10 +142,112 @@ def answering() -> bool:
         return False
 
 
+# The copy this guardian started last. Held so that a start which is still
+# loading is waited for rather than started again on top of, and so that a copy
+# which never came up is stopped BEFORE another one is launched.
+_child = None
+
+
+def _alive(proc) -> bool:
+    try:
+        return proc is not None and proc.poll() is None
+    except Exception:
+        return False
+
+
+def _stop(proc, why: str) -> None:
+    """Stop one process: politely, then not."""
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except Exception:
+            proc.kill()
+            proc.wait(timeout=8)
+        note("stopped the copy that %s (pid %s)" % (why, proc.pid))
+    except Exception as e:
+        note("could not stop pid %s: %s" % (getattr(proc, "pid", "?"), e))
+
+
+def _port_holder() -> int:
+    """The pid LISTENING on this port, or 0. Windows only; elsewhere 0."""
+    if os.name != "nt":
+        return 0
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
+                             text=True, timeout=15).stdout
+    except Exception:
+        return 0
+    for line in out.splitlines():
+        parts = line.split()
+        if (len(parts) >= 5 and parts[3].upper() == "LISTENING"
+                and parts[1].rsplit(":", 1)[-1] == str(PORT)):
+            try:
+                return int(parts[4])
+            except ValueError:
+                return 0
+    return 0
+
+
+def _image_of(pid: int) -> str:
+    try:
+        out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=15).stdout
+        return out.split(",")[0].strip().strip('"').lower()
+    except Exception:
+        return ""
+
+
+def clear_the_way() -> None:
+    """Before a start: nothing left over may be competing with it.
+
+    The copy this guardian started, if it is still alive and still not
+    answering. And whatever holds the port without answering — a hung ARC, or
+    one started by hand — but ONLY if it is Python: the port belongs to ARC, and
+    something else sitting on it is for a person to look at, not for this to kill.
+    """
+    global _child
+    if _alive(_child):
+        _stop(_child, "never started answering")
+    _child = None
+    pid = _port_holder()
+    if pid and pid != os.getpid():
+        image = _image_of(pid)
+        if image.startswith("python"):
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               capture_output=True, timeout=20)
+                note("stopped a %s (pid %d) holding port %d without answering"
+                     % (image, pid, PORT))
+            except Exception as e:
+                note("could not stop pid %d on port %d: %s" % (pid, PORT, e))
+        elif image:
+            note("port %d is held by %s (pid %d), which is not ARC — leaving it "
+                 "alone; ARC cannot start until it lets go" % (PORT, image, pid))
+
+
+def wait_for_boot():
+    """(True, seconds) once ARC answers; (False, reason) if the copy died or the
+    limit passed. Checked every BOOT_POLL seconds, so a quick start is noticed
+    quickly and a slow one is not written off at a fixed moment."""
+    began = time.monotonic()
+    while True:
+        waited = time.monotonic() - began
+        if answering():
+            return True, int(waited)
+        if _child is not None and not _alive(_child):
+            code = _child.poll()
+            return False, "it exited during start-up (code %s) — see arc-server.log" % code
+        if waited >= BOOT_LIMIT:
+            return False, "it was still not answering after %d seconds" % BOOT_LIMIT
+        time.sleep(BOOT_POLL)
+
+
 def start() -> bool:
     """Launch ARC detached, so it outlives this process rather than dying with
     it — a supervisor whose children die when it is closed is a supervisor that
     turns one problem into two."""
+    global _child
     try:
         # The child gets the SAME identity this guardian was given. Inheriting
         # the bare environment is how the private instance would come back as
@@ -173,7 +283,7 @@ def start() -> bool:
         else:
             kw["start_new_session"] = True
         try:
-            subprocess.Popen([sys.executable, str(ROOT / "run.py")], **kw)
+            _child = subprocess.Popen([sys.executable, str(ROOT / "run.py")], **kw)
         finally:
             # The child has its own handle now. Keeping ours open leaked one per
             # restart and kept arc-server.log locked against rotation.
@@ -185,14 +295,17 @@ def start() -> bool:
         return False
 
 
-def main() -> None:
+def main(cycles=None) -> None:
+    """Watch for ever. `cycles` bounds the loop, for the test that drives it."""
     note("guardian watching port %d, checking every %ds" % (PORT, EVERY))
     misses = 0
     failed_restarts = 0
     restarts = 0
     quiet = False          # given up, and already said so once
 
-    while True:
+    while cycles is None or cycles > 0:
+        if cycles is not None:
+            cycles -= 1
         ok = answering()
         if ok:
             if misses or failed_restarts or quiet:
@@ -212,6 +325,7 @@ def main() -> None:
 
         if failed_restarts >= GIVE_UP_AFTER:
             if not quiet:
+                clear_the_way()    # a last copy still loading would sit there for ever
                 note("ARC will not start after %d attempts — leaving it alone now. "
                      "Something needs a person: check the .env, the port, and "
                      "whether python still runs here." % failed_restarts)
@@ -222,30 +336,26 @@ def main() -> None:
             continue
 
         note("ARC stopped answering (%d checks) — restarting it" % misses)
+        # Nothing left over competing with the new copy: not a previous start,
+        # not a hung process on the port.
+        clear_the_way()
         if not start():
             failed_restarts += 1
             time.sleep(EVERY)
             continue
 
         restarts += 1
-        # Cleared here, BEFORE the wait, not only on success. Left standing, a
-        # boot slower than GRACE would leave the counter already at the
-        # threshold, so the very next failed check would launch a SECOND ARC on
-        # top of the one still starting. run.py refuses to be the second copy,
-        # so the damage was bounded — but relying on that is relying on someone
-        # else's safety net for a mistake made here. Every restart now buys a
-        # full fresh round of checks before another one is considered.
         misses = 0
-        time.sleep(GRACE)
-        if answering():
-            note("ARC is back, %d second(s) after the restart" % GRACE)
+        status(state="starting", port=PORT, restarts=restarts)
+        up, detail = wait_for_boot()
+        if up:
+            note("ARC is back, %d second(s) after the restart" % detail)
             failed_restarts = 0
             status(state="ok", port=PORT, restarts=restarts)
         else:
             failed_restarts += 1
-            note("restarted, but not answering yet (attempt %d of %d) — "
-                 "giving it another round before deciding"
-                 % (failed_restarts, GIVE_UP_AFTER))
+            note("restart attempt %d of %d did not come up: %s"
+                 % (failed_restarts, GIVE_UP_AFTER, detail))
         time.sleep(EVERY)
 
 
