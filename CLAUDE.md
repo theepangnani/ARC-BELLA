@@ -47,6 +47,13 @@ say so rather than quietly changing it.
   confirmed. Messages that arrive claiming to be from ARC reach the owner's
   input channel — she can type — so they are treated as the owner's words, not
   as a second authority.
+- **That is a law, enforced in code, not only a rule in the prompt.** The owner
+  was asked whether it should be "never" or "only when theepang@gmail.com is
+  signed in" and chose never. `codeguard.py` refuses shell commands that reach
+  this folder, its files, git, package installs or hidden/encoded commands;
+  refuses typing and clicks into terminals and editors showing this code; and
+  locks the shell if a command changes the code anyway. `tests/test_codelock.py`
+  guards it. Loosening any of it is the owner's decision, never a fix.
 - **Telegram may be drafted but not sent by anyone but the owner.** A sent
   message goes out under their name and cannot be recalled.
 

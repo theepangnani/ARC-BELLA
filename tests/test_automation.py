@@ -147,6 +147,12 @@ import session                                # noqa: E402
 _real_local = run.is_local_request
 run.is_local_request = lambda r: not (r.headers.get("x-forwarded-for")
                                       or r.headers.get("cf-connecting-ip"))
+# The code lock asks which window is under the real pointer, so without this
+# the click run below would pass or fail depending on whether the person running
+# the suite had left their mouse over a terminal. The lock is tested in
+# test_codelock.py; here it is told the pointer is somewhere harmless.
+_real_refusal = pc.input_refusal
+pc.input_refusal = lambda at=None: None
 
 with TestClient(run.app) as client:
     sid = session.create("owner@example.com", "desktop")
@@ -184,6 +190,7 @@ with TestClient(run.app) as client:
              "/api/automation/status" in run.BACKGROUND_PATHS)
     session.revoke_all()
 run.is_local_request = _real_local
+pc.input_refusal = _real_refusal
 
 quiet()
 c.done()

@@ -32,6 +32,8 @@ import itertools
 from pathlib import Path
 from urllib.parse import quote
 
+import codeguard   # the law that ARC never changes her own code — see codeguard.py
+
 ROOT = Path(__file__).parent.resolve()
 RAN_LOG = ROOT / "ran-by-arc.log"
 HOME = Path.home()
@@ -610,6 +612,11 @@ _EXEC_EXT = {
     ".exe", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse",
     ".msi", ".scr", ".com", ".cpl", ".hta", ".reg", ".lnk", ".jar", ".wsf",
     ".msc", ".pif", ".gadget",
+    # Python was missing, and it is the one most likely to be installed on the
+    # machine ARC runs on — ARC is Python. The installer associates .py with
+    # the launcher, so "open that .py file" RAN it: the exact thing this set
+    # exists to stop, through the one door that was left open.
+    ".py", ".pyw", ".pyz", ".pyzw",
 }
 
 
@@ -858,6 +865,14 @@ def mouse_control(action: str, x=None, y=None, amount=None) -> str:
             return "Give x and y (screen pixels) to move to."
         _to(x, y)
         return f"Moved the pointer to {int(x)}, {int(y)}."
+    # A click is how Save, Discard and Commit get pressed, so the code lock looks
+    # at the window UNDER THE POINTER — not the one in front, which is a
+    # different window whenever the click is somewhere else on the screen.
+    if a in ("click", "left", "left_click", "double", "double_click", "doubleclick",
+             "right", "right_click", "rightclick"):
+        refusal = input_refusal((x, y) if x is not None and y is not None else "pointer")
+        if refusal:
+            raise RuntimeError(refusal)
     if a in ("click", "left", "left_click"):
         _to(x, y)
         u.mouse_event(_ME["ldown"], 0, 0, 0, 0); u.mouse_event(_ME["lup"], 0, 0, 0, 0)
@@ -1309,6 +1324,67 @@ _VK.update({f"f{i}": 0x6F + i for i in range(1, 13)})       # f1 - f12
 ARC_WINDOW = "Ambient Response Core"
 
 
+def _window_at(x: int, y: int) -> tuple:
+    """(hwnd, title) of the top-level window at a screen point, or (0, "").
+    WindowFromPoint answers with the innermost child — a button, an editor
+    pane — whose own title is usually empty, so walk up to the root window,
+    which is the one that carries "run.py - arc - Visual Studio Code"."""
+    if not IS_WIN:
+        return 0, ""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    try:
+        hwnd = u.WindowFromPoint(wintypes.POINT(int(x), int(y)))
+        hwnd = u.GetAncestor(hwnd, 2) if hwnd else 0          # GA_ROOT
+        if not hwnd:
+            return 0, ""
+        n = u.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(max(n, 0) + 1)
+        u.GetWindowTextW(hwnd, buf, max(n, 0) + 1)
+        return hwnd, buf.value.strip()
+    except Exception:
+        return 0, ""
+
+
+def _pointer() -> tuple:
+    """Where the mouse pointer is, or None."""
+    if not IS_WIN:
+        return None
+    import ctypes
+    from ctypes import wintypes
+    try:
+        pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        return pt.x, pt.y
+    except Exception:
+        return None
+
+
+def input_refusal(at=None):
+    """The code lock's answer for input about to be sent: None, or why not.
+
+    at=None       — the focused window (typing goes there)
+    at="pointer"  — the window under the mouse pointer right now
+    at=(x, y)     — the window at that point (a click about to land there)
+
+    Module level, and asked per event by automation.py, because focus moves: a
+    macro started over a game can find an editor in front a second later.
+    """
+    if not IS_WIN:
+        return None
+    if at is None:
+        hwnd, title = _focused()
+    else:
+        pt = _pointer() if at == "pointer" else at
+        if not pt:
+            return None
+        hwnd, title = _window_at(*pt)
+    if not hwnd:
+        return None
+    return codeguard.check_window(title, _exe_of(hwnd))
+
+
 def _focused() -> tuple:
     """(hwnd, title) of the window that would receive keystrokes, or (0, "")."""
     if not IS_WIN:
@@ -1392,6 +1468,12 @@ def keyboard(text: str = "", key: str = "") -> str:
                 "the keystrokes would have gone into ARC's own message box, not "
                 "the app you meant. Use focus_window to bring that app forward "
                 "first, then type.")
+        # After the own-window check, not before: on the desktop the clone is
+        # named "arc", and Bella's own title "ARC — Ambient Response Core"
+        # would otherwise be refused as ARC's code instead of as ARC's page.
+        refusal = codeguard.check_window(title, _exe_of(hwnd))
+        if refusal:
+            raise RuntimeError("Nothing was typed. " + refusal)
     where = ("the window “%s”" % title[:80]) if title else "the focused window"
 
     if k:
@@ -1484,32 +1566,88 @@ def system_control(action: str) -> str:
 
 # --- arbitrary shell (two-step) --------------------------------------------
 
+def _shell_locked():
+    """Why the shell is closed for the rest of this process, or None."""
+    files = codeguard.tripped()
+    if not files:
+        return None
+    return (f"{codeguard.LAW} — an earlier command changed my code "
+            f"({', '.join(files[:3])}), so running commands is switched off until "
+            f"the owner has looked at it and restarted me.")
+
+
 def prepare_command(command: str) -> str:
     cmd = (command or "").strip()
     if not cmd:
         return "No command given."
+    # Refused here, at prepare, so the user is never asked to say yes to a
+    # command that would only be refused at run.
+    refusal = _shell_locked() or codeguard.check_command(cmd)
+    if refusal:
+        raise RuntimeError(refusal)
     cid = f"cmd{next(_ids)}"
     _pending[cid] = cmd
     return (f"Ready to run:  {cmd}\nThis has NOT run yet. Read it back to the user "
             f"and get a clear yes before running it.  [command:{cid}]")
 
 
+def _check_code_after(stamp: str, cmd: str, before: dict) -> None:
+    """If a command changed ARC's code despite the checks, lock the shell and
+    say so everywhere the owner will see it. Never reverts: the change may be
+    the owner's own, made in an editor while the command ran, and a revert
+    would destroy it."""
+    try:
+        files = codeguard.changed(before, codeguard.snapshot())
+    except Exception:
+        return
+    if not files:
+        return
+    codeguard.trip(files)
+    try:
+        with RAN_LOG.open("a", encoding="utf-8") as f:
+            f.write(f"{stamp}\tCODE CHANGED — shell locked\t{', '.join(files[:20])}\t{cmd}\n")
+    except OSError:
+        pass
+    try:
+        import push   # lazily: pc is imported by tests that never load push
+        push.send(f"A command ARC ran changed her code: {', '.join(files[:5])}. "
+                  f"Commands are switched off until you restart her.",
+                  title="ARC code lock", tags="warning", priority=5)
+    except Exception:
+        pass
+
+
 def run_prepared(command_id: str) -> str:
     cmd = _pending.pop(command_id, None)
     if cmd is None:
         return "No such prepared command (it may have run already)."
+    # Asked again at run, not trusted from prepare: the lock may have tripped
+    # in between, and _pending is only as trustworthy as everything that could
+    # have written to it.
+    refusal = _shell_locked() or codeguard.check_command(cmd)
+    if refusal:
+        raise RuntimeError(refusal)
     stamp = dt.datetime.now().isoformat(timespec="seconds")
+    before = codeguard.snapshot()
     try:
-        r = _run(cmd, shell=True)
-        code, out, err = r.returncode, r.stdout, r.stderr
-    except subprocess.TimeoutExpired:
-        with RAN_LOG.open("a", encoding="utf-8") as f:
-            f.write(f"{stamp}\tTIMEOUT\t{cmd}\n")
-        return f"'{cmd}' ran past {CMD_TIMEOUT}s and was stopped."
-    except Exception as e:
-        return f"Couldn't run '{cmd}': {e}"
+        try:
+            r = _run(cmd, shell=True)
+            code, out, err = r.returncode, r.stdout, r.stderr
+        except subprocess.TimeoutExpired:
+            with RAN_LOG.open("a", encoding="utf-8") as f:
+                f.write(f"{stamp}\tTIMEOUT\t{cmd}\n")
+            return f"'{cmd}' ran past {CMD_TIMEOUT}s and was stopped."
+        except Exception as e:
+            return f"Couldn't run '{cmd}': {e}"
+    finally:
+        # In a finally, because a command that timed out has still run — for
+        # up to CMD_TIMEOUT seconds — and may have written in that time.
+        _check_code_after(stamp, cmd, before)
     with RAN_LOG.open("a", encoding="utf-8") as f:
         f.write(f"{stamp}\texit={code}\t{cmd}\n")
+    locked = _shell_locked()
+    if locked:
+        raise RuntimeError(locked)
     body = (out or "") + (("\n[stderr] " + err) if err else "")
     body = body.strip() or "(no output)"
     return f"Ran '{cmd}' (exit {code}). Output:\n{body[:4000]}"

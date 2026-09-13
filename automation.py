@@ -165,6 +165,14 @@ def auto_click(rate: float = 5, seconds: float = 30, button: str = "left",
     if (x is not None or y is not None) and not spots:
         return "Give x and y as whole numbers of screen pixels."
 
+    # The code lock, asked before starting — so a refusal is a sentence rather
+    # than a job that silently stops on its first click — and again inside
+    # one() for every click, because a spot that was a game when this started
+    # can be an editor with ARC's code open by the time the tenth click lands.
+    for spot in (spots or ["pointer"]):
+        refusal = pc.input_refusal(spot)
+        if refusal:
+            return refusal
     rate, seconds, count = _bounds(rate, seconds)
 
     # Which spot is next. A list rather than an int because the closure below
@@ -179,7 +187,11 @@ def auto_click(rate: float = 5, seconds: float = 30, button: str = "left",
             # spots would quietly deliver twenty.
             sx, sy = spots[turn[0] % len(spots)]
             turn[0] += 1
+            if pc.input_refusal((sx, sy)):
+                raise RuntimeError("code lock")      # ends the job; see loop()
             u.SetCursorPos(sx, sy)
+        elif pc.input_refusal("pointer"):
+            raise RuntimeError("code lock")
         u.mouse_event(down, 0, 0, 0, 0)
         u.mouse_event(up, 0, 0, 0, 0)
 
@@ -211,6 +223,10 @@ def hold_key(key: str = "", seconds: float = 5) -> str:
     except (TypeError, ValueError):
         seconds = 5.0
 
+    refusal = pc.input_refusal()
+    if refusal:
+        return refusal
+
     import ctypes
     u = ctypes.windll.user32
     vk = pc._VK[k]
@@ -230,6 +246,10 @@ def hold_key(key: str = "", seconds: float = 5) -> str:
             try:
                 end = time.time() + seconds
                 while time.time() < end and not stop.is_set():
+                    # A held key auto-repeats into whatever gains focus, so
+                    # the lock is asked the whole time it is down, not once.
+                    if pc.input_refusal():
+                        break
                     time.sleep(0.02)
             finally:
                 u.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
@@ -273,7 +293,13 @@ def key_macro(keys: str = "", repeat: int = 1, gap: float = 0.15) -> str:
     total = len(seq) * repeat
     seconds = min(total * gap + 1, MAX_SECONDS)
 
+    refusal = pc.input_refusal()
+    if refusal:
+        return refusal
+
     def one():
+        if pc.input_refusal():
+            raise RuntimeError("code lock")          # ends the job; see loop()
         k = seq[step["i"] % len(seq)]
         step["i"] += 1
         vk = pc._VK[k]
