@@ -19,6 +19,8 @@ from pathlib import Path
 
 import httpx
 
+import whose
+
 ROOT = Path(__file__).parent.resolve()
 # Per-instance data dir (see run.py). A second Bella with its own ARC_DATA_DIR
 # keeps its own to-do list and reminders. Defaults to ROOT — unchanged.
@@ -112,15 +114,26 @@ def _write_json(path, items):
 
 # --- to-do list ------------------------------------------------------------
 
-def _load():
+def _read(path):
+    """The whole file: a list from before the split, or {address: [...]}."""
     try:
-        return json.loads(TODO_FILE.read_text(encoding="utf-8"))
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        return blob if isinstance(blob, (list, dict)) else []
     except Exception:
         return []
 
 
+# PER PERSON, both the list and the reminders. They were one file each for the
+# whole instance, so a guest's to-do landed in the owner's list and a guest's
+# reminder came due on the owner's screen and phone. Now each is the asking
+# account's slice (whose.py); only due_for_push steps through the others.
+
+def _load():
+    return whose.mine(_read(TODO_FILE))
+
+
 def _save(items):
-    _write_json(TODO_FILE, items)
+    _write_json(TODO_FILE, whose.replace(_read(TODO_FILE), items))
 
 
 def add_todo(item: str) -> str:
@@ -164,14 +177,11 @@ def complete_todo(which: str) -> str:
 # --- reminders (persistent; fire even after a reload) ----------------------
 
 def _load_rem():
-    try:
-        return json.loads(REMIND_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    return whose.mine(_read(REMIND_FILE))
 
 
 def _save_rem(items):
-    _write_json(REMIND_FILE, items)
+    _write_json(REMIND_FILE, whose.replace(_read(REMIND_FILE), items))
 
 
 def _human_delay(s):
@@ -269,17 +279,26 @@ def due_for_push():
     """For the server-side phone-push loop: reminders whose time has come and
     that haven't been pushed yet. Uses a SEPARATE 'pushed' flag from 'delivered'
     so the phone push and the browser's spoken delivery are independent — a
-    reminder can be both spoken (if the tab is open) and pushed to the phone."""
-    items = _load_rem()
+    reminder can be both spoken (if the tab is open) and pushed to the phone.
+
+    The OWNER'S only, stepping through their slices the way alarm.pending_push
+    does: the phone is theirs, and a guest's reminder is spoken in the guest's
+    own tab by due_reminders."""
     now = time.time()
-    due, changed = [], False
-    for r in items:
-        if not r.get("pushed") and r["fire_at"] <= now:
-            r["pushed"] = True
-            changed = True
-            due.append({"id": r["id"], "label": r["label"]})
-    if changed:
-        _save_rem(items)
+    due = []
+    for who in whose.accounts(_read(REMIND_FILE)):
+        if not whose.is_owner(who):
+            continue
+        with whose.acting_as(who):
+            items = _load_rem()
+            changed = False
+            for r in items:
+                if not r.get("pushed") and r["fire_at"] <= now:
+                    r["pushed"] = True
+                    changed = True
+                    due.append({"id": r["id"], "label": r["label"]})
+            if changed:
+                _save_rem(items)
     return due
 
 

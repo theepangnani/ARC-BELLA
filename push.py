@@ -21,6 +21,8 @@ owner — never a visitor who signed in with their own Google. That's deliberate
 import os
 import urllib.request
 
+import whose
+
 NTFY_SERVER = os.getenv("ARC_NTFY_SERVER", "https://ntfy.sh").strip().rstrip("/")
 NTFY_TOPIC = os.getenv("ARC_NTFY_TOPIC", "").strip()
 
@@ -64,6 +66,11 @@ def send(message: str, title: str = "ARC", tags: str = "bell", priority=None) ->
 
 def notify_phone(message: str = "", title: str = "") -> str:
     """Tool entry point: push a message to the user's phone."""
+    if not whose.is_owner():
+        # Belt and braces: the tool is not offered to guests at all. The phone
+        # on the other end of the topic is the owner's, whoever is asking.
+        return ("Phone alerts go to the owner's phone, so I can't send one from "
+                "a guest account.")
     if not configured():
         return ("Phone alerts aren't set up. The owner needs to set ARC_NTFY_TOPIC "
                 "in .env and subscribe to that topic in the ntfy app.")

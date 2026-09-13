@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import extras   # yahoo_quote — the one quote source the whole app uses
+import whose    # each person's rules are their own
 
 ROOT = Path(__file__).parent.resolve()
 DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
@@ -60,20 +61,29 @@ def connected() -> bool:
 
 # --- storage ----------------------------------------------------------------
 
-def _load() -> list:
+def _read():
+    """The whole file: a list from before the split, or {address: [...]}."""
     try:
         data = json.loads(RULES.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        return data if isinstance(data, (list, dict)) else []
     except Exception:
         return []
+
+
+# PER PERSON. A guest's rule used to fire into the owner's tab and phone, and a
+# guest could read and clear the owner's. _load and _save are the asking
+# account's slice; evaluate() steps through everybody's.
+
+def _load() -> list:
+    return whose.mine(_read())
 
 
 def _save(items) -> None:
     try:
         RULES.parent.mkdir(parents=True, exist_ok=True)
         tmp = RULES.with_name(RULES.name + ".tmp")
-        tmp.write_text(json.dumps(items[:MAX_RULES], ensure_ascii=False),
-                       encoding="utf-8")
+        tmp.write_text(json.dumps(whose.replace(_read(), items[:MAX_RULES]),
+                                  ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, RULES)      # atomic, like alerts.py and alarm.py
     except Exception:
         pass
@@ -163,7 +173,9 @@ def _do(rule, message: str) -> None:
     note = (rule.get("note") or "").strip()
     text = message + (" " + note if note else "")
 
-    if what in ("notify", "push"):
+    # Only the owner's rules reach the phone — it is the owner's phone. A
+    # guest's "push" is still said in their own tab, via due().
+    if what in ("notify", "push") and whose.is_owner():
         try:
             import push
             if push.configured():
@@ -181,7 +193,10 @@ def _do(rule, message: str) -> None:
 
 # --- the loop ---------------------------------------------------------------
 
-_pending: list = []
+# Per account, like the rules: a rule fired for one person is said in that
+# person's tab. One shared queue would have read the owner's "Tesla is below
+# 200" out to whichever guest's page happened to poll first.
+_pending: dict = {}
 
 # What is waiting for the browser to come and collect it. Bounded, because
 # nothing guarantees a browser ever does: ARC can run for weeks with nobody's
@@ -198,10 +213,23 @@ def evaluate() -> None:
     for the same reason: holding a lock across a network call freezes every
     other reader of the file for as long as Yahoo takes to answer.
     """
+    now = time.time()
+    failed = None
+    for who in whose.accounts(_read()):
+        try:
+            with whose.acting_as(who):
+                _evaluate_mine(now)
+        except Exception as e:
+            failed = failed or e     # one person's broken rule stops nobody else's
+    if failed:
+        raise failed
+
+
+def _evaluate_mine(now: float) -> None:
+    """evaluate() for whichever account is current."""
     rules = _load()
     if not rules:
         return
-    now = time.time()
     results = []
     for r in rules:
         if not r.get("on", True):
@@ -231,8 +259,9 @@ def evaluate() -> None:
             r["fires"] = int(r.get("fires") or 0) + 1
             if r.get("once"):
                 r["on"] = False
-            _pending.append(msg)
-            del _pending[:-MAX_PENDING]
+            mine = _pending.setdefault(whose.current(), [])
+            mine.append(msg)
+            del mine[:-MAX_PENDING]
             _do(r, msg)
         _save(rules)
 
@@ -240,8 +269,7 @@ def evaluate() -> None:
 def due() -> list:
     """Anything fired since the browser last asked. Delivered once."""
     with _lock:
-        out, _pending[:] = list(_pending), []
-        return out
+        return _pending.pop(whose.current(), [])
 
 
 # --- tools ------------------------------------------------------------------
@@ -278,6 +306,11 @@ def add_trigger(kind: str = "price", symbol: str = "", op: str = "below",
         return ("I can tell you, push it to your phone, or set a reminder. I "
                 "cannot buy or sell anything — there is no brokerage connected "
                 "to me, and there deliberately isn't one.")
+    if kind == "spend" and not whose.is_owner():
+        # The day's spend is the owner's bill, which a guest cannot see by
+        # asking (usage_report is withheld) and so must not see by rule either.
+        return ("Only the owner can set a rule on the spend. I can watch a "
+                "price or a move for you.")
     if kind in ("price", "move") and not (symbol or "").strip():
         return "Which stock or ticker?"
     try:

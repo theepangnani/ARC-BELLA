@@ -215,11 +215,10 @@ GUEST_EXTRA_TOOLS = {
     # filed under their address and the owner's is invisible to them.
     "add_note", "list_notes", "delete_note",
     "list_memory", "forget",
-    # SHARED, and that is not an oversight: todos and reminders live in one
-    # file per instance, not one per person. A guest's todo appears in the
-    # owner's list and a guest's reminder comes due on the owner's screen.
-    # Granted because a household that shares a shopping list is the case this
-    # is for; it is the first thing to take back if it is ever misused.
+    # Their own to-do list and reminders. These were ONE file per instance when
+    # the loan began, so a guest's reminder came due on the owner's screen and
+    # a guest could cancel the owner's. Per person since 12 Sep 2026, when the
+    # owner chose "give everyone their own" over taking them back.
     "add_todo", "list_todos", "complete_todo",
     "set_reminder", "list_reminders", "cancel_reminder",
     # The owner's Telegram, READ ONLY plus a draft. Reading the owner's chats
@@ -231,10 +230,13 @@ GUEST_EXTRA_TOOLS = {
     # neither — it goes out under the owner's name, to somebody who has no way
     # of knowing a guest wrote it. So a guest may compose; the owner sends.
     "tg_list_chats", "tg_read_chat", "tg_draft_message",
-    # The owner's phone, and the owner's alarm clock and watchlist. These act
-    # on the owner's attention rather than the owner's data: a push arrives on
-    # their phone, an alarm makes a noise at the time it is set for.
-    "notify_phone",
+    # Their own alarm clock, watchlist and standing rules — per person since
+    # 12 Sep 2026, like the list above. A guest's alarm rings in the guest's tab
+    # and never on the owner's phone; only the owner's own go there.
+    #
+    # notify_phone LEFT the loan that day. There is one phone behind ntfy and
+    # it is the owner's, so "send that to my phone" from a guest buzzed the
+    # owner — and no amount of per-person storage changes whose phone it is.
     "set_alarm", "list_alarms", "cancel_alarm", "snooze_alarm", "dismiss_alarm",
     "set_price_alert", "list_price_alerts", "clear_price_alert",
     # Standing "if this, then that" rules. They can only notify or set a
@@ -243,6 +245,7 @@ GUEST_EXTRA_TOOLS = {
     "add_trigger", "list_triggers", "clear_trigger",
     # STILL WITHHELD, and why, so the next person to read this does not have to
     # guess whether the omissions were decisions:
+    #   push            — notify_phone. The owner's phone; see above.
     #   pc, automation  — the owner's machine, including typing and the shell.
     #                     The one thing the owner excluded, in those words.
     #   media, display  — youtube, spotify and the second screen play on that
@@ -644,6 +647,12 @@ OWNER_EMAILS = ALLOWED_EMAILS - GUEST_EMAILS
 OWNER_UNLIMITED = os.getenv("ARC_OWNER_SESSION_UNLIMITED", "1").strip().lower() \
     not in ("0", "false", "no", "off")
 session.set_unlimited(OWNER_EMAILS if OWNER_UNLIMITED else ())
+# Known from the start, not from the first request. The monitor loop reads the
+# per-person stores from boot, and until this is set whose.py thinks there is no
+# owner at all — so a reminder coming due before anybody opened a page would
+# file the owner's old pile under "owner" rather than their address, and it
+# would vanish from their list the next time they looked.
+whose.set_owners(OWNER_EMAILS)
 
 # Pins the OAuth redirect_uri instead of deriving it from forwarding headers a
 # client can set. Leave empty on the desktop; set it to the funnel origin
@@ -1254,6 +1263,17 @@ def apply_session_memory(request: Request) -> str:
     # leaked, because the guest tool gate refuses notes to a guest outright,
     # but the store underneath was one pile and had been since it was split.
     whose.set_owners(OWNER_EMAILS)
+    # With no sign-in (ARC_AUTH_MODE=open, the private Bella) every request is
+    # "owner", which whose.py does NOT count as the owner once an owner address
+    # is configured — and the background loops, which serve no request, file the
+    # owner's things under that address. So the page would have read "owner",
+    # the loop would have written the email, and an alarm set on the private
+    # Bella would ring and never be listed. One address for both: the owner's.
+    # memory.use above keeps "owner", which is where that store has always been.
+    # Open mode ONLY: with sign-in on, "owner" here means no session was found,
+    # and that must never be promoted to the owner's address.
+    if AUTH_MODE == "open" and who == whose.DEFAULT and OWNER_EMAILS:
+        who = sorted(OWNER_EMAILS)[0]
     whose.use(who)
     return who
 
@@ -2764,9 +2784,12 @@ async def stock_search(request: Request, _=Depends(require_auth)):
 async def reminders_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any reminder whose time has come is returned once
     (then marked delivered) so ARC can announce it — even after a reload."""
-    # Returned ONCE: a guest polling this wouldn't merely see the owner's
-    # reminders, it would consume them, and the owner would never be told.
-    deny_guest(request)
+    # Returned ONCE, which is why a guest was refused here while there was one
+    # pile: polling would have consumed the owner's reminders.
+    # Whoever is asking gets their own and nobody else's (whose.py), so a
+    # guest is served rather than refused: their reminders, alerts, alarms
+    # and rules are said in their own tab now, not in the owner's.
+    apply_session_memory(request)
     try:
         return JSONResponse({"due": extras.due_reminders()})
     except Exception:
@@ -2778,8 +2801,10 @@ async def alerts_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any price alert that has just crossed is returned
     once (then marked delivered) so ARC can speak it — even with no phone set up.
     Cheap: the network fetch happens on the server's monitor loop, not here."""
-    # Same one-shot delivery as reminders — a guest polling it eats the owner's.
-    deny_guest(request)
+    # Whoever is asking gets their own and nobody else's (whose.py), so a
+    # guest is served rather than refused: their reminders, alerts, alarms
+    # and rules are said in their own tab now, not in the owner's.
+    apply_session_memory(request)
     try:
         return JSONResponse({"due": alerts.pending_browser()})
     except Exception:
@@ -2795,7 +2820,10 @@ async def alarms_due(request: Request, _=Depends(require_auth)):
     bell — it keeps being reported until somebody stops it, so a reload (or a
     second device) doesn't silence one. The alarm's own stop_at ends it if
     nobody ever does."""
-    deny_guest(request)
+    # Whoever is asking gets their own and nobody else's (whose.py), so a
+    # guest is served rather than refused: their reminders, alerts, alarms
+    # and rules are said in their own tab now, not in the owner's.
+    apply_session_memory(request)
     try:
         # Missed alarms ARE consumed, unlike ringing ones: a bell goes on until
         # somebody stops it, but "your seven o'clock didn't go off" is news, and
@@ -2815,7 +2843,7 @@ async def alarms_due(request: Request, _=Depends(require_auth)):
 async def alarms_snooze(request: Request, _=Depends(require_auth)):
     """The Snooze button. Voice has snooze_alarm; this is for a hand at 7am
     that would rather press something than form a sentence."""
-    deny_guest(request)
+    apply_session_memory(request)     # stops THEIR alarm, not everybody's
     body = {}
     try:
         body = await request.json()
@@ -2832,7 +2860,7 @@ async def alarms_snooze(request: Request, _=Depends(require_auth)):
 @app.post("/api/alarms/dismiss")
 async def alarms_dismiss(request: Request, _=Depends(require_auth)):
     """The Stop button."""
-    deny_guest(request)
+    apply_session_memory(request)     # stops THEIR alarm, not everybody's
     return JSONResponse({"stopped": alarm.stop()})
 
 
@@ -2995,7 +3023,7 @@ async def usage_route(request: Request, _=Depends(require_auth)):
 
 @app.get("/api/triggers")
 async def triggers_list(request: Request, _=Depends(require_auth)):
-    deny_guest(request)
+    apply_session_memory(request)
     return JSONResponse({"rules": triggers._load(),
                          "text": triggers.list_triggers()})
 
@@ -3003,7 +3031,7 @@ async def triggers_list(request: Request, _=Depends(require_auth)):
 @app.get("/api/triggers/due")
 async def triggers_due(request: Request, _=Depends(require_auth)):
     """Rules that fired since the browser last asked, so it can speak them."""
-    deny_guest(request)
+    apply_session_memory(request)
     return JSONResponse({"due": triggers.due()})
 
 

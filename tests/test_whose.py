@@ -105,18 +105,18 @@ c("  and writing does not disturb the guest's",
 on_disk = json.loads(io.open(notes.NOTES, encoding="utf-8").read())
 c("  on disk it is keyed by address", sorted(on_disk), [GUEST, OWNER])
 
-print("\nThe stores that fire in the background are NOT converted yet:")
-# Stated as a test so it is a decision on the record rather than a gap somebody
-# finds later and assumes was carelessness. Converting them means teaching the
-# monitor loop to use everyone() instead of mine() — and getting that wrong
-# means alarms that silently stop ringing, which is the single worst failure
-# this app has. It is also not urgent: every tool that touches one of these
-# stores is already outside GUEST_TOOLS, so no guest can reach them today.
+print("\nThe stores that fire in the background are converted too:")
+# They were left shared on purpose, with this reason on record: "every tool that
+# touches one of these stores is already outside GUEST_TOOLS". The week's loan
+# on 11 Sep 2026 put them inside it, and nothing caught that the reason had
+# stopped being true. Converted on 12 Sep 2026; test_perperson.py holds the
+# behaviour, including the thing this section warned about — alarms that
+# silently stop ringing.
 src = io.open(ARC / "run.py", encoding="utf-8").read()
-c.truthy("  the monitor loop still exists to be taught", "async def _monitor_loop" in src)
+c.truthy("  the monitor loop still exists", "async def _monitor_loop" in src)
 for mod in ("alarm", "alerts", "triggers", "extras"):
     body = io.open(ARC / (mod + ".py"), encoding="utf-8").read()
-    c("  %-8s is still shared, on purpose" % mod, "import whose" in body, False)
+    c.truthy("  %-8s is per person" % mod, "import whose" in body)
 
 print("\nThe private Bella is the owner's alone, however it is started:")
 # The bug: the shared .env loaded first, so "load the instance file without

@@ -55,13 +55,15 @@ def with_deadline(stamp):
 print("The two sets are separate, and the loan is the smaller one:")
 c("  no tool is in both", sorted(BASE & EXTRA), [])
 c.truthy("  the base tier is the one that survives", len(BASE) == 26)
-c.truthy("  and the loan is on top of it", len(EXTRA) == 26)
-c("  together they are the widened tier", len(BASE | EXTRA), 52)
+# 26 when lent; 25 since 12 Sep 2026, when notify_phone was taken back (it is
+# the owner's phone, whoever asks). test_guest.py names it as forbidden.
+c.truthy("  and the loan is on top of it", len(EXTRA) == 25)
+c("  together they are the widened tier", len(BASE | EXTRA), 51)
 
 print("\nWhile the week is running:")
 with_deadline(NOW + 3 * 86400)
 live = run.guest_tools()
-c("  the wider tier is in force", len(live), 52)
+c("  the wider tier is in force", len(live), 51)
 c.truthy("  an alarm may be set", "set_alarm" in live)
 c.truthy("  the owner's chats may be read", "tg_read_chat" in live)
 out, failed = run.dispatch_tool("set_alarm", {"time": "7am"}, local=False, guest=True)

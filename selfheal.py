@@ -77,6 +77,32 @@ DATA_FILES = {
 #   .env, credentials*.json, token.json, google_sessions/ — secrets. Copying a
 #                    credential into a backup folder to protect it from
 #                    corruption is not a trade worth making.
+# PER PERSON since whose.py: a file from before the split is a plain list, and
+# one written since is {address: [items]}. BOTH are healthy. The check used to
+# demand a list, which meant the first note a second person saved made
+# notes.json "the wrong shape" — and self_repair's answer to the wrong shape is
+# to put back the last list-shaped backup, over everybody's newer notes. A
+# repair that deletes what it was meant to protect is the one kind this file
+# must never make.
+PER_PERSON = {"notes.json", "todos.json", "reminders.json", "alarms.json",
+              "price_alerts.json", "triggers.json"}
+
+
+def _shape_ok(name: str, data) -> bool:
+    if name in PER_PERSON:
+        if isinstance(data, list):
+            return True
+        return isinstance(data, dict) and all(isinstance(v, list) for v in data.values())
+    return isinstance(data, type(DATA_FILES[name][0]))
+
+
+def _count(data) -> int:
+    """Items, not accounts: a split file of two people is not 'two items'."""
+    if isinstance(data, dict) and all(isinstance(v, list) for v in data.values()):
+        return sum(len(v) for v in data.values())
+    return len(data) if hasattr(data, "__len__") else 0
+
+
 KEEP_OUT = {".env", "credentials.json", "credentials_web.json", "token.json",
             "sessions.json", "voices.json"}
 
@@ -403,7 +429,7 @@ def _check_data():
                        " I have no earlier copy, so I would have to start it empty.")
             out.append(_f("data", "broken", "Your %s file is damaged" % label,
                           detail, fix="data"))
-        elif not isinstance(data, type(empty)):
+        elif not _shape_ok(name, data):
             out.append(_f("data", "broken", "Your %s file is the wrong shape" % label,
                           "%s holds a %s where a %s belongs."
                           % (name, type(data).__name__, type(empty).__name__),
@@ -625,7 +651,7 @@ def _fix_data() -> list:
         if not path.exists():
             continue
         data, err = _read_json(path)
-        if not err and isinstance(data, type(empty)):
+        if not err and _shape_ok(name, data):
             continue
         try:
             BACKUPS.mkdir(parents=True, exist_ok=True)
@@ -641,8 +667,8 @@ def _fix_data() -> list:
                                 encoding="utf-8")
                 done.append("restored your %s from the copy saved %s (%d item%s) — "
                             "the damaged file is in backups/"
-                            % (label, _stamp_of(snap), len(good),
-                               "" if len(good) == 1 else "s"))
+                            % (label, _stamp_of(snap), _count(good),
+                               "" if _count(good) == 1 else "s"))
             else:
                 path.write_text(json.dumps(empty), encoding="utf-8")
                 done.append("your %s file was unreadable and I had no earlier copy, "

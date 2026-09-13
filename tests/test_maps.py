@@ -159,6 +159,7 @@ c("  sunset", "sun_times" in run.guest_tools(), True)
 # drafting only), the phone push, alarms, price alerts and standing rules were
 # added in one decision. This number is a guard, not a fact -- it changes only
 # when somebody decides it should, and test_guest.py names every one of them.
-c("  the guest tier is 52 now, deliberately", len(run.guest_tools()), 52)
+# 52 -> 51 on 12 Sep 2026: notify_phone left the loan (the owner's phone).
+c("  the guest tier is 51 now, deliberately", len(run.guest_tools()), 51)
 
 c.done()

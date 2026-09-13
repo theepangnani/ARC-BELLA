@@ -25,6 +25,12 @@ from starlette.testclient import TestClient  # noqa: E402
 import run       # noqa: E402
 import session   # noqa: E402
 import alarm     # noqa: E402
+import whose     # noqa: E402
+
+# Alarms are per person now (whose.py). The module calls below stand in for the
+# owner's own requests, so they are made AS the owner — the routes work out who
+# is asking from the cookie, and must find the same alarms.
+whose.use("owner@example.com")
 
 ok = True
 
@@ -89,9 +95,8 @@ for name in ["set_alarm", "list_alarms", "cancel_alarm", "snooze_alarm", "dismis
     check("%-14s and not blocked as a guest's" % name, "guest account" in out, False)
 truthy("and offered in a guest's tool list",
        any(t["name"].endswith("_alarm") for t in run.all_tools(local=False, guest=True)))
-# What did NOT move with them: the HUD's own alarm routes below are still
-# owner-only, so the ringing, the Stop button and the countdown stay on the
-# owner's screen. A guest sets the alarm; the owner is the one it wakes.
+# And since 12 Sep 2026 a guest's alarm is THEIR OWN: it rings in their tab,
+# and they neither see nor stop the owner's. See the guest section below.
 
 # --------------------------------------------------------------------------
 print("\nOver HTTP, signed in as the owner:")
@@ -167,14 +172,35 @@ truthy("junk falls back to the default, not a crash",
 client.post("/api/alarms/dismiss", cookies=C)
 
 # --------------------------------------------------------------------------
-print("\nA guest can't see or touch the owner's alarms:")
+print("\nA guest has their own alarm clock, and cannot see or touch the owner's:")
 ring_now()
 _, G = guest()
-check("cannot poll", client.get("/api/alarms/due", cookies=G).status_code, 403)
-check("cannot snooze", client.post("/api/alarms/snooze", cookies=G).status_code, 403)
-check("cannot dismiss", client.post("/api/alarms/dismiss", cookies=G).status_code, 403)
+r = client.get("/api/alarms/due", cookies=G)
+check("a guest's poll is answered", r.status_code, 200)
+check("  with nothing of the owner's ringing in it", r.json()["ringing"], [])
+check("  or the owner's next alarm", r.json()["next"], None)
+check("snoozing stops nothing of the owner's",
+      client.post("/api/alarms/snooze", cookies=G).json()["stopped"], 0)
+check("nor does dismissing",
+      client.post("/api/alarms/dismiss", cookies=G).json()["stopped"], 0)
 check("and it is still ringing for the owner",
       len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+with whose.acting_as("guest@example.com"):
+    alarm.set_alarm("6am", "daily", "guest's run")
+    items = alarm._load()
+    items[0]["next_at"] = time.time() - 5
+    alarm._save(items)
+alarm.evaluate()
+g = client.get("/api/alarms/due", cookies=G).json()["ringing"]
+check("the guest's own alarm rings in the guest's tab", [a["label"] for a in g], ["guest's run"])
+o = client.get("/api/alarms/due", cookies=C).json()["ringing"]
+check("and not in the owner's", [a["label"] for a in o], ["wake up"])
+check("the guest's Stop stops the guest's",
+      client.post("/api/alarms/dismiss", cookies=G).json()["stopped"], 1)
+check("  and the owner's is untouched",
+      len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+with whose.acting_as("guest@example.com"):
+    alarm._save([])
 
 print("\nNor can a stranger:")
 check("no cookie -> 401", client.get("/api/alarms/due").status_code, 401)

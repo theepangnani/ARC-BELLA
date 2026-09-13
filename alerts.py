@@ -28,6 +28,7 @@ import itertools
 from pathlib import Path
 
 import extras   # yahoo_quote / yahoo_search — the same quote source the widget uses
+import whose    # each person's watchlist is their own
 
 ROOT = Path(__file__).parent.resolve()
 # Per-instance data dir (see run.py); a second Bella keeps its own watchlist.
@@ -54,23 +55,34 @@ def connected() -> bool:
 
 # --- storage ---------------------------------------------------------------
 
-def _load():
+def _read():
+    """The whole file: a list from before the split, or {address: [...]}."""
     try:
-        return json.loads(ALERTS_FILE.read_text(encoding="utf-8"))
+        blob = json.loads(ALERTS_FILE.read_text(encoding="utf-8"))
+        return blob if isinstance(blob, (list, dict)) else []
     except Exception:
         return []
+
+
+# PER PERSON. One watchlist for the instance meant a guest could read and clear
+# the owner's alerts, and a guest's alert went to the owner's phone. _load and
+# _save are the asking account's slice (whose.py).
+
+def _load():
+    return whose.mine(_read())
 
 
 def _save(items):
     # Atomic replace so a concurrent reader never sees a half-written file.
     tmp = ALERTS_FILE.with_name(ALERTS_FILE.name + ".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(whose.replace(_read(), items), ensure_ascii=False),
+                   encoding="utf-8")
     os.replace(tmp, ALERTS_FILE)
 
 
 def _next_id() -> str:
-    # Keep ids unique across a run without colliding with any already on disk.
-    existing = {a.get("id") for a in _load()}
+    # Unique across everybody's, without colliding with any already on disk.
+    existing = {a.get("id") for a in whose.flatten(_read())}
     while True:
         cid = f"al{next(_ids)}"
         if cid not in existing:
@@ -207,30 +219,38 @@ def evaluate():
     The lock is held only to snapshot and, later, to apply — NEVER across the
     quote fetches, or a browser poll (pending_browser on the event loop) would
     block for the whole network round-trip."""
+    # Everybody's, since this loop serves no request. flatten() keeps each
+    # alert's owner on it, so the result goes back into the right slice.
     with _LOCK:
-        pending = [dict(a) for a in _load() if not a.get("triggered")]
+        pending = [a for a in whose.flatten(_read()) if not a.get("triggered")]
     if not pending:
         return
 
-    crossed = {}   # id -> price at crossing
+    quotes = {}    # one fetch per symbol, however many people watch it
+    crossed = {}   # (who, id) -> price at crossing
     for a in pending:
-        q = extras.yahoo_quote(a["symbol"])
+        sym = a["symbol"]
+        if sym not in quotes:
+            quotes[sym] = extras.yahoo_quote(sym)
+        q = quotes[sym]
         if q and _met(a["direction"], q["price"], a["target"]):
-            crossed[a["id"]] = q["price"]
+            crossed[(a["_who"], a["id"])] = q["price"]
     if not crossed:
         return
 
     with _LOCK:
-        items = _load()
-        changed = False
-        for a in items:
-            if a.get("id") in crossed and not a.get("triggered"):
-                a["triggered"] = True
-                a["triggered_at"] = time.time()
-                a["triggered_price"] = crossed[a["id"]]
-                changed = True
-        if changed:
-            _save(items)
+        for who in {w for w, _ in crossed}:
+            with whose.acting_as(who):
+                items = _load()
+                changed = False
+                for a in items:
+                    if (who, a.get("id")) in crossed and not a.get("triggered"):
+                        a["triggered"] = True
+                        a["triggered_at"] = time.time()
+                        a["triggered_price"] = crossed[(who, a["id"])]
+                        changed = True
+                if changed:
+                    _save(items)
 
 
 def _message(a: dict) -> str:
@@ -244,17 +264,25 @@ def _message(a: dict) -> str:
 
 
 def pending_push():
-    """Triggered alerts not yet sent to the phone. Marks them pushed."""
+    """Triggered alerts not yet sent to the phone. Marks them pushed.
+
+    The OWNER'S only: the phone is theirs. A guest's alert is spoken in the
+    guest's own tab by pending_browser."""
+    out = []
     with _LOCK:
-        items = _load()
-        out, changed = [], False
-        for a in items:
-            if a.get("triggered") and not a.get("pushed"):
-                a["pushed"] = True
-                changed = True
-                out.append(_message(a))
-        if changed:
-            _save(items)
+        for who in whose.accounts(_read()):
+            if not whose.is_owner(who):
+                continue
+            with whose.acting_as(who):
+                items = _load()
+                changed = False
+                for a in items:
+                    if a.get("triggered") and not a.get("pushed"):
+                        a["pushed"] = True
+                        changed = True
+                        out.append(_message(a))
+                if changed:
+                    _save(items)
     return out
 
 

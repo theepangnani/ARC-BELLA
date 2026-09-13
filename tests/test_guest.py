@@ -61,6 +61,10 @@ print("\nThe owner's life is off limits — offered AND dispatched:")
 #   · administration — export_everything is every file ARC holds.
 FORBIDDEN = [
     ("tg_send_pending", "send Telegram as the owner"),
+    # Lent on 11 Sep 2026, taken back on 12 Sep: there is one phone behind the
+    # push and it is the owner's, so a guest's "send it to my phone" buzzed the
+    # owner. Per-person storage cannot make it the guest's phone.
+    ("notify_phone", "buzz the owner's phone"),
     ("export_everything", "export every file ARC holds"),
     ("self_repair", "rewrite the owner's files"),
     ("usage_report", "read the owner's spending"),
@@ -99,28 +103,29 @@ for name in ["add_note", "list_notes", "delete_note", "list_memory", "forget"]:
 check("notes really are per account", "whose.use(who)" in
       open(ARC / "run.py", encoding="utf-8").read(), True)
 
-print("\n...and the owner's SHARED things, which is the part with a cost:")
-for name, what in [("add_todo", "their todo lands in the owner's list"),
-                   ("list_todos", "they see the owner's list"),
-                   ("complete_todo", "they can tick the owner's off"),
-                   ("set_reminder", "it comes due on the owner's screen"),
-                   ("list_reminders", "they see the owner's reminders"),
-                   ("cancel_reminder", "they can cancel the owner's"),
+print("\n...their OWN lists, clocks and rules (per person since 12 Sep 2026 —")
+print("   test_perperson.py proves none of it reaches the owner's), and the")
+print("   owner's Telegram, which is the part with a cost:")
+for name, what in [("add_todo", "their own list"),
+                   ("list_todos", "their own list"),
+                   ("complete_todo", "their own list"),
+                   ("set_reminder", "said in their own tab"),
+                   ("list_reminders", "their own reminders"),
+                   ("cancel_reminder", "their own reminders"),
                    ("tg_list_chats", "the owner's chat list"),
                    ("tg_read_chat", "the owner's messages, read"),
                    ("tg_draft_message", "composed, not sent"),
-                   ("notify_phone", "the owner's phone buzzes"),
-                   ("set_alarm", "the owner's alarm clock"),
-                   ("list_alarms", "and they can see what is set"),
-                   ("cancel_alarm", "and unset it"),
-                   ("snooze_alarm", "or snooze a ringing one"),
-                   ("dismiss_alarm", "or silence it"),
-                   ("set_price_alert", "the owner's watchlist"),
-                   ("list_price_alerts", "read the owner's watchlist"),
-                   ("clear_price_alert", "clear the owner's watchlist"),
-                   ("add_trigger", "a standing rule; it can only notify"),
-                   ("list_triggers", "read the standing rules"),
-                   ("clear_trigger", "clear a standing rule")]:
+                   ("set_alarm", "their own alarm clock"),
+                   ("list_alarms", "their own alarms"),
+                   ("cancel_alarm", "their own alarms"),
+                   ("snooze_alarm", "their own ringing alarm"),
+                   ("dismiss_alarm", "their own ringing alarm"),
+                   ("set_price_alert", "their own watchlist"),
+                   ("list_price_alerts", "their own watchlist"),
+                   ("clear_price_alert", "their own watchlist"),
+                   ("add_trigger", "their own standing rule; it can only notify"),
+                   ("list_triggers", "their own standing rules"),
+                   ("clear_trigger", "their own standing rules")]:
     check("%-18s allowed — %s" % (name, what), name in run.guest_tools(), True)
 
 print("\nThe owner is not affected by any of this:")

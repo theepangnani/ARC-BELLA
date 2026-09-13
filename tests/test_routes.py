@@ -44,7 +44,10 @@ check("owner session valid", bool(session.validate(owner_sid)), True)
 check("guest session valid", bool(session.validate(guest_sid)), True)
 
 print("\nRoutes that touch the owner's own data — guest 403, owner 200:")
-OWNER_ONLY = ["/api/reminders/due", "/api/alerts/due", "/api/display"]
+# The reminder and alert polls left this list on 12 Sep 2026: each person has
+# their own now, so a guest is served their own rather than refused
+# (test_perperson.py). The display is still the owner's second screen.
+OWNER_ONLY = ["/api/display"]
 for path in OWNER_ONLY:
     check("%-22s guest" % path, client.get(path, cookies=GUEST).status_code, 403)
     check("%-22s owner" % path, client.get(path, cookies=OWNER).status_code, 200)
@@ -54,7 +57,7 @@ check("/api/push/test         owner",
       client.post("/api/push/test", cookies=OWNER).status_code, 200)
 
 print("\nSigned out is still 401, not 403 — the gate order is unchanged:")
-for path in OWNER_ONLY:
+for path in OWNER_ONLY + ["/api/reminders/due", "/api/alerts/due"]:
     check("%-22s anon" % path, client.get(path).status_code, 401)
 
 print("\nShared routes stay open to both (public data only):")

@@ -43,6 +43,7 @@ through the per-request door.
 """
 
 import contextvars
+from contextlib import contextmanager
 
 # The address used when nobody has said otherwise: a single-user install, the
 # CLI, a test. Deliberately not an email — it can never collide with a real one.
@@ -130,6 +131,29 @@ def everyone(blob):
     if isinstance(blob, list):
         return [(_owner_key(), list(blob))]
     return []
+
+
+def accounts(blob) -> list:
+    """Every address that has anything in a store."""
+    return [email for email, _ in everyone(blob)]
+
+
+@contextmanager
+def acting_as(email: str):
+    """Be this account for the length of a block, then be whoever you were.
+
+    How the background loops work through a store one person at a time. The
+    alternative — a second, loop-only way of reading and writing each file —
+    is two code paths for one store, and the day they disagree about whose an
+    alarm is, it rings in nobody's tab. With this, the loop reads and writes
+    through the same _load() and _save() a request does, so there is only one
+    notion of "this person's alarms" to get right.
+    """
+    token = _who.set((email or "").strip().lower() or DEFAULT)
+    try:
+        yield
+    finally:
+        _who.reset(token)
 
 
 def flatten(blob) -> list:

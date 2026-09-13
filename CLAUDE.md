@@ -84,8 +84,18 @@ back.
 - **Guest** — `GUEST_TOOLS`: their own Google account and public lookups.
 - **The loan** — `GUEST_EXTRA_TOOLS` is lent to guests until
   `ARC_GUEST_EXTRA_UNTIL` (a date in `.env`; unset or unparseable means off).
-  It covers everything except the PC, and it expires on its own: `guest_tools()`
-  is asked per request, never settled at import.
+  It covers everything except the PC and the owner's phone (`notify_phone`),
+  and it expires on its own: `guest_tools()` is asked per request, never
+  settled at import.
+- **Every personal store is per person** (`whose.py`): notes, plan, panels,
+  to-dos, reminders, alarms, price alerts, standing rules. A request reads and
+  writes its own slice through `_load()`/`_save()`. The background loops serve
+  no request, so they step through `whose.accounts()` under
+  `whose.acting_as()` — never a bare `_load()`, which would silently serve the
+  default account and ring nobody else's alarm. Only the owner's items are
+  pushed to the phone. Before adding a store or a guest tool, read
+  `tests/test_perperson.py`: the loan once lent tools on a store that was
+  still one shared file, and nothing caught it for a day.
 - **The PC is local-only.** `local = is_local_request(request) and not guest`
   gates computer control, live screen and watch mode. A loopback peer with no
   forwarding header is the desktop; anything through the tunnel is not, and a

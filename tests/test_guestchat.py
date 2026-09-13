@@ -137,7 +137,8 @@ with TestClient(run.app) as client:
         # sunset are facts about the world, not about the owner.
         # 19 -> 23 with the plan. 23 -> 49 on 11 Sep 2026, when the owner asked
         # for "all except my pc" (see test_guest.py, which names each one).
-        check("    the guest tier names 52 tools", len(run.guest_tools()), 52)
+        # 52 -> 51 on 12 Sep 2026: notify_phone left the loan.
+        check("    the guest tier names 51 tools", len(run.guest_tools()), 51)
         truthy("    and the two additions are the market ones",
                {"market_outlook", "market_compare"} <= run.guest_tools())
         # Every tool offered must be one a guest may actually run, or the model
@@ -152,9 +153,13 @@ with TestClient(run.app) as client:
     truthy("with words", (r.json() or {}).get("reply"))
 
     print("\nThings the guest's page polls on its own:")
+    # The three due-polls were 403 while alarms, reminders and alerts were one
+    # pile: a guest's poll would have eaten the owner's. Per person since 12 Sep
+    # 2026, so a guest is answered — with their own. test_perperson.py proves
+    # the "their own" half.
     for path, want in [("/api/health", 200), ("/api/session", 200),
-                       ("/api/alarms/due", 403), ("/api/reminders/due", 403),
-                       ("/api/alerts/due", 403)]:
+                       ("/api/alarms/due", 200), ("/api/reminders/due", 200),
+                       ("/api/alerts/due", 200)]:
         got = client.get(path, cookies=GUEST).status_code
         check("  %-22s -> %d" % (path, want), got, want)
 

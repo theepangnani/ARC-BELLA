@@ -43,6 +43,7 @@ import datetime as dt
 from pathlib import Path
 
 import push     # only to ASK whether the phone is reachable, never to send
+import whose    # each person's alarms are their own; see _load and evaluate
 
 ROOT = Path(__file__).parent.resolve()
 # Per-instance data dir (see run.py); a second Bella keeps its own alarms.
@@ -91,19 +92,34 @@ def connected() -> bool:
 
 # --- storage ---------------------------------------------------------------
 
-def _load():
+def _read(path):
+    """The whole file: a list from before the split, or {address: [...]}."""
     try:
-        items = json.loads(ALARMS_FILE.read_text(encoding="utf-8"))
-        return items if isinstance(items, list) else []
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        return blob if isinstance(blob, (list, dict)) else []
     except Exception:
         return []
 
 
-def _save(items):
+def _write(path, blob):
     # Atomic replace so a concurrent reader never sees a half-written file.
-    tmp = ALARMS_FILE.with_name(ALARMS_FILE.name + ".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, ALARMS_FILE)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+# PER PERSON. A guest's 6am alarm used to ring in the owner's tab and on the
+# owner's phone, and a guest could list and cancel the owner's. _load and _save
+# are this account's slice (whose.py); nothing outside evaluate() and
+# pending_push() — which step through every account in turn — sees anyone
+# else's.
+
+def _load():
+    return whose.mine(_read(ALARMS_FILE))
+
+
+def _save(items):
+    _write(ALARMS_FILE, whose.replace(_read(ALARMS_FILE), items))
 
 
 # Alarms that came due while nothing could ring them. Kept in a file of their
@@ -114,18 +130,11 @@ MISSED_KEEP = 20            # enough for a long weekend away; not a history
 
 
 def _load_missed():
-    try:
-        items = json.loads(MISSED_FILE.read_text(encoding="utf-8"))
-        return items if isinstance(items, list) else []
-    except Exception:
-        return []
+    return whose.mine(_read(MISSED_FILE))
 
 
 def _save_missed(items):
-    tmp = MISSED_FILE.with_name(MISSED_FILE.name + ".tmp")
-    tmp.write_text(json.dumps(items[-MISSED_KEEP:], ensure_ascii=False),
-                   encoding="utf-8")
-    os.replace(tmp, MISSED_FILE)
+    _write(MISSED_FILE, whose.replace(_read(MISSED_FILE), items[-MISSED_KEEP:]))
 
 
 def _note_missed(a: dict, due: float) -> None:
@@ -152,10 +161,10 @@ def missed() -> list:
     with _LOCK:
         items = _load_missed()
         if items:
-            try:
-                MISSED_FILE.unlink()
-            except Exception:
-                _save_missed([])
+            # Only this person's slice is emptied. Deleting the file, which is
+            # what this did when there was one person, would throw away a
+            # guest's missed alarm the moment the owner's tab polled.
+            _save_missed([])
         return items
 
 
@@ -182,7 +191,9 @@ def missed_message(items: list) -> str:
 
 
 def _next_id() -> str:
-    existing = {a.get("id") for a in _load()}
+    # Unique across everybody's, not just this person's: an id is how a Stop
+    # button names an alarm, and two people's "am1" is one id for two bells.
+    existing = {a.get("id") for a in whose.flatten(_read(ALARMS_FILE))}
     while True:
         cid = f"am{next(_ids)}"
         if cid not in existing:
@@ -499,62 +510,81 @@ def evaluate():
     """Start any alarm whose moment has come, and reschedule repeating ones.
 
     Cheap and offline — no network, no quotes to fetch — so unlike
-    alerts.evaluate() this can simply hold the lock throughout."""
+    alerts.evaluate() this can simply hold the lock throughout.
+
+    EVERYBODY'S, one person at a time. This loop serves no request, so it has
+    no address of its own; reading _load() bare would give it the default
+    account and ring nobody else's alarm. acting_as makes it each account in
+    turn, through the very same _load and _save a request uses."""
     now = time.time()
     with _LOCK:
-        items = _load()
-        changed = False
-        for a in items:
-            # Already ringing: only ever check whether it has rung long enough.
-            if a.get("ringing"):
-                if a.get("stop_at") and now >= a["stop_at"]:
-                    a["ringing"] = False
-                    a["stop_at"] = None
-                    changed = True
-                continue
+        failed = None
+        for who in whose.accounts(_read(ALARMS_FILE)):
+            # One person's broken alarm must not stop everybody else's ringing.
+            try:
+                with whose.acting_as(who):
+                    _evaluate_mine(now)
+            except Exception as e:
+                failed = failed or e
+        if failed:
+            raise failed        # the monitor loop's job() says so, once
 
-            snooze = a.get("snooze_at")
-            if snooze and now >= snooze:
-                a["snooze_at"] = None
-                _ring(a, now)
+
+def _evaluate_mine(now: float) -> None:
+    """evaluate() for whichever account is current. Called under _LOCK."""
+    items = _load()
+    changed = False
+    for a in items:
+        # Already ringing: only ever check whether it has rung long enough.
+        if a.get("ringing"):
+            if a.get("stop_at") and now >= a["stop_at"]:
+                a["ringing"] = False
+                a["stop_at"] = None
                 changed = True
-                continue
+            continue
 
-            if not a.get("enabled"):
-                continue
-            due = a.get("next_at") or 0
-            if now < due:
-                continue
-
-            if now - due > STALE_AFTER:
-                # Missed entirely — ARC was off, or the computer was asleep.
-                # Still NOT rung: being woken at 09:40 by the 07:00 alarm is
-                # worse than not being woken (see STALE_AFTER). But it used to
-                # roll forward SILENTLY, and a one-off was then deleted, so
-                # nobody ever found out it hadn't gone off. Not ringing late is
-                # a decision; not saying so was the bug. Recorded, and handed to
-                # the page once — see missed().
-                _note_missed(a, due)
-                a["next_at"] = _next_at(a["hour"], a["minute"], a.get("days"), now)
-                if not a.get("days"):
-                    a["enabled"] = False       # a one-off that never fired is spent
-                changed = True
-                continue
-
+        snooze = a.get("snooze_at")
+        if snooze and now >= snooze:
+            a["snooze_at"] = None
             _ring(a, now)
-            if a.get("days"):
-                # Schedule from just past this occurrence, never from `now`, or a
-                # daily alarm evaluated a few seconds late lands on today again.
-                a["next_at"] = _next_at(a["hour"], a["minute"], a["days"], due + 60)
-            else:
-                a["enabled"] = False
             changed = True
+            continue
 
-        if changed:
-            # Drop one-offs that are spent, keeping anything still live.
-            items = [a for a in items
-                     if a.get("enabled") or a.get("ringing") or a.get("snooze_at")]
-            _save(items)
+        if not a.get("enabled"):
+            continue
+        due = a.get("next_at") or 0
+        if now < due:
+            continue
+
+        if now - due > STALE_AFTER:
+            # Missed entirely — ARC was off, or the computer was asleep.
+            # Still NOT rung: being woken at 09:40 by the 07:00 alarm is
+            # worse than not being woken (see STALE_AFTER). But it used to
+            # roll forward SILENTLY, and a one-off was then deleted, so
+            # nobody ever found out it hadn't gone off. Not ringing late is
+            # a decision; not saying so was the bug. Recorded, and handed to
+            # the page once — see missed().
+            _note_missed(a, due)
+            a["next_at"] = _next_at(a["hour"], a["minute"], a.get("days"), now)
+            if not a.get("days"):
+                a["enabled"] = False       # a one-off that never fired is spent
+            changed = True
+            continue
+
+        _ring(a, now)
+        if a.get("days"):
+            # Schedule from just past this occurrence, never from `now`, or a
+            # daily alarm evaluated a few seconds late lands on today again.
+            a["next_at"] = _next_at(a["hour"], a["minute"], a["days"], due + 60)
+        else:
+            a["enabled"] = False
+        changed = True
+
+    if changed:
+        # Drop one-offs that are spent, keeping anything still live.
+        items = [a for a in items
+                 if a.get("enabled") or a.get("ringing") or a.get("snooze_at")]
+        _save(items)
 
 
 def _message(a: dict) -> str:
@@ -572,22 +602,31 @@ def pending_push():
     is ringing — deliberately unlike reminders and price alerts, which are
     handed over exactly once because they are messages. A phone that buzzes
     once at 7am has told you something; a phone that keeps buzzing wakes you
-    up, and that is the entire job."""
+    up, and that is the entire job.
+
+    THE OWNER'S ONLY. The phone on the other end of ntfy is the owner's, so a
+    guest's alarm going off there would be a stranger's alarm waking the owner
+    at urgent priority. A guest's alarm rings in the guest's own tab."""
     now = time.time()
+    out = []
     with _LOCK:
-        items = _load()
-        out, changed = [], False
-        for a in items:
-            if not a.get("ringing"):
+        for who in whose.accounts(_read(ALARMS_FILE)):
+            if not whose.is_owner(who):
                 continue
-            last = a.get("pushed_at")
-            if last and now - last < REPUSH_EVERY:
-                continue
-            a["pushed_at"] = now
-            changed = True
-            out.append(_message(a))
-        if changed:
-            _save(items)
+            with whose.acting_as(who):
+                items = _load()
+                changed = False
+                for a in items:
+                    if not a.get("ringing"):
+                        continue
+                    last = a.get("pushed_at")
+                    if last and now - last < REPUSH_EVERY:
+                        continue
+                    a["pushed_at"] = now
+                    changed = True
+                    out.append(_message(a))
+                if changed:
+                    _save(items)
     return out
 
 
@@ -642,9 +681,11 @@ def armed() -> bool:
     "in use" (see ARC_ALARM_KEEPS_SESSION). Setting an alarm is an explicit
     instruction that this page must still be able to make a noise hours from
     now, so while one is set the idle clock is held off."""
+    # Anybody's. The machine staying awake is what lets ANY alarm ring, and this
+    # is also asked by the background loop, which has no account of its own.
     with _LOCK:
         return any(a.get("enabled") or a.get("ringing") or a.get("snooze_at")
-                   for a in _load())
+                   for a in whose.flatten(_read(ALARMS_FILE)))
 
 
 def summary_line() -> str:

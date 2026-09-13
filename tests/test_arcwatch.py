@@ -39,8 +39,13 @@ import session    # noqa: E402
 import triggers   # noqa: E402
 import stats      # noqa: E402
 import triggers   # noqa: E402
+import whose      # noqa: E402
 
-page = io.open(HUD, encoding="utf-8").read()
+# Rules are per person, and a spend rule is the owner's alone (it is their
+# bill). The direct calls below stand in for the owner's own requests.
+whose.use("owner@example.com")
+
+page =io.open(HUD, encoding="utf-8").read()
 body = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", page, re.S)[0]
 watch_page = io.open(ARC / "static" / "watch.html", encoding="utf-8").read()
 c = Check()
@@ -203,9 +208,14 @@ with TestClient(run.app) as client:
              j["prices"]["per_model"]["claude-haiku-4-5"]["in"])
 
     print("\n  and a guest sees none of it:")
-    for path in ("/watch", "/api/usage", "/api/triggers", "/api/triggers/due"):
+    for path in ("/watch", "/api/usage"):
         c("    %-22s guest" % path, client.get(path, cookies=GUEST).status_code, 403)
+    for path in ("/watch", "/api/usage", "/api/triggers", "/api/triggers/due"):
         c("    %-22s stranger" % path, client.get(path).status_code, 401)
+    # Rules are per person since 12 Sep 2026: a guest is answered with THEIR
+    # rules, which is an empty list here, never the owner's.
+    r = client.get("/api/triggers", cookies=GUEST)
+    c("    /api/triggers          guest gets their own", (r.status_code, r.json()["rules"]), (200, []))
 
     print("\nSeeing the screen is the owner's, and stayed the owner's when the")
     print("tier was widened on 11 Sep 2026 — a guest may now set an alarm, but:")
@@ -273,13 +283,16 @@ print("\nNothing waiting for the browser grows without limit:")
 # ARC can run for weeks with no tab open. Forty rules firing hourly would
 # otherwise build a list nobody ever collects.
 c.truthy("  the pending list is capped", triggers.MAX_PENDING <= 100)
-triggers._pending[:] = ["x"] * 300
+import whose   # noqa: E402
+triggers._pending.clear()
+triggers._pending[whose.current()] = ["x"] * 300
 triggers._save([{"id": "r%d" % i, "kind": "spend", "op": "above", "value": 0.0001,
                  "action": "notify", "on": True, "fired_at": 0, "fires": 0}
                 for i in range(3)])
 triggers.evaluate()
-c.truthy("  and stays capped after firing", len(triggers._pending) <= triggers.MAX_PENDING)
-c.truthy("  keeping the NEWEST, not the oldest", triggers._pending[-1] != "x")
+mine = triggers._pending.get(whose.current(), [])
+c.truthy("  and stays capped after firing", len(mine) <= triggers.MAX_PENDING)
+c.truthy("  keeping the NEWEST, not the oldest", bool(mine) and mine[-1] != "x")
 triggers._save([]); triggers.due()
 
 c.done()
