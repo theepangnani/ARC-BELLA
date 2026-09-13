@@ -26,6 +26,7 @@ import os
 import time
 from pathlib import Path
 
+import storefile
 import whose
 
 ROOT = Path(__file__).parent.resolve()
@@ -37,17 +38,22 @@ HOW = ("finished", "skipped")
 
 
 def _raw():
+    """For reading: a damaged or busy-too-long file shows as nothing. Saving
+    reads strictly instead (storefile.py), so nothing is written over it."""
     try:
-        blob = json.loads(STORE.read_text(encoding="utf-8"))
-        return blob if isinstance(blob, (list, dict)) else {}
-    except Exception:
+        return storefile.shaped(storefile.read(STORE, dict))
+    except storefile.Unreadable:
         return {}
 
 
 def status() -> dict:
     """This account's answer: has it seen the current tour, and how did it end."""
-    rec = (whose.mine(_raw()) or [{}])[-1]
-    seen = int(rec.get("version") or 0)
+    rows = [r for r in whose.mine(_raw()) if isinstance(r, dict)]
+    rec = rows[-1] if rows else {}
+    try:
+        seen = int(rec.get("version") or 0)
+    except (TypeError, ValueError):
+        seen = 0          # a hand-edited or damaged record reads as "not seen"
     return {"done": seen >= VERSION, "version": VERSION, "seen": seen,
             "how": rec.get("how") if seen >= VERSION else None}
 
@@ -56,11 +62,10 @@ def mark(how: str) -> dict:
     """Record that this account finished or skipped the tour. Idempotent."""
     how = how if how in HOW else "finished"
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        blob = whose.replace(_raw(), [{"version": VERSION, "how": how, "at": time.time()}])
-        tmp = STORE.with_name(STORE.name + ".tmp")
-        tmp.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, STORE)          # atomic, like every other store here
-    except Exception:
-        pass
+        with storefile.lock(STORE):
+            blob = storefile.shaped(storefile.read(STORE, dict))
+            storefile.write(STORE, whose.replace(
+                blob, [{"version": VERSION, "how": how, "at": time.time()}]))
+    except (storefile.Unreadable, OSError):
+        pass            # the page keeps its own note; nothing else depends on it
     return status()

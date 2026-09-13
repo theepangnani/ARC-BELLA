@@ -29,6 +29,7 @@ from pathlib import Path
 
 import extras   # yahoo_quote / yahoo_search — the same quote source the widget uses
 import whose    # each person's watchlist is their own
+import storefile  # never read a busy file as empty; see storefile.py
 
 ROOT = Path(__file__).parent.resolve()
 # Per-instance data dir (see run.py); a second Bella keeps its own watchlist.
@@ -56,11 +57,14 @@ def connected() -> bool:
 # --- storage ---------------------------------------------------------------
 
 def _read():
-    """The whole file: a list from before the split, or {address: [...]}."""
+    """The whole file: a list from before the split, or {address: [...]}.
+
+    For READING. A damaged file reads as nothing here, so a screen or a loop
+    shows nothing rather than crashing — but _save reads strictly, so nothing is
+    ever written over it (storefile.py)."""
     try:
-        blob = json.loads(ALERTS_FILE.read_text(encoding="utf-8"))
-        return blob if isinstance(blob, (list, dict)) else []
-    except Exception:
+        return storefile.shaped(storefile.read(ALERTS_FILE))
+    except storefile.Unreadable:
         return []
 
 
@@ -73,11 +77,11 @@ def _load():
 
 
 def _save(items):
-    # Atomic replace so a concurrent reader never sees a half-written file.
-    tmp = ALERTS_FILE.with_name(ALERTS_FILE.name + ".tmp")
-    tmp.write_text(json.dumps(whose.replace(_read(), items), ensure_ascii=False),
-                   encoding="utf-8")
-    os.replace(tmp, ALERTS_FILE)
+    # Strict read and atomic write inside the file's lock (storefile.py): a
+    # busy file read as empty here would write everybody else's alerts out.
+    with storefile.lock(ALERTS_FILE):
+        blob = storefile.shaped(storefile.read(ALERTS_FILE))
+        storefile.write(ALERTS_FILE, whose.replace(blob, items))
 
 
 def _next_id() -> str:

@@ -236,6 +236,10 @@ c.truthy("  it is styled as one of the family", ".plan, .chart, .userpanel {" in
 print("\nWhat it draws:")
 ch = body[body.index("(function stockChart()"):]
 ch = ch[:ch.index("/* ---------- draggable HUD panels ----------")]
+# The ticker check and escaping the chart shares with the markets panel live
+# just above both, so the harness carries them too (test_hudsafety.py).
+HELPERS = body[body.index("  const TICKER_OK"):body.index("  (function stocks() {")]
+ch = HELPERS + ch
 chart_css = page[page.index("  /* One stock, over time."):page.index("  /* draggable HUD panels")]
 c.truthy("  the canvas is drawn in device pixels", "devicePixelRatio" in ch)
 c.truthy("  ...or a phone gets a soft line", "soft on a phone" in ch)

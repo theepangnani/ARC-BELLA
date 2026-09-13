@@ -19,6 +19,9 @@ from pathlib import Path
 
 import httpx
 
+import functools
+
+import storefile
 import whose
 
 ROOT = Path(__file__).parent.resolve()
@@ -98,28 +101,40 @@ def weather(location: str = "", when: str = "today") -> str:
     return f"I don't have a forecast that far out for {label}."
 
 
-def _write_json(path, items):
-    """Write to one side, then move into place.
+def _update(path, items):
+    """Replace this account's slice of a store: a strict read and an atomic
+    write, inside the file's lock (storefile.py). A busy file read as empty is
+    how a guest's reminder used to write the owner's out of the file."""
+    with storefile.lock(path):
+        blob = storefile.shaped(storefile.read(path))
+        storefile.write(path, whose.replace(blob, items))
 
-    A plain write_text truncates first and fills second, so an interruption in
-    between leaves half a file. Both loaders here read a half file as an empty
-    list, which means the damage is invisible until the next save writes over
-    what was left of it. os.replace cannot land halfway, so a reader sees the
-    old file or the new one and never a torn one. Same idiom as alerts.py.
-    """
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+
+def _holding(path):
+    """Hold the file's lock for a whole load-change-save. These two stores are
+    written by the page AND by the background loop (reminders coming due, a
+    standing rule setting one), so the load and the save must not straddle
+    somebody else's."""
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(*a, **kw):
+            with storefile.lock(path):
+                return fn(*a, **kw)
+        return inner
+    return wrap
 
 
 # --- to-do list ------------------------------------------------------------
 
 def _read(path):
-    """The whole file: a list from before the split, or {address: [...]}."""
+    """The whole file: a list from before the split, or {address: [...]}.
+
+    For READING. A damaged file reads as nothing here, so a screen or a loop
+    shows nothing rather than crashing — but _save reads strictly, so nothing is
+    ever written over it (storefile.py)."""
     try:
-        blob = json.loads(path.read_text(encoding="utf-8"))
-        return blob if isinstance(blob, (list, dict)) else []
-    except Exception:
+        return storefile.shaped(storefile.read(path))
+    except storefile.Unreadable:
         return []
 
 
@@ -133,9 +148,10 @@ def _load():
 
 
 def _save(items):
-    _write_json(TODO_FILE, whose.replace(_read(TODO_FILE), items))
+    _update(TODO_FILE, items)
 
 
+@_holding(TODO_FILE)
 def add_todo(item: str) -> str:
     text = (item or "").strip()
     if not text:
@@ -154,6 +170,7 @@ def list_todos() -> str:
     return f"You have {len(items)} thing{'s' if len(items)!=1 else ''} to do:\n" + "\n".join(lines)
 
 
+@_holding(TODO_FILE)
 def complete_todo(which: str) -> str:
     items = _load()
     if not items:
@@ -181,7 +198,7 @@ def _load_rem():
 
 
 def _save_rem(items):
-    _write_json(REMIND_FILE, whose.replace(_read(REMIND_FILE), items))
+    _update(REMIND_FILE, items)
 
 
 def _human_delay(s):
@@ -197,6 +214,7 @@ def _human_delay(s):
     return f"in about {round(h / 24, 1)} days"
 
 
+@_holding(REMIND_FILE)
 def set_reminder(label: str = "", seconds=None, at: str = "") -> str:
     """Set a reminder. Give EITHER seconds (delay from now) OR at (an ISO local
     datetime like 2026-08-09T18:00). It persists and fires even after a reload."""
@@ -237,6 +255,7 @@ def list_reminders() -> str:
     return f"You have {len(items)} reminder{'s' if len(items) != 1 else ''}:\n" + "\n".join(lines)
 
 
+@_holding(REMIND_FILE)
 def cancel_reminder(which: str = "") -> str:
     w = (which or "").strip().lower()
     items = _load_rem()
@@ -257,6 +276,7 @@ def cancel_reminder(which: str = "") -> str:
     return f"Cancelled the reminder: {target['label']}."
 
 
+@_holding(REMIND_FILE)
 def due_reminders():
     """For the poller: reminders whose time has come. Marks them delivered so
     they fire once, and prunes ones delivered over a day ago."""
@@ -275,6 +295,7 @@ def due_reminders():
     return due
 
 
+@_holding(REMIND_FILE)
 def due_for_push():
     """For the server-side phone-push loop: reminders whose time has come and
     that haven't been pushed yet. Uses a SEPARATE 'pushed' flag from 'delivered'

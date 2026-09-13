@@ -1304,6 +1304,8 @@
   html.chat .stocks,
   html.chat .agenda,
   html.chat .nowplaying,
+  html.chat .chart,
+  html.chat .userpanel,
   html.chat .hearmeter,
   html.chat #txPanel > h2,
   html.chat .col.right > .panel:not(#txPanel) { display: none !important; }
@@ -9209,8 +9211,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const range = words.map(w => ({ "7d": 7, "30d": 30, "90d": 90, "1y": 365, year: 365,
                                      week: 7, month: 30 })[w]).find(Boolean) || 30;
     const named = words.map(w => GRAPH_WORDS[w]).find(Boolean);
+    // Range words are not graph names: "/graph 7d" is spend for a week, not a
+    // graph called "7d".
+    const unknown = words.filter(w => !GRAPH_WORDS[w] &&
+      !["7d", "30d", "90d", "1y", "year", "week", "month"].includes(w));
     openGraph(named || "cost", range);
-    addEntry("sys", "SYSTEM", named || !words.length
+    addEntry("sys", "SYSTEM", named || !unknown.length
       ? "Opened Arc Watch on that graph."
       : "I don't have a graph called '" + arg + "' — opened spend. Try: " +
         Object.keys(GRAPH_WORDS).filter((k, i, a) =>
@@ -9311,11 +9317,24 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   /* ---------------- stock watcher ----------------
      Live tickers in the corner, via the /api/stocks proxy. Edit the default
      list below, or set localStorage "arc.tickers" to your own symbols. */
+  /* What a ticker can look like — AAPL, BRK.B, ^GSPC, EURUSD=X, BTC-USD — and
+     the escaping for showing one. Both markets and the chart build their rows
+     as HTML, and a ticker is not always one: when the search finds nothing the
+     raw text is kept, and that text can come from the model, which reads mail.
+     A bug check put <IMG SRC=X ONERROR=...> on the chart this way; it ran, and
+     was saved, so it ran again on every load. Anything that is not
+     ticker-shaped is refused on the way in, and escaped on the way out anyway. */
+  const TICKER_OK = /^[A-Z0-9.^=\-]{1,16}$/;
+  const escHtml = s => String(s).replace(/[&<>"']/g,
+    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
   (function stocks() {
     const box = document.getElementById("stocks");
     if (!box) return;
     let tickers;
     try { tickers = JSON.parse(localStorage.getItem("arc.tickers") || "null"); } catch (_) {}
+    // A list saved before the check existed is filtered, not trusted.
+    if (Array.isArray(tickers)) tickers = tickers.map(t => String(t).toUpperCase()).filter(t => TICKER_OK.test(t));
     if (!Array.isArray(tickers) || !tickers.length) tickers = ["AAPL", "TSLA", "NVDA", "BTC-USD"];
 
     // editIdx: null = not editing; -1 = adding a new ticker; >=0 = replacing that row.
@@ -9339,6 +9358,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         sym = r && r.symbol;
       } catch (_) {}
       if (!sym) sym = q.toUpperCase();       // fall back to raw text as a ticker
+      sym = String(sym).toUpperCase();
+      if (!TICKER_OK.test(sym)) { editIdx = null; render(); return; }
       if (idx === -1) {
         if (!tickers.includes(sym)) tickers.push(sym);
       } else {
@@ -9366,7 +9387,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                                       : (Math.round(s.price * 100) / 100);
         const pct = (s.pct == null) ? "" : (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%";
         const cls = (s.pct == null) ? "" : (s.pct >= 0 ? "st-up" : "st-down");
-        const sym = String(s.symbol).replace("-USD", "");
+        const sym = escHtml(String(s.symbol).replace("-USD", ""));
         html += '<div class="st-row" data-i="' + i + '" title="click to change">' +
           '<span class="st-sym">' + sym + '</span>' +
           '<span class="st-right"><span class="st-price">' + price + '</span> ' +
@@ -9465,6 +9486,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         sym = r && r.symbol;
       } catch (_) {}
       if (!sym) sym = q.toUpperCase();
+      sym = String(sym).toUpperCase();
+      if (!TICKER_OK.test(sym)) return null;
       if (!tickers.includes(sym)) {
         tickers.push(sym); save(); await load();
         if (window.arcChart) window.arcChart.sync();
@@ -9524,11 +9547,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     let range = "6m";
     try {
       symbol = localStorage.getItem("arc.chart.symbol") || "";
+      if (!TICKER_OK.test(symbol)) symbol = "";     // see TICKER_OK
       const r = localStorage.getItem("arc.chart.range");
       if (RANGES.indexOf(r) >= 0) range = r;
     } catch (_) {}
     let data = null;          // last good answer; kept through a blip like the panel above
-    let loading = false;
+    let seq = 0;              // which load is the latest; older answers are dropped
     let failed = false;
 
     function save() {
@@ -9544,21 +9568,26 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                        : (Math.round(v * 100) / 100).toString();
     }
 
+    // Every load is numbered and only the latest may draw. It used to skip a
+    // load while one was in flight, so pressing › twice quickly fetched the
+    // first stock and drew its price under the second one's name — for five
+    // minutes, on a card people make money decisions from.
     async function load() {
-      if (!symbol || loading) return;
-      loading = true;
+      if (!symbol) return;
+      const mine = ++seq;
       try {
         const r = await fetch("/api/stock-history?symbol=" + encodeURIComponent(symbol) +
                               "&range=" + encodeURIComponent(range));
         if (!r.ok) throw new Error("http " + r.status);
         const d = await r.json();
+        if (mine !== seq) return;    // somebody switched while this was on its way
         if (d && d.days && d.days.length) { data = d; failed = false; }
         else failed = !data;         // an unknown ticker, or Yahoo having a moment
       } catch (_) {
+        if (mine !== seq) return;
         failed = !data;              // keep the last good line rather than blanking it
       } finally {
-        loading = false;
-        render();
+        if (mine === seq) render();
       }
     }
 
@@ -9632,7 +9661,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     function switchable() {
       let list = [];
       try { list = (window.arcMarket && window.arcMarket.list()) || []; } catch (_) {}
-      list = list.map(s => String(s).toUpperCase());
+      list = list.map(s => String(s).toUpperCase()).filter(s => TICKER_OK.test(s));
       if (symbol && list.indexOf(symbol) < 0) list = [symbol].concat(list);
       return list;
     }
@@ -9649,7 +9678,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     function render() {
       if (!symbol) { box.hidden = true; return; }
       box.hidden = false;
-      const sym = symbol.replace("-USD", "");
+      const sym = escHtml(symbol.replace("-USD", ""));
       const list = switchable();
       const arrows = list.length > 1;
       const head = '<div class="ch-top"><span class="ch-head">' +
@@ -9693,8 +9722,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       if (!list || list.length < 2) return "";     // one stock needs no tabs
       let h = '<div class="ch-tabs">';
       list.forEach(s => {
-        h += '<span class="ch-tab' + (s === symbol ? " on" : "") + '" data-sym="' + s + '">' +
-             s.replace("-USD", "") + '</span>';
+        h += '<span class="ch-tab' + (s === symbol ? " on" : "") + '" data-sym="' + escHtml(s) + '">' +
+             escHtml(s.replace("-USD", "")) + '</span>';
       });
       return h + "</div>";
     }
@@ -9721,7 +9750,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
     function watch(sym) {
       const want = String(sym || "").trim().toUpperCase();
-      if (!want || want === symbol) return symbol;
+      if (!want || want === symbol || !TICKER_OK.test(want)) return symbol;
       symbol = want; data = null; failed = false;
       save(); render(); load();
       return symbol;
@@ -9750,7 +9779,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (!symbol) {
       try {
         const list = (window.arcMarket && window.arcMarket.list()) || [];
-        if (list.length) { symbol = String(list[0]).toUpperCase(); save(); }
+        const first = list.map(t => String(t).toUpperCase()).find(t => TICKER_OK.test(t));
+        if (first) { symbol = first; save(); }
       } catch (_) {}
     }
     render();
@@ -10045,9 +10075,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // would drift apart, which is the bug the list above exists to prevent.
     window.arcMakeDraggable = makeDraggable;
 
+    // The built-in cards and every one the user invented. Both loops below went
+    // over CARDS alone, so an invented panel dragged near an edge could be left
+    // off-screen by a smaller window, and Reset panels did not bring it back.
+    const allCards = () => CARDS.concat(
+      Array.from(document.querySelectorAll(".userpanel")).map(n => n.id).filter(Boolean));
+
     // Keep panels on-screen if the window shrinks.
     window.addEventListener("resize", () => {
-      CARDS.forEach(id => {
+      allCards().forEach(id => {
         const el = document.getElementById(id);
         if (!el || !saved[id]) return;
         const w = el.offsetWidth, h = el.offsetHeight;
@@ -10061,7 +10097,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const resetBtn = document.getElementById("resetPanelsBtn");
     if (resetBtn) resetBtn.addEventListener("click", () => {
       saved = {}; persist();
-      CARDS.forEach(id => {
+      allCards().forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.style.left = el.style.top = el.style.right = el.style.bottom = "";
@@ -10365,8 +10401,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         card.style.top = Math.max(16, (vh - card.offsetHeight) / 2) + "px";
         return;
       }
-      // Bring it on screen first — the controls live in a scrolling rail.
-      t.scrollIntoView({ block: "nearest", inline: "nearest" });
+      // Bring it on screen first — the controls live in a scrolling rail. On a
+      // phone the card sits along the bottom, so "nearest" parked a control
+      // that was below the fold right under it; scroll it to the top instead.
+      t.scrollIntoView({ block: vw <= 640 ? "start" : "nearest", inline: "nearest" });
       const r = t.getBoundingClientRect(), pad = 6;
       root.classList.add("lit");
       hole.hidden = false;

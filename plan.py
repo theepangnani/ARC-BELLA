@@ -45,6 +45,7 @@ import threading
 import time
 from pathlib import Path
 
+import storefile
 import whose
 
 ROOT = Path(__file__).parent.resolve()
@@ -71,9 +72,11 @@ def connected() -> bool:
 
 
 def _raw() -> object:
+    """For reading: a damaged or busy-too-long file shows as nothing. Saving
+    reads strictly instead (storefile.py), so nothing is written over it."""
     try:
-        return json.loads(STORE.read_text(encoding="utf-8"))
-    except Exception:
+        return storefile.shaped(storefile.read(STORE, dict))
+    except storefile.Unreadable:
         return {}
 
 
@@ -90,14 +93,14 @@ def _mine() -> dict:
 
 
 def _save(p: dict) -> None:
-    with _lock:
+    # Strict read inside the file's lock (storefile.py): a busy file read as
+    # empty here would write everybody else's plan out of it. Still quiet on
+    # failure — the plan is scratch paper, and a turn must not die over it.
+    with _lock, storefile.lock(STORE):
         try:
-            blob = whose.replace(_raw(), [p] if p else [])
-            tmp = STORE.with_name(STORE.name + ".tmp")
-            tmp.write_text(json.dumps(blob, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
-            os.replace(tmp, STORE)     # cannot land halfway; a plain write can
-        except Exception:
+            blob = storefile.shaped(storefile.read(STORE, dict))
+            storefile.write(STORE, whose.replace(blob, [p] if p else []), indent=2)
+        except (storefile.Unreadable, OSError):
             pass
 
 

@@ -61,6 +61,13 @@ DATA_FILES = {
     "alarms.json":       ([], "alarms"),
     "price_alerts.json": ([], "price alerts"),
     "triggers.json":     ([], "standing rules"),
+    # Per-person stores added after this table was written, and missing from it
+    # until a bug check found them: no backups, no repair, and left out of the
+    # export that promises "everything of yours".
+    "plan.json":         ([], "plan"),
+    "panels.json":       ([], "panels"),
+    "missed_alarms.json": ([], "missed alarms"),
+    "tutorial.json":     ([], "tour record"),
     # A dict, not a list — the shape check below is what makes that matter, and
     # it would catch a file that had somehow become the wrong kind of thing.
     "usage.json":        ({}, "usage record"),
@@ -85,7 +92,8 @@ DATA_FILES = {
 # repair that deletes what it was meant to protect is the one kind this file
 # must never make.
 PER_PERSON = {"notes.json", "todos.json", "reminders.json", "alarms.json",
-              "price_alerts.json", "triggers.json"}
+              "price_alerts.json", "triggers.json", "plan.json", "panels.json",
+              "missed_alarms.json", "tutorial.json"}
 
 
 def _shape_ok(name: str, data) -> bool:
@@ -280,9 +288,12 @@ def snapshot(force: bool = False) -> list:
             src = DATA_DIR / name
             if not src.exists():
                 continue
-            _, err = _read_json(src)
-            if err:
-                continue                     # damaged: leave the good copies alone
+            data, err = _read_json(src)
+            # Damaged OR the wrong shape: leave the good copies alone. Checking
+            # only that it parsed let a file holding "oops" be backed up, push a
+            # good copy out of the six, and then be "restored" on every repair.
+            if err or not _shape_ok(name, data):
+                continue
             try:
                 body = src.read_bytes()
             except Exception:
@@ -376,6 +387,10 @@ def _restore(name: str):
     """
     for snap in _snapshots(name):
         data, err = _read_json(snap)
+        # Parses is not enough: a copy of the wrong shape would be put back and
+        # found damaged again at the next check, for ever.
+        if not err and name in DATA_FILES and not _shape_ok(name, data):
+            continue
         if not err:
             return snap, data
     return None, None

@@ -306,7 +306,10 @@
       parts.push(esc(m.label + " over " + days + " days: " + m.fmt(total)));
     } else {
       parts.push(esc("Total " + m.fmt(total) + " over " + days + " days"));
-      parts.push(esc(m.fmt(total / have.length) + " a day on the " + have.length +
+      // An average of counts is not a count: 1.5 alarms a day is not "2".
+      const avg = total / have.length;
+      const avgSaid = m.fmt === money ? m.fmt(avg) : avg >= 10 ? num(avg) : (+avg.toFixed(1)).toString();
+      parts.push(esc(avgSaid + " a day on the " + have.length +
                      " day" + (have.length === 1 ? "" : "s") + " with any"));
     }
     // On a tie the most recent day, which is the one people remember.
@@ -379,7 +382,10 @@
       g.strokeStyle = C("--line"); g.lineWidth = 1;
       g.beginPath(); g.moveTo(padL, yy); g.lineTo(W - padR, yy); g.stroke();
       g.fillStyle = C("--cyan-dim"); g.textAlign = "right";
-      g.fillText(m.fmt === money ? "$" + (+v.toFixed(3)).toString() : num(v), padL - 8, yy);
+      // A count axis topping out below ten gets a decimal: rounding labelled
+      // the gridline at 0.5 alarms "1", next to the real 1.
+      g.fillText(m.fmt === money ? "$" + (+v.toFixed(3)).toString()
+                 : top < 10 && v % 1 ? v.toFixed(1) : num(v), padL - 8, yy);
     }
 
     const slot = pw / n;

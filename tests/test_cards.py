@@ -159,7 +159,11 @@ c.truthy("  ...naming every card", all(
     ('"%s"' % n) in body[body.index("const CARDS = ["):][:120]
     for n in ("forecast", "stocks", "agenda", "nowplaying", "plan")))
 c("  ...and the hardcoded pair is gone", '["forecast", "stocks"].forEach' in body, False)
-c("  every place that iterates them uses the name", body.count("CARDS.forEach"), 3)
+# 3 -> 1 + 2 on 13 Sep 2026: resizing and Reset panels go through allCards(),
+# which is CARDS plus the panels the user invented — both used to miss those.
+c("  every place that iterates them uses the name",
+  (body.count("CARDS.forEach"), body.count("allCards().forEach(")), (1, 2))
+c.truthy("  ...and allCards is built from CARDS", "const allCards = () => CARDS.concat(" in body)
 # Dragging, keeping them on screen when the window shrinks, and Reset panels.
 c.truthy("  positions survive a reload", 'localStorage' in body and '"arc.panels"' in body
          or "saved[id] = { x:" in body)

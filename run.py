@@ -973,6 +973,9 @@ BACKGROUND_PATHS = {
     # The panels the user invented redraw themselves on a timer, like the
     # agenda: on screen is not the same as somebody being there.
     "/api/panels",
+    # The chart card redraws every five minutes. Missing from here, it kept a
+    # HUD left open on a locked laptop signed in for ever (found by a bug check).
+    "/api/stock-history",
     # Both are timers with nobody necessarily there: the trigger poll runs
     # beside the alert poll, and Arc Watch left open on a second screen would
     # otherwise hold a session alive for ever by refreshing itself.
@@ -1010,22 +1013,28 @@ def current_session(request: Request, touch: bool | None = None):
     if AUTH_MODE == "open":
         return {"email": "local", "created": 0, "last_seen": 0}
     path = request.url.path
+    alarm_poll = False
     if touch is None:
         touch = path not in BACKGROUND_PATHS
         # The one exception, and only while an alarm is genuinely set — see
         # ALARM_KEEPS_SESSION above. Checked last so it can only ever turn a
         # background poll INTO use, never the other way round.
-        if not touch and path == "/api/alarms/due" and ALARM_KEEPS_SESSION:
-            try:
-                touch = alarm.armed()
-            except Exception:
-                touch = False
+        alarm_poll = not touch and path == "/api/alarms/due" and ALARM_KEEPS_SESSION
     sid = request.cookies.get(COOKIE, "")
     # The browser is handed in so the session can be bound to it. A cookie is a
     # bearer token — whoever holds it is you — and this is what makes one lifted
     # off this machine and pasted into another fail instead of work.
-    rec = session.validate(sid, touch=touch,
-                           ua=request.headers.get("user-agent", ""))
+    ua = request.headers.get("user-agent", "")
+    rec = session.validate(sid, touch=touch, ua=ua)
+    # Whose alarm, not anybody's. This asked whether ANY alarm was set, so the
+    # owner's everyday 7am alarm held every guest's tab signed in for ever —
+    # a borrowed laptop included. Only the session's own alarm counts.
+    if rec and alarm_poll:
+        try:
+            if alarm.armed_for(rec.get("email") or ""):
+                rec = session.validate(sid, touch=True, ua=ua)
+        except Exception:
+            pass
     # The allowlist is the authority; the session record only caches what it
     # said at sign-in. Taking an address out of .env has to end its access at
     # the next request rather than whenever its session happens to lapse —
@@ -1307,9 +1316,14 @@ async def read_json(request: Request):
     than an uncaught 500 (which is what a garbled request would otherwise
     produce on every JSON endpoint)."""
     try:
-        return await request.json()
+        body = await request.json()
     except Exception:
         raise HTTPException(400, "Malformed JSON body.")
+    # Every caller reads fields off an object. A list or a bare string parses
+    # fine and then failed on the first .get() as a 500.
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Expected a JSON object.")
+    return body
 
 
 # --------------------------------------------------------------------------
@@ -2599,18 +2613,8 @@ async def _eleven_tts(http, text: str, lang: str = ""):
     return r.content
 
 
-async def _edge_tts(text: str, voice: str = "", lang: str = ""):
-    """Microsoft Edge neural voice. Free, no key, no quota — the default.
-
-    The voice is still whitelisted, but the whitelist is now everything
-    Microsoft actually publishes (see voices.py) rather than eight English
-    names — so ARC can answer in any of a hundred-odd languages, and a client
-    still cannot pass an arbitrary string.
-
-    With no voice but a language, the language decides. That is what makes
-    replying in Tamil sound like Tamil rather than an English voice reading
-    Tamil letters aloud.
-    """
+def _pick_voice(voice: str, lang: str):
+    """(voice, rate, pitch) for a request. Blocking — see _edge_tts."""
     # A character is a voice plus a way of speaking, and its rate and pitch come
     # from voices.PERSONAS — never from the request.
     rate, pitch = "+0%", "+0Hz"
@@ -2626,8 +2630,26 @@ async def _edge_tts(text: str, voice: str = "", lang: str = ""):
         # Bella's voice with a child's. ARC_TTS_VOICE is the configured voice
         # and it wins for its own language, every time.
         v = voices.for_lang(lang)
-    if not v:
-        v = TTS_VOICE
+    return (v or TTS_VOICE), rate, pitch
+
+
+async def _edge_tts(text: str, voice: str = "", lang: str = ""):
+    """Microsoft Edge neural voice. Free, no key, no quota — the default.
+
+    The voice is still whitelisted, but the whitelist is now everything
+    Microsoft actually publishes (see voices.py) rather than eight English
+    names — so ARC can answer in any of a hundred-odd languages, and a client
+    still cannot pass an arbitrary string.
+
+    With no voice but a language, the language decides. That is what makes
+    replying in Tamil sound like Tamil rather than an English voice reading
+    Tamil letters aloud.
+    """
+    # Off the event loop: working out the voice asks the catalogue, and the
+    # catalogue can go to the network. Done inline, one slow answer from
+    # Microsoft stopped every other request — alarm polls included — until it
+    # came back.
+    v, rate, pitch = await asyncio.to_thread(_pick_voice, voice, lang)
     comm = edge_tts.Communicate(text, v, rate=rate, pitch=pitch)
     audio = bytearray()
     async for chunk in comm.stream():
@@ -2642,9 +2664,9 @@ async def tts(request: Request, _=Depends(require_auth)):
     robot one. Uses ElevenLabs when its key has credit, otherwise the free Edge
     neural voice. Always available — no key required."""
     payload = await read_json(request)
-    text = (payload.get("text") or "").strip()
-    voice = (payload.get("voice") or "").strip()
-    lang = (payload.get("lang") or "").strip()
+    text = str(payload.get("text") or "").strip()
+    voice = str(payload.get("voice") or "").strip()
+    lang = str(payload.get("lang") or "").strip()
     if not text:
         raise HTTPException(400, "No text supplied.")
     if len(text) > 5000:
@@ -2681,15 +2703,19 @@ async def voices_list(request: Request, _=Depends(require_auth)):
     anyone editing a list.
     """
     locale = (request.query_params.get("locale") or "").strip()
-    if locale:
-        return JSONResponse({"locale": locale,
-                             "voices": voices.voices_for(locale),
-                             "others": voices.same_language_voices(locale),
-                             "personas": [{"id": p["id"], "label": p["label"],
-                                           "gender": p["gender"]}
-                                          for p in voices.personas_for(locale)]})
-    return JSONResponse({"languages": voices.languages(),
-                         "default": TTS_VOICE})
+
+    def build():
+        # Blocking, for the same reason as _pick_voice: the catalogue may fetch.
+        if locale:
+            return {"locale": locale,
+                    "voices": voices.voices_for(locale),
+                    "others": voices.same_language_voices(locale),
+                    "personas": [{"id": p["id"], "label": p["label"],
+                                  "gender": p["gender"]}
+                                 for p in voices.personas_for(locale)]}
+        return {"languages": voices.languages(), "default": TTS_VOICE}
+
+    return JSONResponse(await asyncio.to_thread(build))
 
 
 @app.get("/api/stocks")
@@ -3003,14 +3029,22 @@ async def memory_import(request: Request, _=Depends(require_auth)):
 async def usage_route(request: Request, _=Depends(require_auth)):
     """Everything Arc Watch draws. Figures only — never conversations."""
     deny_guest(request)
-    days = max(1, min(400, int(request.query_params.get("days") or 30)))
+    try:
+        days = max(1, min(400, int(request.query_params.get("days") or 30)))
+    except ValueError:
+        raise HTTPException(400, "days must be a whole number")
     # The window before this one, so a chart can say "up 30% on the previous
     # thirty days" rather than leave the reader to remember last month. Only
-    # while the record reaches back that far: stats keeps KEEP_DAYS, and a
-    # "previous year" made of half a year and a run of zeros would claim a
-    # collapse that never happened.
-    previous = (stats.series(days * 2)[:days]
-                if days * 2 <= stats.KEEP_DAYS else None)
+    # while the RECORD reaches back that far — checked against the first day
+    # actually recorded, not just against how long stats keeps days for. The
+    # first version only checked the second, and on a 35-day-old install
+    # compared this month with five real days and twenty-five zeros: "up 500%".
+    previous = None
+    if days * 2 <= stats.KEEP_DAYS:
+        window = stats.series(days * 2)[:days]
+        first = stats.first_day()
+        if first and window and first <= window[0]["date"]:
+            previous = window
     return JSONResponse({
         "today": stats.day(),
         "series": stats.series(days),

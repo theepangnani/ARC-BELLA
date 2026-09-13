@@ -54,6 +54,10 @@ def seed():
     stats._days.clear()
     stats._loaded = True
     today = date.today()
+    # One day older than both windows, so the record visibly reaches back past
+    # the start of the previous one — without it there is nothing to compare.
+    stats._days[(today - timedelta(days=60)).isoformat()] = {
+        **stats._blank(), "cost": 0.01, "turns": 1}
     for i in range(60):
         d = (today - timedelta(days=i)).isoformat()
         if i % 7 == 3:
@@ -81,6 +85,19 @@ with TestClient(run.app) as client:
     y = client.get("/api/usage?days=365", cookies=O).json()
     c("  a year has nothing to compare with: the record is not two years long",
       y["previous"], None)
+    # The bug check's case: a record younger than both windows. Thirty days of
+    # $1 against five real days and twenty-five zeros read "up 500%".
+    saved_days = dict(stats._days)
+    stats._days.clear()
+    for i in range(35):
+        stats._days[(date.today() - timedelta(days=i)).isoformat()] = {
+            **stats._blank(), "cost": 1.0, "turns": 5}
+    c("  a record that does not reach the previous window gives no comparison",
+      client.get("/api/usage?days=30", cookies=O).json()["previous"], None)
+    stats._days.clear()
+    stats._days.update(saved_days)
+    c("  a days value that is not a number is a 400, not a 500",
+      client.get("/api/usage?days=abc", cookies=O).status_code, 400)
     c("  a guest still cannot read the owner's bill",
       client.get("/api/usage?days=30", cookies=G).status_code, 403)
     session.revoke_all()

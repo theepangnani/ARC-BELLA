@@ -40,6 +40,7 @@ from pathlib import Path
 
 import extras   # yahoo_quote — the one quote source the whole app uses
 import whose    # each person's rules are their own
+import storefile  # never read a busy file as empty; see storefile.py
 
 ROOT = Path(__file__).parent.resolve()
 DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
@@ -62,11 +63,14 @@ def connected() -> bool:
 # --- storage ----------------------------------------------------------------
 
 def _read():
-    """The whole file: a list from before the split, or {address: [...]}."""
+    """The whole file: a list from before the split, or {address: [...]}.
+
+    For READING. A damaged file reads as nothing here, so a screen or a loop
+    shows nothing rather than crashing — but _save reads strictly, so nothing is
+    ever written over it (storefile.py)."""
     try:
-        data = json.loads(RULES.read_text(encoding="utf-8"))
-        return data if isinstance(data, (list, dict)) else []
-    except Exception:
+        return storefile.shaped(storefile.read(RULES))
+    except storefile.Unreadable:
         return []
 
 
@@ -79,14 +83,12 @@ def _load() -> list:
 
 
 def _save(items) -> None:
-    try:
-        RULES.parent.mkdir(parents=True, exist_ok=True)
-        tmp = RULES.with_name(RULES.name + ".tmp")
-        tmp.write_text(json.dumps(whose.replace(_read(), items[:MAX_RULES]),
-                                  ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, RULES)      # atomic, like alerts.py and alarm.py
-    except Exception:
-        pass
+    """Raises if it could not save. It used to swallow that, and evaluate()
+    acts on a rule only once its new fired_at is saved — a silent failure meant
+    the cooldown never started and the same push went out every thirty seconds."""
+    with storefile.lock(RULES):
+        blob = storefile.shaped(storefile.read(RULES))
+        storefile.write(RULES, whose.replace(blob, items[:MAX_RULES]))
 
 
 def _next_id(items) -> str:
@@ -251,6 +253,7 @@ def _evaluate_mine(now: float) -> None:
     with _lock:
         rules = _load()
         by_id = {r.get("id"): r for r in rules}
+        fired = []
         for rid, msg in results:
             r = by_id.get(rid)
             if not r:
@@ -259,11 +262,16 @@ def _evaluate_mine(now: float) -> None:
             r["fires"] = int(r.get("fires") or 0) + 1
             if r.get("once"):
                 r["on"] = False
+            fired.append((r, msg))
+        # SAVED FIRST, acted on second. If the save fails this raises, nothing
+        # is pushed, and the rule is tried again next cycle; the other order
+        # pushed first and then, on a failed save, pushed again every cycle.
+        _save(rules)
+        for r, msg in fired:
             mine = _pending.setdefault(whose.current(), [])
             mine.append(msg)
             del mine[:-MAX_PENDING]
             _do(r, msg)
-        _save(rules)
 
 
 def due() -> list:

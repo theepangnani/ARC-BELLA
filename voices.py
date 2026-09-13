@@ -38,6 +38,9 @@ CACHE = DATA_DIR / "voices.json"
 # A week. New neural voices appear a few times a year; refetching on every
 # restart would add a network round trip to startup for nothing.
 CACHE_TTL = 7 * 24 * 3600
+# After a failed fetch, how long to make do with what is in hand before trying
+# the network again.
+RETRY_AFTER = 5 * 60
 
 # What ARC had before any of this. Also the answer when the network is not
 # there: eight English voices is worse than 322, and far better than none.
@@ -137,9 +140,17 @@ def catalogue(refresh: bool = False):
         if fresh:
             _voices, _fetched_at = fresh, time.time()
             _write_cache(fresh)
-        elif not _voices:
-            cached, at = _read_cache()          # stale is better than nothing
-            _voices, _fetched_at = (cached or FALLBACK), at or time.time()
+        else:
+            if not _voices:
+                cached, _ = _read_cache()       # stale is better than nothing
+                _voices = cached or FALLBACK
+            # A failed fetch is not tried again on the very next call. It used
+            # to be: once the week was up and Microsoft was unreachable, every
+            # call went back to the network and waited twenty seconds — ten of
+            # them for one /api/voices, with the whole server stuck behind them.
+            # And an offline first boot kept the eight-voice fallback for a week.
+            # Now: try again in RETRY_AFTER, whichever of those it was.
+            _fetched_at = time.time() - CACHE_TTL + RETRY_AFTER
         return _voices
 
 

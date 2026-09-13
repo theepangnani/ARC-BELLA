@@ -170,7 +170,8 @@ c("  the browser is only told once", triggers.due(), [])
 triggers._save([])
 
 print("\nA rule is written to one side and moved, like every other data file:")
-c.truthy("  atomic write", "os.replace(" in tsrc)
+# Through storefile.write since 13 Sep 2026, which is where the os.replace is.
+c.truthy("  atomic write", "storefile.write(RULES" in tsrc)
 c.truthy("  and it never holds the lock across a network call",
          "OUTSIDE the lock" in tsrc)
 

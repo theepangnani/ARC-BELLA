@@ -44,6 +44,7 @@ from pathlib import Path
 
 import push     # only to ASK whether the phone is reachable, never to send
 import whose    # each person's alarms are their own; see _load and evaluate
+import storefile  # never read a busy file as empty; see storefile.py
 
 ROOT = Path(__file__).parent.resolve()
 # Per-instance data dir (see run.py); a second Bella keeps its own alarms.
@@ -93,19 +94,24 @@ def connected() -> bool:
 # --- storage ---------------------------------------------------------------
 
 def _read(path):
-    """The whole file: a list from before the split, or {address: [...]}."""
+    """The whole file: a list from before the split, or {address: [...]}.
+
+    For READING. A damaged file reads as nothing here, so a screen or a loop
+    shows nothing rather than crashing — but _save reads strictly, so nothing is
+    ever written over it (storefile.py)."""
     try:
-        blob = json.loads(path.read_text(encoding="utf-8"))
-        return blob if isinstance(blob, (list, dict)) else []
-    except Exception:
+        return storefile.shaped(storefile.read(path))
+    except storefile.Unreadable:
         return []
 
 
-def _write(path, blob):
-    # Atomic replace so a concurrent reader never sees a half-written file.
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+def _update(path, items):
+    """Replace this account's slice. The read is STRICT and inside the file's
+    lock: reading a busy or damaged file as empty here is what used to write
+    everybody else's alarms out of it."""
+    with storefile.lock(path):
+        blob = storefile.shaped(storefile.read(path))
+        storefile.write(path, whose.replace(blob, items))
 
 
 # PER PERSON. A guest's 6am alarm used to ring in the owner's tab and on the
@@ -119,7 +125,7 @@ def _load():
 
 
 def _save(items):
-    _write(ALARMS_FILE, whose.replace(_read(ALARMS_FILE), items))
+    _update(ALARMS_FILE, items)
 
 
 # Alarms that came due while nothing could ring them. Kept in a file of their
@@ -134,7 +140,7 @@ def _load_missed():
 
 
 def _save_missed(items):
-    _write(MISSED_FILE, whose.replace(_read(MISSED_FILE), items[-MISSED_KEEP:]))
+    _update(MISSED_FILE, items[-MISSED_KEEP:])
 
 
 def _note_missed(a: dict, due: float) -> None:
@@ -686,6 +692,18 @@ def armed() -> bool:
     with _LOCK:
         return any(a.get("enabled") or a.get("ringing") or a.get("snooze_at")
                    for a in whose.flatten(_read(ALARMS_FILE)))
+
+
+def armed_for(email: str) -> bool:
+    """armed(), for one account only — what holds THAT account's tab signed in.
+
+    armed() stays everybody's, because keeping the machine awake is what lets
+    any alarm ring. Keeping a session open is not like that: it is one person's
+    tab, and somebody else's alarm is no reason for it to outlive its idle clock.
+    """
+    with _LOCK, whose.acting_as(email):
+        return any(a.get("enabled") or a.get("ringing") or a.get("snooze_at")
+                   for a in _load())
 
 
 def summary_line() -> str:

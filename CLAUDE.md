@@ -93,7 +93,10 @@ back.
   no request, so they step through `whose.accounts()` under
   `whose.acting_as()` — never a bare `_load()`, which would silently serve the
   default account and ring nobody else's alarm. Only the owner's items are
-  pushed to the phone. Before adding a store or a guest tool, read
+  pushed to the phone. Stores read and write ONLY through `storefile.py`
+  (strict read + lock + unique temp file inside `_save`): on Windows a file
+  being replaced reads as an error, and treating that as "empty" once wrote
+  everyone else's reminders out of the file. Before adding a store or a guest tool, read
   `tests/test_perperson.py`: the loan once lent tools on a store that was
   still one shared file, and nothing caught it for a day.
 - **The PC is local-only.** `local = is_local_request(request) and not guest`

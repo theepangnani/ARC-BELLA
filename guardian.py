@@ -172,7 +172,13 @@ def start() -> bool:
             kw["creationflags"] = 0x00000008 | 0x00000200
         else:
             kw["start_new_session"] = True
-        subprocess.Popen([sys.executable, str(ROOT / "run.py")], **kw)
+        try:
+            subprocess.Popen([sys.executable, str(ROOT / "run.py")], **kw)
+        finally:
+            # The child has its own handle now. Keeping ours open leaked one per
+            # restart and kept arc-server.log locked against rotation.
+            if out is not subprocess.DEVNULL:
+                out.close()
         return True
     except Exception as e:
         note("could not launch ARC at all: %s: %s" % (type(e).__name__, e))

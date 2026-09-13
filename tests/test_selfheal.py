@@ -51,8 +51,11 @@ c.truthy("  and the order is stated as the point of the design",
 # which is the same default-deny as PASSIVE_TOOLS and GUEST_TOOLS.
 c("  it knows exactly which files are its business",
   sorted(selfheal.DATA_FILES),
-  ["alarms.json", "notes.json", "price_alerts.json", "reminders.json",
-   "todos.json", "triggers.json", "usage.json"])
+  # plan, panels, missed alarms and the tour record joined on 13 Sep 2026: a bug
+  # check found them with no backups and missing from the export.
+  ["alarms.json", "missed_alarms.json", "notes.json", "panels.json", "plan.json",
+   "price_alerts.json", "reminders.json", "todos.json", "triggers.json",
+   "tutorial.json", "usage.json"])
 for secret in ("credentials.json", "credentials_web.json", "token.json", ".env"):
     c.truthy("  %-22s is never copied or rewritten" % secret,
              secret in selfheal.KEEP_OUT and secret not in selfheal.DATA_FILES)
@@ -352,11 +355,17 @@ print("\nThe writes that caused all this are atomic now:")
 # notes/todos/reminders truncated first and filled second, so an interruption
 # left half a file — which every loader reads as "empty", and the next save
 # then overwrote. The three atomic writers were already doing it correctly.
+# Moved on 13 Sep 2026: the stores no longer call os.replace themselves. Every
+# one writes through storefile.write, which does it once, with a temporary file
+# of its own per write — the shared "<name>.tmp" was part of what a bug check
+# found losing data. test_storefile.py proves the behaviour under load.
+sf = io.open(ARC / "storefile.py", encoding="utf-8").read()
+c.truthy("  storefile writes to one side and moves it", "os.replace(tmp, p)" in sf)
 for mod in ("notes.py", "extras.py", "alerts.py", "alarm.py"):
     s = io.open(ARC / mod, encoding="utf-8").read()
-    c.truthy("  %-11s writes to one side and moves it" % mod, "os.replace(" in s)
+    c.truthy("  %-11s writes through it" % mod, "storefile.write(" in s)
 c.truthy("  and the failure it prevents is on record",
-         "leaves half a file" in io.open(ARC / "extras.py", encoding="utf-8").read())
+         "A BUSY FILE IS RETRIED, never read as empty" in sf)
 
 print("\nHealth checks do not become the fault they look for:")
 c.truthy("  the voice check never goes to the network",

@@ -25,6 +25,7 @@ Free data, no key: the same Yahoo chart endpoint the quote widget already uses.
 """
 
 import math
+import re
 import statistics
 import threading
 import time
@@ -68,6 +69,11 @@ def connected() -> bool:
 _SERIES_TTL = 300
 _series_cache: dict[str, tuple[float, dict]] = {}
 _series_lock = threading.RLock()
+# What a ticker can look like: AAPL, BRK.B, ^GSPC, EURUSD=X, BTC-USD. Anything
+# else is refused before it reaches Yahoo's URL or the cache, which a guest can
+# fill too — so the cache is also swept of expired entries and capped.
+_TICKER = re.compile(r"^[A-Z0-9.^=\-]{1,16}$")
+_SERIES_MAX = 64
 
 
 def series(symbol: str):
@@ -80,7 +86,7 @@ def series(symbol: str):
     like it did something it did not.
     """
     sym = (symbol or "").strip().upper()
-    if not sym:
+    if not sym or not _TICKER.match(sym):
         return None
     now = time.time()
     with _series_lock:
@@ -111,6 +117,10 @@ def series(symbol: str):
     out = {"symbol": meta.get("symbol", sym),
            "currency": meta.get("currency", ""), "days": days}
     with _series_lock:
+        for k in [k for k, (at, _) in _series_cache.items() if now - at >= _SERIES_TTL]:
+            del _series_cache[k]
+        while len(_series_cache) >= _SERIES_MAX:
+            del _series_cache[min(_series_cache, key=lambda k: _series_cache[k][0])]
         _series_cache[sym] = (now, out)
     return out
 

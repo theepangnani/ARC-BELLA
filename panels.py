@@ -37,6 +37,7 @@ import re
 import time
 from pathlib import Path
 
+import storefile
 import whose
 
 ROOT = Path(__file__).parent.resolve()
@@ -75,9 +76,11 @@ def _clean(s, limit: int) -> str:
 
 
 def _raw() -> object:
+    """For reading: a damaged or busy-too-long file shows as nothing. Saving
+    reads strictly instead (storefile.py), so nothing is written over it."""
     try:
-        return json.loads(PANELS.read_text(encoding="utf-8"))
-    except Exception:
+        return storefile.shaped(storefile.read(PANELS, dict))
+    except storefile.Unreadable:
         return {}
 
 
@@ -86,13 +89,11 @@ def _load() -> list:
 
 
 def _save(items) -> None:
-    try:
-        blob = whose.replace(_raw(), items[-MAX_PANELS:])
-        tmp = PANELS.with_name(PANELS.name + ".tmp")
-        tmp.write_text(json.dumps(blob, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, PANELS)
-    except Exception:
-        pass
+    # Strict read inside the file's lock (storefile.py); raises rather than
+    # letting make_panel report a panel it did not keep.
+    with storefile.lock(PANELS):
+        blob = storefile.shaped(storefile.read(PANELS, dict))
+        storefile.write(PANELS, whose.replace(blob, items[-MAX_PANELS:]), indent=2)
 
 
 def _tidy(items) -> list:
@@ -191,9 +192,12 @@ def panels_for_screen() -> list:
     the page can trust it: every row has a label and a value, and `live` is
     either absent or one of the allow-listed kinds."""
     out = []
-    for p in _load()[:MAX_PANELS]:
+    # Rows that are not objects are skipped, not crashed on: a hand-edited or
+    # damaged file answered 500 to a poll that runs every twenty seconds.
+    for p in [p for p in _load() if isinstance(p, dict)][:MAX_PANELS]:
         rows = []
-        for r in (p.get("items") or [])[:MAX_ITEMS]:
+        items = p.get("items") if isinstance(p.get("items"), list) else []
+        for r in [r for r in items if isinstance(r, dict)][:MAX_ITEMS]:
             row = {"label": _clean(r.get("label"), MAX_LABEL),
                    "value": _clean(r.get("value"), MAX_VALUE)}
             live = _clean(r.get("live"), 32)

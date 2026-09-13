@@ -84,7 +84,8 @@ if not offline:
 
 print("\nThe server picks the voice from the language:")
 run_src = io.open(ARC / "run.py", encoding="utf-8").read()
-c.truthy("  /api/tts takes a lang", 'lang = (payload.get("lang")' in run_src)
+# str() since 13 Sep 2026: a number for a field was a 500.
+c.truthy("  /api/tts takes a lang", 'lang = str(payload.get("lang")' in run_src)
 c.truthy("  and uses it when no voice is named", "v = voices.for_lang(lang)" in run_src)
 c.truthy("  the whitelist is now every real voice", "voices.is_valid(voice)" in run_src)
 c("  the old eight-name list is gone", "EDGE_VOICES" in run_src, False)

@@ -194,6 +194,19 @@ def series(days: int = 30) -> list:
                 for s in _range(days)]
 
 
+def first_day() -> str:
+    """The earliest day with anything recorded, as YYYY-MM-DD, or "" for none.
+
+    So a comparison with an earlier period can tell "nothing happened then"
+    from "ARC was not installed yet" — the zeros look the same in series().
+    """
+    with _lock:
+        _load()
+        used = [d for d, r in _days.items()
+                if isinstance(r, dict) and (r.get("turns") or r.get("cost"))]
+        return min(used) if used else ""
+
+
 def totals(days: int = 30) -> dict:
     rows = series(days)
     out = _blank()

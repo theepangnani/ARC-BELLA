@@ -13,6 +13,7 @@ import time
 import datetime as dt
 from pathlib import Path
 
+import storefile
 import whose
 
 ROOT = Path(__file__).parent.resolve()
@@ -28,9 +29,11 @@ def connected() -> bool:
 
 
 def _raw() -> object:
+    """For reading: a damaged or busy-too-long file shows as nothing. Saving
+    reads strictly instead (storefile.py), so nothing is written over it."""
     try:
-        return json.loads(NOTES.read_text(encoding="utf-8"))
-    except Exception:
+        return storefile.shaped(storefile.read(NOTES, dict))
+    except storefile.Unreadable:
         return {}
 
 
@@ -47,18 +50,15 @@ def _save(items) -> None:
     # second, so a power cut in between leaves half a file — and since _load
     # reads a half file as "no notes at all", the next note saved would
     # overwrite the remains with a list of one. os.replace cannot land halfway.
-    try:
-        # Read-modify-write: the file holds everybody, and this account is only
-        # replacing its own slice. Reading first is what stops one person's
-        # save erasing another's notes — the cap below is per account now, and
-        # applied to this slice alone for the same reason.
-        blob = whose.replace(_raw(), items[-MAX_NOTES:])
-        tmp = NOTES.with_name(NOTES.name + ".tmp")
-        tmp.write_text(json.dumps(blob, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        os.replace(tmp, NOTES)
-    except Exception:
-        pass
+    #
+    # Read-modify-write: the file holds everybody, and this account is only
+    # replacing its own slice. The read is STRICT and inside the file's lock —
+    # a tolerant read that turned a busy file into "no notes" is how one
+    # person's save used to erase everyone else's (storefile.py). And it
+    # raises on failure rather than letting add_note say "saved" when it wasn't.
+    with storefile.lock(NOTES):
+        blob = storefile.shaped(storefile.read(NOTES, dict))
+        storefile.write(NOTES, whose.replace(blob, items[-MAX_NOTES:]), indent=2)
 
 
 def add_note(text: str = "") -> str:
