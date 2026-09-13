@@ -146,6 +146,7 @@ import retry
 import awake
 import redact
 import whose
+import tutorial
 import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
@@ -3560,6 +3561,22 @@ async def leave(request: Request, _=Depends(require_auth)):
         return JSONResponse({"ok": True})
     session.mark_left(request.cookies.get(COOKIE, ""))
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/tutorial")
+async def tutorial_status(request: Request, _=Depends(require_auth)):
+    """Has whoever is asking been shown round yet. Per account (tutorial.py),
+    so a guest is asked about their own first visit, not the owner's."""
+    apply_session_memory(request)
+    return JSONResponse(tutorial.status())
+
+
+@app.post("/api/tutorial")
+async def tutorial_mark(request: Request, _=Depends(require_auth)):
+    """They finished the tour, or skipped it. Either way it does not come back."""
+    apply_session_memory(request)
+    payload = await read_json(request)
+    return JSONResponse(tutorial.mark(str(payload.get("how") or "")))
 
 
 @app.get("/api/session")

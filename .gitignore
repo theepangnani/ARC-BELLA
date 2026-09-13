@@ -44,6 +44,8 @@ plan.json
 # Cards the user invented — their trip, their countdowns, their business
 panels.json
 missed_alarms.json
+# Who has been shown the first-visit tour
+tutorial.json
 
 # Market price alerts (personal watchlist)
 price_alerts.json

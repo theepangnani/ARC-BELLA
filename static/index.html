@@ -1533,6 +1533,57 @@
     .hud-slow, .hud-rev, .hud-mid, .hud-fast, .hud-tick { animation: none; }
     * { transition-duration: .01ms !important; }
   }
+  /* ---------------- first-visit tour ----------------
+     A spotlight on the real control and a card saying what it is for. The dim
+     is the spotlight's own shadow rather than a second layer, so the lit hole
+     is always exactly where the control is, whatever it is shaped like. */
+  .tour { position: fixed; inset: 0; z-index: 900; pointer-events: auto; }
+  .tour[hidden] { display: none; }
+  .tour .tour-dim { position: fixed; inset: 0; background: rgba(2, 6, 10, .74); }
+  .tour.lit .tour-dim { background: transparent; }
+  .tour .tour-hole {
+    position: fixed; border-radius: 10px; pointer-events: none;
+    box-shadow: 0 0 0 2px var(--accent), 0 0 0 9999px rgba(2, 6, 10, .74);
+    transition: top .28s ease, left .28s ease, width .28s ease, height .28s ease;
+  }
+  .tour .tour-card {
+    position: fixed; width: min(360px, calc(100vw - 32px));
+    background: var(--deep); color: var(--ice); border: 1px solid var(--line);
+    border-top: 2px solid var(--accent); border-radius: 10px;
+    padding: 16px 18px 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+    font-family: var(--mono); transition: top .28s ease, left .28s ease;
+  }
+  .tour .tour-count { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
+                      color: var(--cyan-dim); }
+  .tour .tour-title { font-family: var(--display); font-size: 21px; letter-spacing: .06em;
+                      color: var(--accent); margin: 4px 0 8px; font-weight: 600; }
+  .tour .tour-body { font-size: 12.5px; line-height: 1.65; color: var(--ice); margin: 0; }
+  .tour .tour-body q { color: var(--accent); quotes: "\201C" "\201D"; }
+  .tour .tour-dots { display: flex; gap: 5px; margin: 14px 0 12px; }
+  .tour .tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+  .tour .tour-dots i.on { background: var(--accent); }
+  .tour .tour-actions { display: flex; align-items: center; gap: 8px; }
+  .tour .tour-actions .grow { flex: 1; }
+  .tour button {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; cursor: pointer;
+    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--ice);
+  }
+  .tour button.tour-next { background: var(--accent); color: var(--void); border-color: var(--accent);
+                           font-weight: 600; }
+  .tour button.tour-skip { border-color: transparent; color: var(--cyan-dim); padding-left: 0; }
+  .tour button:hover { border-color: var(--accent); }
+  .tour button.tour-skip:hover { color: var(--ice); border-color: transparent; }
+  .tour button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* On a phone the card sits along the bottom, where a thumb is, and the
+     spotlight stays visible above it. */
+  @media (max-width: 640px) {
+    .tour .tour-card { left: 16px !important; right: 16px; bottom: 16px; top: auto !important;
+                       width: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tour .tour-hole, .tour .tour-card { transition: none; }
+  }
 </style>
 
 <div class="field">
@@ -1711,6 +1762,8 @@
 
     <div class="panel">
       <h2>Quick guide <span class="guide-toggle" id="guideToggle">hide</span></h2>
+      <!-- The tour shows these on the real controls; this stays as the
+           reference to read at leisure. -->
       <div class="guide" id="guide">
         <p><b>1 · Talk to it</b><br>
         Hold the ring in the middle, speak, then let go. That always works, even
@@ -1992,6 +2045,7 @@
         <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
         <button id="fullscreenBtn" title="Toggle full-screen (or press F)">⛶ Full screen</button>
         <button id="resetPanelsBtn" title="Snap the weather and stock panels back to their default spots">Reset panels</button>
+        <button id="tourBtn" title="Walk through what everything on this screen does. You saw it once when you first signed in.">Take the tour</button>
         <button id="watchStatsBtn" title="Arc Watch — what ARC has cost and done, day by day. Opens in its own tab; leave it on a second screen.">⌘ Arc Watch</button>
       </div>
 
@@ -9004,6 +9058,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                run: cmdPlan },
     clear:   { hint: "empty this transcript — memory and notes are untouched",
                run: cmdClear },
+    tutorial: { hint: "the tour of this screen, again",
+               run: cmdTutorial },
   };
 
   async function runCommand(text) {
@@ -9182,6 +9238,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   }
 
   function cmdClear() { el.clearBtn.click(); }
+
+  function cmdTutorial() { arcTour.start("replay"); }
 
   el.sendBtn.addEventListener("click", () => {
     const t = el.typed.value.trim();
@@ -10153,6 +10211,233 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       .join("");
   }
 
+  /* ---------------- first-visit tour ----------------
+     The first time somebody signs in, walk them round what is on the screen
+     instead of leaving them to work out which of forty readouts does anything.
+     Finished or skipped, it does not come back — for that ACCOUNT, anywhere:
+     the server keeps it (tutorial.py), so a phone or a second computer does
+     not greet a regular as a stranger. localStorage is only the fallback for
+     when the server cannot be asked.
+
+     Every step points at a real control. A step whose control is not on the
+     screen (a phone hides the side panels; chat mode hides the rails; a guest
+     has no Arc Watch) is left out rather than pointing at nothing. */
+  const arcTour = (() => {
+    const LOCAL = "arc.tutorial.done";
+    const wake = () => ((el.wakeWord && el.wakeWord.value) || "bella").trim() || "bella";
+    const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+    const panelOf = sel => { const n = document.querySelector(sel); return n && n.closest(".panel"); };
+
+    // Text is built with textContent and <q> elements only — never markup
+    // from a string — so the wake word someone typed is shown, not parsed.
+    const STEPS = [
+      { title: "Welcome to ARC",
+        body: () => ["I'm " + cap(wake()) + ", a voice assistant you can talk to or type to. " +
+                     "This tour shows you where everything is. It takes about a minute, and you'll only see it once."] },
+      { target: () => el.core, title: "Talk to me",
+        body: () => ["Press and hold the ring, say what you want, then let go. " +
+                     "Tap it while I'm talking to stop me."] },
+      { target: () => el.wakeOn && el.wakeOn.closest("label"), title: "Hands free",
+        body: () => ["With Always listening on, just say my name first, like ",
+                     { q: cap(wake()) + ", what's the weather?" },
+                     " For about fifteen seconds after I answer, you can keep talking without it."] },
+      { target: () => el.typed && el.typed.closest(".composer"), title: "Or type",
+        body: () => ["Rather not talk? Type here and press Enter — I'll still answer out loud. " +
+                     "Lines starting with / are commands: try ", { q: "/help" }, "."] },
+      { target: () => el.log, title: "The conversation",
+        body: () => ["Everything we say shows up here, so you can scroll back through it."] },
+      { target: () => panelOf("#rState"), title: "What I'm doing",
+        body: () => ["STATE says whether I'm listening, thinking or speaking. " +
+                     "MEMORY counts what I remember about you — ask ", { q: "what do you know about me?" },
+                     " to hear it, or ", { q: "forget that" }, " to remove something."] },
+      { target: () => document.querySelector('.cgroup[data-group="mode"]'), title: "Modes",
+        body: () => ["Work keeps me brief, Relax makes me chattier, Business keeps it formal. " +
+                     "Press one, or just say ", { q: "work mode" }, "."] },
+      { target: () => document.getElementById("neuralVoice"), title: "My voice",
+        body: () => ["Choose how I sound — a British butler, an American anchor, and more. " +
+                     "Or ask: ", { q: "talk like Jarvis" }, "."] },
+      { target: () => document.getElementById("langSel"), title: "Your language",
+        body: () => ["I can listen and reply in over a hundred languages. " +
+                     "Auto follows this device's language."] },
+      { target: () => document.getElementById("stocks") || document.getElementById("forecast"),
+        title: "Panels",
+        body: () => ["Weather, stocks and your calendar sit around the edges. Drag one to move it. " +
+                     "Want something else on screen? Ask: ",
+                     { q: "make me a panel counting down to my holiday" }, "."] },
+      { target: () => document.getElementById("googleBtn"), title: "Your Google account",
+        body: () => ["Connect your own Google account so I can check your calendar, mail and Drive. " +
+                     "I only ever use the account you connect here — never anyone else's."] },
+      { target: () => document.getElementById("watchStatsBtn"), owner: true, title: "Arc Watch",
+        body: () => ["What I've cost and done, as graphs over time — spend, messages, tools and more."] },
+      { title: "You're all set",
+        body: () => ["Try saying ", { q: cap(wake()) + ", what can you do?" },
+                     " You can take this tour again any time: type ", { q: "/tutorial" },
+                     ", or press Take the tour in the controls."] },
+    ];
+
+    let root = null, steps = [], at = 0, open = false, lastFocus = null, mode = "first";
+
+    function visible(n) {
+      if (!n || !n.isConnected || n.closest("[hidden]")) return false;
+      const r = n.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return false;
+      const cs = getComputedStyle(n);
+      return cs.visibility !== "hidden" && cs.display !== "none";
+    }
+
+    function usable() {
+      return STEPS.filter(s => {
+        if (s.owner && myTier !== "owner") return false;
+        if (!s.target) return true;
+        return visible(s.target());
+      });
+    }
+
+    function build() {
+      root = document.createElement("div");
+      root.className = "tour";
+      root.hidden = true;
+      root.setAttribute("role", "dialog");
+      root.setAttribute("aria-modal", "true");
+      root.setAttribute("aria-labelledby", "tourTitle");
+      root.innerHTML =
+        '<div class="tour-dim"></div><div class="tour-hole" hidden></div>' +
+        '<div class="tour-card"><div class="tour-count" id="tourCount"></div>' +
+        '<div class="tour-title" id="tourTitle"></div><p class="tour-body" id="tourBody"></p>' +
+        '<div class="tour-dots" id="tourDots" aria-hidden="true"></div>' +
+        '<div class="tour-actions"><button type="button" class="tour-skip">Skip tour</button>' +
+        '<span class="grow"></span><button type="button" class="tour-back">Back</button>' +
+        '<button type="button" class="tour-next">Next</button></div></div>';
+      document.body.appendChild(root);
+      root.querySelector(".tour-next").addEventListener("click", next);
+      root.querySelector(".tour-back").addEventListener("click", back);
+      root.querySelector(".tour-skip").addEventListener("click", () => close("skipped"));
+      root.addEventListener("keydown", e => {
+        if (e.key === "Escape") { e.preventDefault(); close("skipped"); }
+        else if (e.key === "ArrowRight") { e.preventDefault(); next(); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); back(); }
+        else if (e.key === "Tab") {
+          // Keep focus inside the card while it is open.
+          const b = [...root.querySelectorAll("button:not([hidden])")];
+          const i = b.indexOf(document.activeElement);
+          if (e.shiftKey && i <= 0) { e.preventDefault(); b[b.length - 1].focus(); }
+          else if (!e.shiftKey && i === b.length - 1) { e.preventDefault(); b[0].focus(); }
+        }
+      });
+      window.addEventListener("resize", () => { if (open) place(); });
+    }
+
+    function paint() {
+      const s = steps[at];
+      root.querySelector("#tourCount").textContent = "Step " + (at + 1) + " of " + steps.length;
+      root.querySelector("#tourTitle").textContent = s.title;
+      const body = root.querySelector("#tourBody");
+      body.textContent = "";
+      s.body().forEach(part => {
+        if (typeof part === "string") body.appendChild(document.createTextNode(part));
+        else { const q = document.createElement("q"); q.textContent = part.q; body.appendChild(q); }
+      });
+      const dots = root.querySelector("#tourDots");
+      dots.textContent = "";
+      steps.forEach((_, i) => {
+        const d = document.createElement("i");
+        if (i === at) d.className = "on";
+        dots.appendChild(d);
+      });
+      root.querySelector(".tour-back").hidden = at === 0;
+      root.querySelector(".tour-skip").hidden = at === steps.length - 1;
+      root.querySelector(".tour-next").textContent =
+        at === steps.length - 1 ? "Finish" : at === 0 ? "Show me" : "Next";
+      place();
+      root.querySelector(".tour-next").focus();
+    }
+
+    function place() {
+      const s = steps[at];
+      const hole = root.querySelector(".tour-hole");
+      const card = root.querySelector(".tour-card");
+      const t = s.target && s.target();
+      const vw = window.innerWidth, vh = window.innerHeight;
+      if (!t || !visible(t)) {
+        root.classList.remove("lit");
+        hole.hidden = true;
+        card.style.left = Math.max(16, (vw - card.offsetWidth) / 2) + "px";
+        card.style.top = Math.max(16, (vh - card.offsetHeight) / 2) + "px";
+        return;
+      }
+      // Bring it on screen first — the controls live in a scrolling rail.
+      t.scrollIntoView({ block: "nearest", inline: "nearest" });
+      const r = t.getBoundingClientRect(), pad = 6;
+      root.classList.add("lit");
+      hole.hidden = false;
+      hole.style.left = (r.left - pad) + "px"; hole.style.top = (r.top - pad) + "px";
+      hole.style.width = (r.width + pad * 2) + "px"; hole.style.height = (r.height + pad * 2) + "px";
+      const cw = card.offsetWidth, ch = card.offsetHeight, gap = 14;
+      // Beside it if there is room (the rails are tall), else below, else above.
+      let left, top;
+      if (r.right + gap + cw <= vw - 16) { left = r.right + gap; top = r.top; }
+      else if (r.left - gap - cw >= 16) { left = r.left - gap - cw; top = r.top; }
+      else if (r.bottom + gap + ch <= vh - 16) { left = r.left; top = r.bottom + gap; }
+      else { left = r.left; top = r.top - gap - ch; }
+      card.style.left = Math.min(Math.max(16, left), vw - cw - 16) + "px";
+      card.style.top = Math.min(Math.max(16, top), vh - ch - 16) + "px";
+    }
+
+    function next() { if (at < steps.length - 1) { at++; paint(); } else close("finished"); }
+    function back() { if (at > 0) { at--; paint(); } }
+
+    function start(how) {
+      if (open) return;
+      if (!root) build();
+      steps = usable();
+      if (!steps.length) return;
+      mode = how || "first";
+      at = 0; open = true;
+      lastFocus = document.activeElement;
+      root.hidden = false;
+      paint();
+    }
+
+    async function close(how) {
+      if (!open) return;
+      open = false;
+      root.hidden = true;
+      if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (_) {} }
+      // A replay changes nothing: they had already been shown round.
+      if (mode === "replay") return;
+      try { localStorage.setItem(LOCAL, "1"); } catch (_) {}
+      try {
+        await fetch("/api/tutorial", { method: "POST", headers: { "Content-Type": "application/json" },
+                                       body: JSON.stringify({ how }) });
+      } catch (_) {}
+      if (how === "skipped") {
+        addEntry("sys", "SYSTEM", "Tour skipped. Type /tutorial whenever you'd like it.");
+      }
+    }
+
+    // Asked once, after boot. The server decides; the browser's own note only
+    // stands in when the server cannot be reached.
+    async function maybeStart() {
+      let done = null;
+      try {
+        const r = await fetch("/api/tutorial");
+        if (r.ok) done = !!(await r.json()).done;
+      } catch (_) {}
+      if (done === null) {
+        try { done = localStorage.getItem(LOCAL) === "1"; } catch (_) { done = false; }
+      }
+      if (!done) start("first");
+    }
+
+    return { start, maybeStart, close, get open() { return open; },
+             get step() { return steps[at] ? steps[at].title : ""; },
+             get count() { return steps.length; } };
+  })();
+  window.arcTour = arcTour;
+
+  const tourBtn = document.getElementById("tourBtn");
+  if (tourBtn) tourBtn.addEventListener("click", () => arcTour.start("replay"));
+
   el.initBtn.addEventListener("click", async () => {
     el.initBtn.disabled = true;
     el.initBtn.textContent = "Initialising";
@@ -10228,6 +10513,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
 
     speak(greeting + ". All systems are online and standing by.");
+
+    // The tier arrives with the session poll; wait for it so a guest is not
+    // shown the owner's steps. Then, if this account has never been shown
+    // round, show it round.
+    refreshSession().finally(() => setTimeout(() => arcTour.maybeStart(), 900));
   });
 })();
 </script>
