@@ -7401,6 +7401,20 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   if (watchStatsBtn) watchStatsBtn.addEventListener("click",
     () => window.open("/watch", "arc-watch"));
 
+  // The two usage numbers on the panel open their own graph. Owner only, like
+  // Arc Watch itself: for a guest they stay plain numbers rather than links to
+  // a page that would answer 403.
+  [["rCost", "cost"], ["rTurns", "turns"]].forEach(([id, metric]) => {
+    const v = document.getElementById(id);
+    const row = v && v.closest(".row");
+    if (!row) return;
+    row.addEventListener("click", () => { if (myTier === "owner") openGraph(metric, 30); });
+    row.addEventListener("mouseenter", () => {
+      row.style.cursor = myTier === "owner" ? "pointer" : "";
+      row.title = myTier === "owner" ? "Graph this over time in Arc Watch" : "";
+    });
+  });
+
   const personaBtn = document.getElementById("personaBtn");
   function applyPersona(mode, announce) {
     if (!PERSONAS[mode]) mode = "arc";
@@ -8984,6 +8998,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                run: cmdRepair },
     usage:   { hint: "what today has cost so far", owner: true,
                run: cmdUsage },
+    graph:   { hint: "a graph over time — /graph spend, messages, tokens, tools, errors… (add 7d, 90d or 1y)",
+               owner: true, run: cmdGraph },
     plan:    { hint: "what ARC is part-way through, and /plan clear to drop it",
                run: cmdPlan },
     clear:   { hint: "empty this transcript — memory and notes are untouched",
@@ -9116,6 +9132,33 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       pad("turns") + (t.turns || 0),
       pad("tokens") + (t.tok_in || 0) + " in / " + (t.tok_out || 0) + " out",
     ].join("\n"));
+  }
+
+  /* /graph messages 7d — Arc Watch, opened on that graph. The words are the
+     ones people use, mapped to what the page calls them; anything it does not
+     recognise opens on spend rather than failing, and says so. */
+  const GRAPH_WORDS = {
+    spend: "cost", cost: "cost", money: "cost", spending: "cost",
+    messages: "turns", message: "turns", turns: "turns", exchanges: "turns",
+    tokens: "tokens", tools: "tools", searches: "searches", search: "searches",
+    errors: "errors", saved: "saved", caching: "saved", voice: "voice",
+    alarms: "alarms", alerts: "alerts", "per-message": "per", "cost-per-message": "per",
+  };
+  function openGraph(metric, days) {
+    window.open("/watch?metric=" + encodeURIComponent(metric) +
+                "&days=" + encodeURIComponent(days || 30), "arc-watch");
+  }
+  function cmdGraph(arg) {
+    const words = (arg || "").toLowerCase().split(/\s+/).filter(Boolean);
+    const range = words.map(w => ({ "7d": 7, "30d": 30, "90d": 90, "1y": 365, year: 365,
+                                     week: 7, month: 30 })[w]).find(Boolean) || 30;
+    const named = words.map(w => GRAPH_WORDS[w]).find(Boolean);
+    openGraph(named || "cost", range);
+    addEntry("sys", "SYSTEM", named || !words.length
+      ? "Opened Arc Watch on that graph."
+      : "I don't have a graph called '" + arg + "' — opened spend. Try: " +
+        Object.keys(GRAPH_WORDS).filter((k, i, a) =>
+          a.findIndex(x => GRAPH_WORDS[x] === GRAPH_WORDS[k]) === i).join(", ") + ".");
   }
 
   async function cmdPlan(arg) {

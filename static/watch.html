@@ -41,13 +41,15 @@
   .sub { font-size: 9.5px; letter-spacing: .14em; color: var(--cyan-dim);
          text-transform: uppercase; }
   .spacer { flex: 1; }
-  .ranges button {
+  .seg button {
     font-family: var(--mono); font-size: 9px; letter-spacing: .14em; padding: 6px 10px;
-    text-transform: uppercase; cursor: pointer; margin-left: 5px;
+    text-transform: uppercase; cursor: pointer; margin: 0 0 5px 5px;
     background: rgba(4,7,12,.85); color: var(--cyan-dim); border: 1px solid var(--line);
   }
-  .ranges button.on { color: var(--void); background: var(--cyan); border-color: var(--cyan); }
-  .ranges button:hover { color: var(--ice); border-color: var(--cyan); }
+  .seg button.on { color: var(--void); background: var(--cyan); border-color: var(--cyan); }
+  .seg button:hover { color: var(--ice); border-color: var(--cyan); }
+  .seg button:focus-visible, .pick:focus-visible, canvas:focus-visible {
+    outline: 1px solid var(--cyan); outline-offset: 2px; }
 
   .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
            margin-bottom: 22px; }
@@ -58,32 +60,49 @@
   .card .n { font-size: 8.5px; color: var(--cyan-dim); margin-top: 5px; letter-spacing: .06em; }
   .card.warn .v { color: var(--amber); }
   .card.good .v { color: var(--green); }
+  /* A card is a way into its own graph. */
+  .card[data-metric] { cursor: pointer; }
+  .card[data-metric]:hover { border-color: var(--cyan-dim); }
 
   h2 { font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase;
        color: var(--cyan-dim); margin: 24px 0 10px; font-weight: 500; }
 
-  /* The chart is drawn as bars rather than pulled from a library: one file,
+  /* The graph. Drawn on a canvas rather than pulled from a library: one file,
      no build step, no external request — the same rule the HUD follows. */
-  .chart { display: flex; align-items: flex-end; gap: 2px; height: 150px;
-           border-bottom: 1px solid var(--line); padding-bottom: 1px; }
-  .bar { flex: 1; min-width: 2px; background: var(--cyan-dim); position: relative;
-         transition: background .12s; }
-  .bar:hover { background: var(--cyan); }
-  .bar.empty { background: #0f1a24; }
-  .bar .tip {
-    display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
-    background: var(--ink); border: 1px solid var(--line); padding: 5px 8px;
-    font-size: 9px; white-space: nowrap; z-index: 5; margin-bottom: 5px; color: var(--ice);
-  }
-  .bar:hover .tip { display: block; }
-  .axis { display: flex; justify-content: space-between; font-size: 8.5px;
-          color: var(--cyan-dim); margin-top: 6px; letter-spacing: .08em; }
+  .graph { border: 1px solid var(--line); background: var(--ink); padding: 12px 14px 10px; }
+  .graph-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  .graph-head .title { font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+                       color: var(--cyan); }
+  .graph-head .seg { margin-left: -5px; }
+  .metrics { margin: 10px 0 4px -5px; }
+  .plot { position: relative; height: 230px; margin-top: 8px; }
+  .plot canvas { width: 100%; height: 100%; display: block; }
+  .tip { position: absolute; pointer-events: none; background: var(--void);
+         border: 1px solid var(--line); padding: 6px 9px; font-size: 9.5px; line-height: 1.6;
+         white-space: nowrap; color: var(--ice); transform: translate(-50%, -100%); }
+  .tip b { color: var(--cyan); font-weight: 500; }
+  .tip[hidden] { display: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 8.5px;
+            letter-spacing: .1em; color: var(--cyan-dim); margin-top: 8px; }
+  .legend i { display: inline-block; width: 14px; height: 0; vertical-align: middle;
+              margin-right: 6px; border-top: 2px solid var(--cyan); }
+  .legend i.avg { border-top: 1px dashed var(--green); }
+  .legend i.cap { border-top: 1px dashed var(--amber); }
+  .legend i.mean { border-top: 1px dotted var(--cyan-dim); }
+  .said { font-size: 10.5px; line-height: 1.7; margin-top: 8px; color: var(--ice); }
+  .said .up { color: var(--amber); }
+  .said .down { color: var(--green); }
 
   table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
   th { text-align: left; font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
        color: var(--cyan-dim); font-weight: 500; padding: 6px 8px 6px 0; }
   td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line); }
-  td.n { text-align: right; color: var(--cyan); }
+  td.n { text-align: right; color: var(--cyan); font-variant-numeric: tabular-nums; }
+  /* A row name you can chart. A button, so it is reachable from the keyboard. */
+  .pick { font: inherit; color: var(--ice); background: none; border: 0; padding: 0;
+          cursor: pointer; text-align: left; }
+  .pick:hover { color: var(--cyan); text-decoration: underline; }
+  .pick.on { color: var(--cyan); }
 
   .note { font-size: 9.5px; color: var(--cyan-dim); line-height: 1.7; margin-top: 26px;
           border-top: 1px solid var(--line); padding-top: 14px; max-width: 62ch; }
@@ -96,7 +115,7 @@
   <h1>Arc Watch</h1>
   <span class="sub" id="span">loading…</span>
   <span class="spacer"></span>
-  <span class="ranges">
+  <span class="seg ranges">
     <button data-days="7">7d</button>
     <button data-days="30" class="on">30d</button>
     <button data-days="90">90d</button>
@@ -104,7 +123,28 @@
   </span>
 </header>
 
-<div id="out"><span class="sub">reading the record…</span></div>
+<div id="cards"><span class="sub">reading the record…</span></div>
+
+<section class="graph" id="graph" aria-label="Usage over time">
+  <div class="graph-head">
+    <span class="title" id="gTitle">Spend per day</span>
+    <span class="spacer"></span>
+    <span class="seg" id="modes">
+      <button data-mode="bars" class="on" title="One bar per day">Bars</button>
+      <button data-mode="line" title="A line through the days">Line</button>
+      <button data-avg="1" class="on" title="Seven-day moving average — the trend under the daily noise">7-day avg</button>
+    </span>
+  </div>
+  <div class="seg metrics" id="metrics"></div>
+  <div class="plot" id="plot">
+    <canvas id="canvas" tabindex="0" role="img" aria-label="Graph"></canvas>
+    <div class="tip" id="tip" hidden></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="said" id="said" aria-live="polite"></div>
+</section>
+
+<div id="out"></div>
 
 <div class="note">
   Counts and costs only. No prompts, replies or transcripts are stored — a usage
@@ -121,38 +161,90 @@
 (() => {
   "use strict";
   const $ = id => document.getElementById(id);
-  let days = 30;
 
   const money = n => "$" + (n || 0).toFixed(n >= 10 ? 2 : 3);
-  const num = n => (n || 0).toLocaleString();
+  const num = n => Math.round(n || 0).toLocaleString();
   const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
+  // For attribute values: esc() leaves quotes alone, which is fine between tags
+  // and not inside data-metric="...".
+  const attr = s => esc(s).replace(/"/g, "&quot;");
+  const sum = o => Object.values(o || {}).reduce((a, b) => a + (+b || 0), 0);
 
-  function card(k, v, n, cls) {
-    return '<div class="card ' + (cls || "") + '"><div class="k">' + esc(k) +
-           '</div><div class="v">' + esc(v) + '</div>' +
+  /* --- what can be graphed ------------------------------------------------
+     Every one of these is a field stats.py already keeps per day, so nothing
+     here is estimated in the page. `get` returns null for a day where the
+     figure does not exist (cost per message on a day with no messages) — a
+     gap in the line, not a zero, because "nothing happened" and "$0.00 a
+     message" are different claims. */
+  const METRICS = {
+    cost:     { label: "Spend",            fmt: money, get: d => d.cost },
+    turns:    { label: "Messages",         fmt: num,   get: d => d.turns },
+    per:      { label: "Cost per message", fmt: money, get: d => d.turns ? d.cost / d.turns : null },
+    tokens:   { label: "Tokens",           fmt: num,
+                get: d => d.tok_in + d.tok_out + d.tok_cache_read + d.tok_cache_write },
+    tools:    { label: "Tool calls",       fmt: num,   get: d => sum(d.tools) },
+    searches: { label: "Web searches",     fmt: num,   get: d => d.searches },
+    saved:    { label: "Saved by caching", fmt: money, get: d => d.saved, good: true },
+    errors:   { label: "Errors",           fmt: num,   get: d => d.errors + d.refusals, bad: true },
+    voice:    { label: "Voice (characters)", fmt: num, get: d => d.voice_chars },
+    alarms:   { label: "Alarms rung",      fmt: num,   get: d => d.alarms },
+    alerts:   { label: "Alerts fired",     fmt: num,   get: d => d.alerts },
+  };
+  // Averaging a ratio day by day would weight a one-message day the same as a
+  // hundred-message day; over a period it is total spend over total messages.
+  const RATIO = { per: rows => {
+    const t = rows.reduce((a, d) => a + d.turns, 0);
+    return t ? rows.reduce((a, d) => a + d.cost, 0) / t : null;
+  } };
+
+  // "tool:web_search" and "model:claude-opus-5" are built on demand from the
+  // tables below the graph, so any tool or model can be charted on its own.
+  function metric(key) {
+    if (METRICS[key]) return METRICS[key];
+    const m = /^(tool|model):(.{1,80})$/.exec(key || "");
+    if (m && m[1] === "tool") {
+      return { label: m[2] + " calls", fmt: num, get: d => (d.tools || {})[m[2]] || 0 };
+    }
+    if (m && m[1] === "model") {
+      return { label: m[2].replace("claude-", "") + " spend", fmt: money,
+               get: d => (d.spend || {})[m[2]] || 0 };
+    }
+    return null;
+  }
+
+  /* --- what the viewer chose, remembered ---------------------------------
+     A link from the HUD can name a metric and a range (?metric=turns&days=7);
+     otherwise it is whatever this browser last looked at. */
+  const store = {
+    get(k, d) { try { return localStorage.getItem("arc.watch." + k) || d; } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem("arc.watch." + k, v); } catch (_) {} },
+  };
+  const q = new URLSearchParams(location.search);
+  let days = parseInt(q.get("days") || store.get("days", "30"), 10);
+  if (![7, 30, 90, 365].includes(days)) days = 30;
+  let chosen = q.get("metric") || store.get("metric", "cost");
+  if (!metric(chosen)) chosen = "cost";
+  let mode = store.get("mode", "bars") === "line" ? "line" : "bars";
+  let showAvg = store.get("avg", "1") !== "0";
+
+  let data = null;          // last /api/usage answer
+  let hover = -1;           // index of the day under the pointer, or -1
+
+  function card(k, v, n, cls, key) {
+    return '<div class="card ' + (cls || "") + '"' +
+           (key ? ' data-metric="' + attr(key) + '" title="Graph this over time"' : "") +
+           '><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div>' +
            (n ? '<div class="n">' + esc(n) + "</div>" : "") + "</div>";
   }
 
-  function chart(series) {
-    const top = Math.max(...series.map(d => d.cost), 0.0001);
-    const bars = series.map(d => {
-      const h = Math.max(d.cost > 0 ? 2 : 1, Math.round(d.cost / top * 148));
-      const tip = d.date + " · " + money(d.cost) + " · " + num(d.turns) + " turns";
-      return '<div class="bar' + (d.turns ? "" : " empty") + '" style="height:' + h +
-             'px"><span class="tip">' + esc(tip) + "</span></div>";
-    }).join("");
-    const first = series[0] || {}, last = series[series.length - 1] || {};
-    return '<div class="chart">' + bars + '</div><div class="axis"><span>' +
-           esc(first.date || "") + "</span><span>" + money(top) +
-           ' max/day</span><span>' + esc(last.date || "") + "</span></div>";
-  }
-
-  function rows(obj, label) {
+  function rows(obj, label, kind) {
     const es = Object.entries(obj || {});
     if (!es.length) return '<span class="sub">nothing yet</span>';
     return "<table><tr><th>" + esc(label) + "</th><th></th></tr>" +
       es.slice(0, 12).map(([k, v]) =>
-        "<tr><td>" + esc(k) + '</td><td class="n">' + num(v) + "</td></tr>").join("") +
+        '<tr><td><button class="pick' + (chosen === kind + ":" + k ? " on" : "") +
+        '" data-metric="' + attr(kind + ":" + k) + '" title="Graph this over time">' +
+        esc(k) + '</button></td><td class="n">' + num(v) + "</td></tr>").join("") +
       "</table>";
   }
 
@@ -165,11 +257,305 @@
     if (!es.length) return '<span class="sub">nothing yet</span>';
     return "<table><tr><th>model</th><th>turns</th><th>cost</th></tr>" +
       es.slice(0, 12).map(([k, v]) =>
-        "<tr><td>" + esc(k.replace("claude-", "")) + '</td><td class="n">' +
+        '<tr><td><button class="pick' + (chosen === "model:" + k ? " on" : "") +
+        '" data-metric="' + attr("model:" + k) + '" title="Graph this model\'s spend over time">' +
+        esc(k.replace("claude-", "")) + '</button></td><td class="n">' +
         num(v) + '</td><td class="n">' +
         ((spend && spend[k] !== undefined) ? money(spend[k]) : "—") +
         "</td></tr>").join("") +
       "</table>";
+  }
+
+  /* --- the numbers under the picture --------------------------------------- */
+
+  // Trailing seven-day mean of the days that have a figure. Trailing, so the
+  // line on a given day only knows what had happened by then.
+  function movingAvg(vals, win) {
+    return vals.map((_, i) => {
+      const w = vals.slice(Math.max(0, i - win + 1), i + 1).filter(v => v !== null);
+      return w.length ? w.reduce((a, b) => a + b, 0) / w.length : null;
+    });
+  }
+
+  function periodTotal(key, rows) {
+    if (RATIO[key]) return RATIO[key](rows);
+    const m = metric(key);
+    return rows.reduce((a, d) => a + (m.get(d) || 0), 0);
+  }
+
+  const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function when(iso, withDay) {
+    const [y, mo, da] = iso.split("-").map(Number);
+    const dt = new Date(y, mo - 1, da);
+    return (withDay ? DAY[dt.getDay()] + " " : "") + da + " " + MON[mo - 1];
+  }
+
+  // Said in a sentence, because a graph answers "what shape" and people also
+  // ask "so, how much, and is that more than usual".
+  function describe() {
+    const m = metric(chosen), series = data.series;
+    const vals = series.map(m.get);
+    const total = periodTotal(chosen, series);
+    const have = series.map((d, i) => [d, vals[i]]).filter(([, v]) => v !== null && v > 0);
+    const parts = [];
+    if (!have.length) {
+      return esc("Nothing recorded for " + m.label.toLowerCase() + " in the last " + days + " days.");
+    }
+    if (RATIO[chosen]) {
+      parts.push(esc(m.label + " over " + days + " days: " + m.fmt(total)));
+    } else {
+      parts.push(esc("Total " + m.fmt(total) + " over " + days + " days"));
+      parts.push(esc(m.fmt(total / have.length) + " a day on the " + have.length +
+                     " day" + (have.length === 1 ? "" : "s") + " with any"));
+    }
+    // On a tie the most recent day, which is the one people remember.
+    const peak = have.reduce((a, b) => (b[1] >= a[1] ? b : a));
+    parts.push(esc("busiest " + when(peak[0].date, true) + " (" + m.fmt(peak[1]) + ")"));
+    if (data.previous) {
+      const before = periodTotal(chosen, data.previous);
+      if (before > 0 && total !== null) {
+        const pct = (total - before) / before * 100;
+        // Up is amber and down is green for costs and errors; for savings the
+        // colours swap. For counts like messages neither direction is bad, so
+        // they stay plain.
+        const good = m.good ? pct > 0 : m.bad || m.fmt === money ? pct < 0 : null;
+        const cls = Math.abs(pct) < 0.5 || good === null ? "" : good ? "down" : "up";
+        parts.push('<span class="' + cls + '">' +
+                   esc((pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct).toFixed(0) +
+                       "% on the previous " + days + " days") + "</span>");
+      } else if (before === 0) {
+        parts.push(esc("nothing in the " + days + " days before to compare with"));
+      }
+    }
+    return parts.join(" · ");
+  }
+
+  /* --- drawing ------------------------------------------------------------- */
+
+  // A round number at or above v, so the axis reads $0.50 rather than $0.4731.
+  function niceTop(v) {
+    if (!(v > 0)) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    for (const s of [1, 2, 2.5, 5, 10]) if (s * p >= v) return s * p;
+    return 10 * p;
+  }
+
+  function draw() {
+    if (!data) return;
+    const m = metric(chosen);
+    const series = data.series;
+    const vals = series.map(m.get);
+    const avg = showAvg ? movingAvg(vals, 7) : null;
+    const cap = chosen === "cost" && data.cap > 0 ? data.cap : 0;
+
+    const canvas = $("canvas");
+    const box = $("plot").getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(200, box.width), H = Math.max(120, box.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+
+    const css = getComputedStyle(document.documentElement);
+    const C = k => css.getPropertyValue(k).trim();
+    const padL = 54, padR = 8, padT = 10, padB = 22;
+    const pw = W - padL - padR, ph = H - padT - padB;
+    const n = series.length;
+    const present = vals.filter(v => v !== null);
+    // The cap only stretches the axis when the spend is near it; a $20 cap on
+    // a 30-cent day would flatten every bar into the floor.
+    const hi = Math.max(0, ...present, ...(avg || []).filter(v => v !== null),
+                        cap && Math.max(0, ...present) > cap * 0.5 ? cap : 0);
+    const top = niceTop(hi);
+    const x = i => padL + (n === 1 ? pw / 2 : (i + 0.5) * pw / n);
+    const y = v => padT + ph - (v / top) * ph;
+
+    g.font = "9px " + C("--mono");
+    g.textBaseline = "middle";
+    for (let i = 0; i <= 4; i++) {
+      const v = top * i / 4, yy = Math.round(y(v)) + 0.5;
+      g.strokeStyle = C("--line"); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(padL, yy); g.lineTo(W - padR, yy); g.stroke();
+      g.fillStyle = C("--cyan-dim"); g.textAlign = "right";
+      g.fillText(m.fmt === money ? "$" + (+v.toFixed(3)).toString() : num(v), padL - 8, yy);
+    }
+
+    const slot = pw / n;
+    if (mode === "bars") {
+      const bw = Math.max(1, Math.min(28, slot * 0.72));
+      series.forEach((d, i) => {
+        const v = vals[i];
+        if (v === null || v <= 0) {
+          // A day ARC was idle still gets a mark, so a gap reads as a gap and
+          // a fortnight does not look like a week.
+          g.fillStyle = "#0f1a24";
+          g.fillRect(x(i) - bw / 2, padT + ph - 1, bw, 1);
+          return;
+        }
+        g.fillStyle = i === hover ? C("--cyan") : C("--cyan-dim");
+        const h = Math.max(2, ph - (y(v) - padT));
+        g.fillRect(x(i) - bw / 2, padT + ph - h, bw, h);
+      });
+    } else {
+      const grad = g.createLinearGradient(0, padT, 0, padT + ph);
+      grad.addColorStop(0, "rgba(111,232,255,.22)");
+      grad.addColorStop(1, "rgba(111,232,255,0)");
+      // Broken wherever a day has no figure, rather than drawn straight across.
+      let run = [];
+      const flush = () => {
+        if (!run.length) return;
+        g.beginPath(); g.moveTo(x(run[0]), y(vals[run[0]]));
+        run.slice(1).forEach(i => g.lineTo(x(i), y(vals[i])));
+        g.strokeStyle = C("--cyan"); g.lineWidth = 1.6; g.stroke();
+        g.lineTo(x(run[run.length - 1]), padT + ph); g.lineTo(x(run[0]), padT + ph);
+        g.closePath(); g.fillStyle = grad; g.fill();
+        run = [];
+      };
+      vals.forEach((v, i) => { if (v === null) flush(); else run.push(i); });
+      flush();
+      if (hover >= 0 && vals[hover] !== null) {
+        g.fillStyle = C("--cyan");
+        g.beginPath(); g.arc(x(hover), y(vals[hover]), 3.5, 0, Math.PI * 2); g.fill();
+      }
+    }
+
+    // The period's mean, faint: where "a normal day" sits.
+    const mean = present.length ? present.reduce((a, b) => a + b, 0) / present.length : 0;
+    if (mean > 0) {
+      g.setLineDash([1, 3]); g.strokeStyle = C("--cyan-dim"); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(padL, y(mean)); g.lineTo(W - padR, y(mean)); g.stroke();
+    }
+    if (avg) {
+      g.setLineDash([4, 3]); g.strokeStyle = C("--green"); g.lineWidth = 1.2;
+      g.beginPath();
+      let pen = false;
+      avg.forEach((v, i) => {
+        if (v === null) { pen = false; return; }
+        if (pen) g.lineTo(x(i), y(v)); else { g.moveTo(x(i), y(v)); pen = true; }
+      });
+      g.stroke();
+    }
+    if (cap && cap <= top) {
+      g.setLineDash([6, 4]); g.strokeStyle = C("--amber"); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(padL, y(cap)); g.lineTo(W - padR, y(cap)); g.stroke();
+      g.setLineDash([]); g.fillStyle = C("--amber"); g.textAlign = "right";
+      g.fillText("cap $" + cap.toFixed(2), W - padR, y(cap) - 7);
+    }
+    g.setLineDash([]);
+
+    if (hover >= 0) {
+      g.strokeStyle = "rgba(111,232,255,.25)"; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(Math.round(x(hover)) + 0.5, padT);
+      g.lineTo(Math.round(x(hover)) + 0.5, padT + ph); g.stroke();
+    }
+
+    // Dates: first, middle, last — enough to place any bar without crowding.
+    g.fillStyle = C("--cyan-dim"); g.textBaseline = "alphabetic";
+    const marks = n > 2 ? [0, Math.floor((n - 1) / 2), n - 1] : [...Array(n).keys()];
+    marks.forEach((i, k) => {
+      g.textAlign = k === 0 ? "left" : k === marks.length - 1 ? "right" : "center";
+      const xx = k === 0 ? padL : k === marks.length - 1 ? W - padR : x(i);
+      g.fillText(when(series[i].date), xx, H - 6);
+    });
+
+    canvas.setAttribute("aria-label", m.label + " per day, last " + days +
+                        " days. " + $("said").textContent);
+    placeTip(x, y, vals, avg);
+  }
+
+  function placeTip(x, y, vals, avg) {
+    const tip = $("tip");
+    if (hover < 0 || !data) { tip.hidden = true; return; }
+    const m = metric(chosen), d = data.series[hover], v = vals[hover];
+    tip.textContent = "";
+    const head = document.createElement("div");
+    head.textContent = when(d.date, true) + (d.date === data.today_date ? " · today" : "");
+    const val = document.createElement("b");
+    val.textContent = v === null ? "no " + m.label.toLowerCase() : m.fmt(v) + " " + m.label.toLowerCase();
+    tip.append(head, val);
+    if (chosen !== "turns") {
+      const t = document.createElement("div");
+      t.textContent = num(d.turns) + " message" + (d.turns === 1 ? "" : "s");
+      tip.append(t);
+    }
+    if (avg && avg[hover] !== null) {
+      const a = document.createElement("div");
+      a.textContent = "7-day avg " + m.fmt(avg[hover]);
+      tip.append(a);
+    }
+    tip.hidden = false;
+    const W = $("plot").clientWidth;
+    const px = Math.min(Math.max(x(hover), 70), W - 70);
+    const py = Math.max(y(v === null ? 0 : v) - 10, 52);
+    tip.style.left = px + "px"; tip.style.top = py + "px";
+  }
+
+  function legend() {
+    const parts = ["<span><i></i>per day</span>",
+                   "<span><i class='mean'></i>period average</span>"];
+    if (showAvg) parts.push("<span><i class='avg'></i>7-day average</span>");
+    if (chosen === "cost" && data && data.cap > 0) parts.push("<span><i class='cap'></i>daily cap</span>");
+    $("legend").innerHTML = parts.join("");
+  }
+
+  function paintMetricButtons() {
+    const box = $("metrics");
+    box.textContent = "";
+    Object.entries(METRICS).forEach(([k, m]) => {
+      const b = document.createElement("button");
+      b.textContent = m.label;
+      b.dataset.metric = k;
+      if (k === chosen) b.classList.add("on");
+      box.appendChild(b);
+    });
+    // A tool or model picked from the tables gets a button of its own while it
+    // is showing, so it is clear what is on screen and how to get back.
+    if (!METRICS[chosen]) {
+      const b = document.createElement("button");
+      b.textContent = metric(chosen).label;
+      b.dataset.metric = chosen;
+      b.classList.add("on");
+      box.appendChild(b);
+    }
+  }
+
+  function render() {
+    if (!data) return;
+    const m = metric(chosen);
+    $("gTitle").textContent = m.label + " per day";
+    paintMetricButtons();
+    document.querySelectorAll("#modes [data-mode]").forEach(b =>
+      b.classList.toggle("on", b.dataset.mode === mode));
+    document.querySelector("#modes [data-avg]").classList.toggle("on", showAvg);
+    $("said").innerHTML = describe();
+    legend();
+    draw();
+  }
+
+  function choose(key) {
+    if (!metric(key)) return;
+    chosen = key; hover = -1;
+    store.set("metric", key);
+    // The address follows the graph, so a link copied from here opens it.
+    const u = new URL(location.href);
+    u.searchParams.set("metric", key); u.searchParams.set("days", days);
+    history.replaceState(null, "", u);
+    if (data) paintTables();
+    render();
+  }
+
+  function paintTables() {
+    const t = data.totals;
+    $("out").innerHTML =
+      "<h2>Tools used</h2>" + rows(t.tools, "tool", "tool") +
+      "<h2>Models</h2>" + modelRows(t.models, t.spend) +
+      (t.errors || t.refusals
+        ? "<h2>Trouble</h2><table>" +
+          "<tr><td>errors</td><td class='n'>" + num(t.errors) + "</td></tr>" +
+          "<tr><td>refusals</td><td class='n'>" + num(t.refusals) + "</td></tr></table>"
+        : "");
   }
 
   async function load() {
@@ -180,6 +566,8 @@
       if (r.status === 401) { location.href = "/"; return; }
       if (!r.ok) throw new Error("HTTP " + r.status);
       const d = await r.json();
+      d.today_date = (d.series[d.series.length - 1] || {}).date;
+      data = d;
       const t = d.totals, today = d.today;
 
       const capped = d.cap > 0 && today.cost >= d.cap;
@@ -197,41 +585,83 @@
       $("span").textContent = t.active_days + " active day" +
         (t.active_days === 1 ? "" : "s") + " of " + days;
 
-      $("out").innerHTML =
+      $("cards").innerHTML =
         '<div class="cards">' +
-          card("Today", money(today.cost), num(today.turns) + " turns",
-               capped ? "warn" : "") +
-          card("Last " + days + "d", money(t.cost), num(t.turns) + " turns") +
-          card("Per turn", money(t.turns ? t.cost / t.turns : 0), "average") +
+          card("Today", money(today.cost), num(today.turns) + " messages",
+               capped ? "warn" : "", "cost") +
+          card("Last " + days + "d", money(t.cost), num(t.turns) + " messages", "", "turns") +
+          card("Per message", money(t.turns ? t.cost / t.turns : 0), "average", "", "per") +
           card("Saved by caching", money(saved),
-               num(t.tok_cache_read) + " cached tokens", saved > 0 ? "good" : "") +
-          card("Tokens out", num(t.tok_out), num(t.tok_in) + " in") +
+               num(t.tok_cache_read) + " cached tokens", saved > 0 ? "good" : "", "saved") +
+          card("Tokens out", num(t.tok_out), num(t.tok_in) + " in", "", "tokens") +
           card("Daily cap", d.cap > 0 ? money(d.cap) : "off",
                capped ? "reached today" : nearCap ? "close today" : "",
                capped ? "warn" : "") +
-        "</div>" +
-        "<h2>Cost per day</h2>" + chart(d.series) +
-        "<h2>Tools used</h2>" + rows(t.tools, "tool") +
-        "<h2>Models</h2>" + modelRows(t.models, t.spend) +
-        (t.errors || t.refusals
-          ? "<h2>Trouble</h2><table>" +
-            "<tr><td>errors</td><td class='n'>" + num(t.errors) + "</td></tr>" +
-            "<tr><td>refusals</td><td class='n'>" + num(t.refusals) + "</td></tr></table>"
-          : "");
+        "</div>";
+      paintTables();
+      render();
     } catch (e) {
-      $("out").innerHTML = '<span class="err">Could not read the record (' +
+      $("cards").innerHTML = '<span class="err">Could not read the record (' +
         esc(e.message) + "). Is ARC still running?</span>";
     }
   }
 
-  document.querySelectorAll(".ranges button").forEach(b => {
-    b.addEventListener("click", () => {
+  /* --- input ---------------------------------------------------------------- */
+
+  document.addEventListener("click", ev => {
+    const pick = ev.target.closest("[data-metric]");
+    if (pick) { choose(pick.dataset.metric); return; }
+    const range = ev.target.closest(".ranges button");
+    if (range) {
       document.querySelectorAll(".ranges button").forEach(x => x.classList.remove("on"));
-      b.classList.add("on");
-      days = parseInt(b.dataset.days, 10) || 30;
+      range.classList.add("on");
+      days = parseInt(range.dataset.days, 10) || 30;
+      store.set("days", days); hover = -1;
+      const u = new URL(location.href);
+      u.searchParams.set("days", days); history.replaceState(null, "", u);
       load();
-    });
+      return;
+    }
+    const md = ev.target.closest("#modes [data-mode]");
+    if (md) { mode = md.dataset.mode; store.set("mode", mode); render(); return; }
+    if (ev.target.closest("#modes [data-avg]")) {
+      showAvg = !showAvg; store.set("avg", showAvg ? "1" : "0"); render();
+    }
   });
+
+  function dayAt(clientX) {
+    if (!data) return -1;
+    const r = $("canvas").getBoundingClientRect();
+    const padL = 54, padR = 8, n = data.series.length;
+    const i = Math.floor((clientX - r.left - padL) / ((r.width - padL - padR) / n));
+    return i >= 0 && i < n ? i : -1;
+  }
+  $("canvas").addEventListener("pointermove", ev => {
+    const i = dayAt(ev.clientX);
+    if (i !== hover) { hover = i; draw(); }
+  });
+  $("canvas").addEventListener("pointerleave", () => { hover = -1; draw(); });
+  // The keyboard walks the days, so the figures are not mouse-only.
+  $("canvas").addEventListener("keydown", ev => {
+    if (!data) return;
+    const n = data.series.length;
+    if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
+      hover = hover < 0 ? n - 1 : Math.min(n - 1, Math.max(0, hover + (ev.key === "ArrowRight" ? 1 : -1)));
+      draw(); ev.preventDefault();
+    } else if (ev.key === "Escape") { hover = -1; draw(); }
+  });
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer); resizeTimer = setTimeout(draw, 80);
+  });
+
+  document.querySelectorAll(".ranges button").forEach(b =>
+    b.classList.toggle("on", parseInt(b.dataset.days, 10) === days));
+
+  // Exposed for the test that drives this page in a real browser.
+  window.arcWatch = { choose, get chosen() { return chosen; }, get days() { return days; },
+                      said: () => $("said").textContent, hover: i => { hover = i; draw(); },
+                      tip: () => ($("tip").hidden ? "" : $("tip").textContent) };
 
   load();
   // Slow on purpose. This is a page you leave open; a tight poll would spend

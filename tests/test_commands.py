@@ -160,7 +160,14 @@ def route_body(path):
 
 for n in OWNER:
     fn = handler(n)
-    paths = sorted(set(re.findall(r'"(/api/[a-z-]+)', fn)))
+    # /graph opens a PAGE rather than fetching one, through a helper shared
+    # with the HUD's clickable readouts. Follow it, and hold the page to the
+    # same rule as an API route: the owner-only command must lead somewhere a
+    # guest is turned away.
+    if "openGraph(" in fn:
+        start = body.index("function openGraph(")
+        fn += body[start:body.index("\n  }", start)]
+    paths = sorted(set(re.findall(r'"(/api/[a-z-]+|/watch)[?"]', fn)))
     c.truthy("  /%-7s calls something" % n, paths)
     for path in paths:
         c.truthy("  /%-7s -> %-18s is guest-denied" % (n, path),

@@ -3003,9 +3003,17 @@ async def usage_route(request: Request, _=Depends(require_auth)):
     """Everything Arc Watch draws. Figures only — never conversations."""
     deny_guest(request)
     days = max(1, min(400, int(request.query_params.get("days") or 30)))
+    # The window before this one, so a chart can say "up 30% on the previous
+    # thirty days" rather than leave the reader to remember last month. Only
+    # while the record reaches back that far: stats keeps KEEP_DAYS, and a
+    # "previous year" made of half a year and a run of zeros would claim a
+    # collapse that never happened.
+    previous = (stats.series(days * 2)[:days]
+                if days * 2 <= stats.KEEP_DAYS else None)
     return JSONResponse({
         "today": stats.day(),
         "series": stats.series(days),
+        "previous": previous,
         "totals": stats.totals(days),
         "summary": stats.summary(min(days, 30)),
         # The default model's rates, kept for the readout, plus the whole
