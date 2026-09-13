@@ -231,7 +231,7 @@ c.truthy("  it starts hidden until something is watched",
          re.search(r'id="chart"[^>]*hidden', page))
 c.truthy("  it drags and resizes with the others",
          '"chart"' in body[body.index("const CARDS = ["):][:140])
-c.truthy("  it is styled as one of the family", ".plan, .chart {" in page)
+c.truthy("  it is styled as one of the family", ".plan, .chart, .userpanel {" in page)
 
 print("\nWhat it draws:")
 ch = body[body.index("(function stockChart()"):]

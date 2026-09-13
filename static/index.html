@@ -818,7 +818,7 @@
      the previous two were identical but separate, and a third copy is the point
      at which they start drifting apart by a pixel each. Only POSITION differs
      per card, below. */
-  .forecast, .stocks, .agenda, .nowplaying, .plan, .chart {
+  .forecast, .stocks, .agenda, .nowplaying, .plan, .chart, .userpanel {
     /* --cs is the card's own scale, set by dragging its corner. Every size
        inside a card is written against it, so a card grows the way an image in
        Slides does — text and all — rather than becoming a wider box with the
@@ -835,7 +835,7 @@
   .forecast { top: 60px; right: calc(clamp(240px, 19vw, 380px) + 34px); }
 
   .forecast::after, .stocks::after, .agenda::after, .nowplaying::after,
-  .plan::after, .chart::after {
+  .plan::after, .chart::after, .userpanel::after {
     content: ""; position: absolute; right: 0; bottom: 0;
     width: 15px; height: 15px; cursor: nwse-resize;
     background:
@@ -846,9 +846,10 @@
   }
   .forecast:hover::after, .stocks:hover::after,
   .agenda:hover::after, .nowplaying:hover::after,
-  .plan:hover::after, .chart:hover::after { opacity: .8; }
+  .plan:hover::after, .chart:hover::after,
+  .userpanel:hover::after { opacity: .8; }
   .forecast.sizing, .stocks.sizing, .agenda.sizing, .nowplaying.sizing,
-  .plan.sizing, .chart.sizing {
+  .plan.sizing, .chart.sizing, .userpanel.sizing {
     user-select: none;
   }
 
@@ -923,6 +924,23 @@
   /* below the 3-rail breakpoint the centre is cramped — hide it */
   @media (max-width: 1180px) { .forecast { display: none; } }
 
+  /* Cards the user invented. Same chrome as the built-in ones — they are
+     dragged, resized and reset by exactly the same machinery — laid out down
+     the left so a new one cannot land on top of the weather. */
+  .userpanel { left: calc(clamp(180px, 13vw, 250px) + 34px); }
+  .userpanel .up-row {
+    display: flex; justify-content: space-between; gap: calc(6px * var(--cs));
+    font-size: calc(10.5px * var(--cs)); letter-spacing: .03em;
+    padding: calc(3px * var(--cs)) 0;
+    border-top: 1px dashed rgba(18,41,60,.7);
+  }
+  .userpanel .up-row:first-of-type { border-top: none; }
+  .userpanel .up-label { color: var(--cyan-dim); white-space: nowrap; }
+  .userpanel .up-value { color: var(--ice); text-align: right; }
+  .userpanel .up-value.live { color: var(--accent); }
+  /* A row with no label is a sentence, not a pair: let it use the width. */
+  .userpanel .up-row.solo .up-value { text-align: left; }
+
   /* One stock, over time. Wider than the other cards because a line squeezed
      into 190px is a decoration rather than a chart — you cannot read a trend
      off forty pixels of width. */
@@ -992,8 +1010,8 @@
   @media (max-width: 1180px) { .chart { display: none; } }
 
   /* draggable HUD panels — grab anywhere to reposition */
-  .forecast, .stocks, .chart { cursor: grab; }
-  .forecast.dragging, .stocks.dragging, .chart.dragging {
+  .forecast, .stocks, .chart, .userpanel { cursor: grab; }
+  .forecast.dragging, .stocks.dragging, .chart.dragging, .userpanel.dragging {
     cursor: grabbing; z-index: 30;
     box-shadow: 0 0 34px rgba(95,217,255,.28), inset 0 0 22px rgba(95,217,255,.08);
     border-color: rgba(95,217,255,.5);
@@ -6356,6 +6374,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     }
     saveHistory();                // survive a reload
     maybeRefreshThread();         // keep the rolling thread-continuity note current
+    // A panel asked for in this turn should be on screen by the time ARC has
+    // finished saying it is, rather than up to twenty seconds later.
+    if (window.arcPanels) window.arcPanels.refresh();
     return out;
   }
 
@@ -9577,6 +9598,153 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     setInterval(load, 5 * 60 * 1000);
   })();
 
+  /* ---------------- panels the user invented ----------------
+     "Make me a panel for the Tokyo trip." ARC fills in a FORM — a title and up
+     to eight label/value rows — and this draws it as another card of the same
+     family, dragged and resized by the same machinery as the weather.
+
+     EVERY STRING HERE WAS WRITTEN BY THE MODEL, and the model reads the user's
+     mail. So nothing below ever touches innerHTML: rows are createElement and
+     textContent, exactly like the plan card, and a panel that arrived with a
+     script tag in its title would display the characters and do nothing. The
+     server strips angle brackets as well (panels.py), which is belt and braces
+     on purpose — this is the layer that must not be got wrong.
+
+     `live` is an allow-list, checked again HERE rather than trusted from the
+     response: a ticker price, a countdown to a date, or the clock. An unknown
+     kind leaves the row as plain text instead of becoming a request this page
+     makes on behalf of a sentence somebody emailed. */
+  (function userPanels() {
+    const POLL_MS = 20000;
+    let drawn = {};             // id -> the JSON we last drew, to avoid reflicker
+    let quotes = {};            // SYMBOL -> price, for ticker rows
+    let live = [];              // the panels currently on screen
+
+    function el(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;   // never innerHTML
+      return n;
+    }
+
+    function countdownText(iso) {
+      const then = new Date(iso + "T00:00:00");
+      if (isNaN(then)) return "";
+      const ms = then - new Date();
+      const days = Math.floor(Math.abs(ms) / 86400000);
+      const hours = Math.floor((Math.abs(ms) % 86400000) / 3600000);
+      if (ms >= 0) {
+        if (days > 1) return days + " days" + (hours ? ", " + hours + "h" : "");
+        if (days === 1) return "tomorrow";
+        return hours > 0 ? "in " + hours + "h" : "today";
+      }
+      return days === 0 ? "today" : days + (days === 1 ? " day ago" : " days ago");
+    }
+
+    function liveValue(kind) {
+      if (kind === "clock") {
+        return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+      if (kind.indexOf("countdown:") === 0) return countdownText(kind.slice(10));
+      if (kind.indexOf("ticker:") === 0) {
+        const sym = kind.slice(7).toUpperCase();
+        const q = quotes[sym];
+        return q == null ? "…" : (q >= 1000 ? Math.round(q).toLocaleString()
+                                            : (Math.round(q * 100) / 100).toString());
+      }
+      return "";
+    }
+
+    // Checked here as well as on the server. Two cheap checks either side of a
+    // network hop is the right amount of paranoia for a string the model wrote.
+    const LIVE_OK = /^(?:ticker:[A-Za-z0-9.\-^=]{1,12}|countdown:\d{4}-\d{2}-\d{2}|clock)$/;
+
+    function paint(p, index) {
+      const id = "userpanel-" + p.id;
+      let box = document.getElementById(id);
+      if (!box) {
+        box = el("div", "userpanel");
+        box.id = id;
+        box.setAttribute("aria-live", "polite");
+        // Stacked down the left, below the cards that live there, so a new
+        // panel appears somewhere visible rather than under the plan.
+        box.style.top = (470 + index * 24) + "px";
+        document.body.appendChild(box);
+        if (window.arcMakeDraggable) window.arcMakeDraggable(box);
+      }
+      const key = JSON.stringify(p) + "|" + JSON.stringify(
+        (p.items || []).map(r => r.live ? liveValue(r.live) : ""));
+      if (drawn[p.id] === key) return;          // nothing has changed; leave it alone
+      drawn[p.id] = key;
+
+      box.textContent = "";
+      const t = el("div", "st-title");
+      t.appendChild(el("span", null, p.title || "PANEL"));
+      box.appendChild(t);
+      (p.items || []).forEach(r => {
+        const row = el("div", "up-row" + (r.label ? "" : " solo"));
+        if (r.label) row.appendChild(el("span", "up-label", r.label));
+        const kind = r.live && LIVE_OK.test(r.live) ? r.live : "";
+        const shown = kind ? (liveValue(kind) || r.value || "") : (r.value || "");
+        row.appendChild(el("span", "up-value" + (kind ? " live" : ""), shown));
+        box.appendChild(row);
+      });
+      box.hidden = false;
+    }
+
+    function tickerSymbols() {
+      const out = [];
+      live.forEach(p => (p.items || []).forEach(r => {
+        if (r.live && r.live.indexOf("ticker:") === 0) {
+          const s = r.live.slice(7).toUpperCase();
+          if (out.indexOf(s) < 0) out.push(s);
+        }
+      }));
+      return out;
+    }
+
+    async function loadQuotes() {
+      const syms = tickerSymbols();
+      if (!syms.length) return;
+      try {
+        const r = await fetch("/api/stocks?symbols=" + encodeURIComponent(syms.join(",")));
+        if (!r.ok) return;
+        const d = await r.json();
+        (d.quotes || []).forEach(q => {
+          if (q && q.symbol) quotes[String(q.symbol).toUpperCase()] = q.price;
+        });
+      } catch (_) { /* a missed price shows as … rather than as an error */ }
+    }
+
+    async function load() {
+      try {
+        const r = await fetch("/api/panels");
+        if (!r.ok) return;
+        const d = await r.json();
+        live = (d && d.panels) || [];
+      } catch (_) { return; }        // keep what is on screen
+      // Cards for panels that have been taken down go with them.
+      const keep = {};
+      live.forEach(p => { keep[p.id] = true; });
+      Object.keys(drawn).forEach(id => {
+        if (!keep[id]) {
+          const gone = document.getElementById("userpanel-" + id);
+          if (gone && gone.parentNode) gone.parentNode.removeChild(gone);
+          delete drawn[id];
+        }
+      });
+      await loadQuotes();
+      live.forEach(paint);
+    }
+
+    // The clock and the countdowns move on their own; the panels themselves
+    // only change when ARC is asked to change them.
+    setInterval(() => live.forEach(paint), 30000);
+    setInterval(load, POLL_MS);
+    load();
+    window.arcPanels = { refresh: load };
+  })();
+
   /* ---------- draggable HUD panels ----------
      Grab any floating card anywhere and drag it — weather, markets, today,
      now playing. Positions persist in localStorage. A small movement threshold
@@ -9708,6 +9876,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // is always the one that is missed.
     const CARDS = ["forecast", "stocks", "agenda", "nowplaying", "plan", "chart"];
     CARDS.forEach(id => makeDraggable(document.getElementById(id)));
+
+    // Cards the user invented arrive after boot and have ids nobody can write
+    // down in advance, so the same machinery is opened up for them. Exposed
+    // rather than duplicated: a second drag implementation is how the two
+    // would drift apart, which is the bug the list above exists to prevent.
+    window.arcMakeDraggable = makeDraggable;
 
     // Keep panels on-screen if the window shrinks.
     window.addEventListener("resize", () => {

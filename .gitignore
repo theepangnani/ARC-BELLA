@@ -41,6 +41,8 @@ sessions.json
 # quick notes (personal)
 notes.json
 plan.json
+# Cards the user invented — their trip, their countdowns, their business
+panels.json
 missed_alarms.json
 
 # Market price alerts (personal watchlist)

@@ -141,6 +141,7 @@ import stats
 import triggers
 import memory
 import plan
+import panels
 import retry
 import awake
 import redact
@@ -148,7 +149,7 @@ import whose
 import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
-            memory, maps, plan)
+            memory, maps, plan, panels)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -189,6 +190,11 @@ GUEST_TOOLS = {
     # takes six steps has the same reason to want it carried across a round
     # limit as anybody else.
     "plan_set", "plan_step", "plan_read", "plan_clear",
+    # Panels a guest invents are their own, on their own screen, in their own
+    # slice of the file — the same footing as their plan above. Part of the
+    # BASE tier rather than the week's loan, because nothing of the owner's is
+    # reachable through them.
+    "make_panel", "list_panels", "remove_panel",
 }
 
 
@@ -352,6 +358,11 @@ PASSIVE_TOOLS = {
     # machine — and gating it would be perverse: the consent prompt would
     # arrive before the work, to ask permission to write down what the work is.
     "plan_set", "plan_step", "plan_read", "plan_clear",
+    # A panel is a card on the user's own screen, built because they asked
+    # for it in the same breath. Stopping to ask permission to draw what was
+    # just requested would be the consent prompt at its most pointless; it is
+    # their data, on their display, and "take it down" undoes it entirely.
+    "make_panel", "list_panels", "remove_panel",
     # listing price alerts just reads them back; setting/clearing stays gated.
     "list_price_alerts",
     # Same split for alarms: list is a read, and silencing one that is ringing
@@ -949,6 +960,9 @@ BACKGROUND_PATHS = {
     "/api/calendar/upcoming", "/api/calendar/agenda", "/api/nowplaying",
     "/api/screen-watch", "/api/stocks",
     "/api/stock-search", "/api/push/status", "/api/display", "/api/voices",
+    # The panels the user invented redraw themselves on a timer, like the
+    # agenda: on screen is not the same as somebody being there.
+    "/api/panels",
     # Both are timers with nobody necessarily there: the trigger poll runs
     # beside the alert poll, and Arc Watch left open on a second screen would
     # otherwise hold a session alive for ever by refreshing itself.
@@ -2871,6 +2885,21 @@ async def memory_list(request: Request, _=Depends(require_auth)):
     apply_session_memory(request)
     return JSONResponse({"facts": memory.facts(), "count": memory.count(),
                          "max": memory.MAX_FACTS})
+
+
+@app.get("/api/panels")
+async def panels_route(request: Request, _=Depends(require_auth)):
+    """The cards the user invented, for the HUD to draw.
+
+    Per account like the plan above, and for the same reason: a guest who asks
+    for a panel gets their own screen furniture, not a view of the owner's.
+
+    Everything here is plain text by the time it leaves panels.py — no markup,
+    and `live` is one of an allow-list — because the page draws it with
+    textContent and must never be tempted otherwise.
+    """
+    apply_session_memory(request)
+    return JSONResponse({"panels": panels.panels_for_screen()})
 
 
 @app.get("/api/plan")

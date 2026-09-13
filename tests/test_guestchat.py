@@ -137,7 +137,7 @@ with TestClient(run.app) as client:
         # sunset are facts about the world, not about the owner.
         # 19 -> 23 with the plan. 23 -> 49 on 11 Sep 2026, when the owner asked
         # for "all except my pc" (see test_guest.py, which names each one).
-        check("    the guest tier names 49 tools", len(run.guest_tools()), 49)
+        check("    the guest tier names 52 tools", len(run.guest_tools()), 52)
         truthy("    and the two additions are the market ones",
                {"market_outlook", "market_compare"} <= run.guest_tools())
         # Every tool offered must be one a guest may actually run, or the model

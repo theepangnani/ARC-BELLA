@@ -294,7 +294,7 @@ c.truthy("  it starts hidden", re.search(r'class="plan" id="plan"[^>]*hidden', p
 c.truthy("  and joins the family that can be dragged and resized",
          '"forecast", "stocks", "agenda", "nowplaying", "plan"' in body)
 c.truthy("  sharing their chrome",
-         ".forecast, .stocks, .agenda, .nowplaying, .plan, .chart {" in page)
+         ".forecast, .stocks, .agenda, .nowplaying, .plan, .chart, .userpanel {" in page)
 c.truthy("  it hides itself when there is no plan",
          re.search(r"if \(!steps\.length\) \{\s*\n\s*box\.hidden = true", body))
 # The model writes these strings.

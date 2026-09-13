@@ -54,14 +54,14 @@ def with_deadline(stamp):
 
 print("The two sets are separate, and the loan is the smaller one:")
 c("  no tool is in both", sorted(BASE & EXTRA), [])
-c.truthy("  the base tier is the one that survives", len(BASE) == 23)
+c.truthy("  the base tier is the one that survives", len(BASE) == 26)
 c.truthy("  and the loan is on top of it", len(EXTRA) == 26)
-c("  together they are the widened tier", len(BASE | EXTRA), 49)
+c("  together they are the widened tier", len(BASE | EXTRA), 52)
 
 print("\nWhile the week is running:")
 with_deadline(NOW + 3 * 86400)
 live = run.guest_tools()
-c("  the wider tier is in force", len(live), 49)
+c("  the wider tier is in force", len(live), 52)
 c.truthy("  an alarm may be set", "set_alarm" in live)
 c.truthy("  the owner's chats may be read", "tg_read_chat" in live)
 out, failed = run.dispatch_tool("set_alarm", {"time": "7am"}, local=False, guest=True)
@@ -72,7 +72,7 @@ c.truthy("  it is offered as well as allowed",
 print("\nThe moment it runs out — same process, no restart:")
 with_deadline(NOW - 1)
 gone = run.guest_tools()
-c("  the tier is back to what it was", len(gone), 23)
+c("  the tier is back to what it was", len(gone), 26)
 c("  it is exactly the base set, not something new", gone, BASE)
 c.truthy("  the public lookups a guest always had are untouched",
          {"weather", "news", "web_search", "directions"} <= gone)

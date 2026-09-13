@@ -46,7 +46,7 @@ print("Six cards, one set of chrome:")
 # They were two identical-but-separate rules. A third copy is the point at which
 # they start drifting apart by a pixel each.
 c.truthy("  the border, blur and shadow are written once",
-         ".forecast, .stocks, .agenda, .nowplaying, .plan, .chart {" in page)
+         ".forecast, .stocks, .agenda, .nowplaying, .plan, .chart, .userpanel {" in page)
 c.truthy("  and only POSITION differs per card",
          ".agenda    { top: 60px;" in page and ".stocks { top: 262px;" in page)
 c.truthy("  the new ones mirror the old two across the stage",
@@ -181,7 +181,7 @@ for sized in ("calc(8.5px * var(--cs))", "calc(10.5px * var(--cs))",
 # handle element would be swept away the next time the temperature changed.
 c.truthy("  the grip is a pseudo-element, not a child",
          ".forecast::after, .stocks::after, .agenda::after, .nowplaying::after," in page
-         and ".plan::after, .chart::after {" in page)
+         and ".plan::after, .chart::after, .userpanel::after {" in page)
 c.truthy("  ...so a press on it is found by position", "function onGrip" in body)
 c.truthy("  and the reason is written down", "swept away the next time the temperature" in body)
 c.truthy("  it only appears on hover", ".forecast:hover::after" in page)
