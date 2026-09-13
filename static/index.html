@@ -934,6 +934,33 @@
     color: var(--cyan-dim); margin-bottom: calc(4px * var(--cs));
   }
   .chart .ch-sym { color: var(--ice); }
+  /* ‹ SYMBOL › — the arrows sit either side of the name because that is what
+     they move. Kept in the header rather than under the chart so the card has
+     one row of controls at the top and one at the bottom, not three. */
+  .chart .ch-head { display: flex; align-items: baseline; gap: calc(5px * var(--cs)); }
+  .chart .ch-nav {
+    cursor: pointer; color: var(--cyan-dim); user-select: none;
+    font-size: calc(11px * var(--cs)); line-height: 1; padding: 0 calc(2px * var(--cs));
+    transition: color .15s;
+  }
+  .chart .ch-nav:hover { color: var(--accent); }
+  /* One tab per stock on the markets panel. They scroll sideways rather than
+     wrapping: a card that grows a row taller when a sixth stock is added would
+     shove the chart down and overlap whatever is below it. */
+  .chart .ch-tabs {
+    display: flex; gap: calc(4px * var(--cs)); margin-top: calc(5px * var(--cs));
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .chart .ch-tabs::-webkit-scrollbar { display: none; }
+  .chart .ch-tab {
+    cursor: pointer; white-space: nowrap; flex: 0 0 auto;
+    font-size: calc(8px * var(--cs)); letter-spacing: .08em;
+    color: var(--cyan-dim); border: 1px solid rgba(95,217,255,.18);
+    padding: calc(2px * var(--cs)) calc(5px * var(--cs));
+    transition: color .15s, border-color .15s;
+  }
+  .chart .ch-tab:hover { color: var(--ice); border-color: rgba(95,217,255,.4); }
+  .chart .ch-tab.on { color: var(--void); background: var(--accent); border-color: var(--accent); }
   .chart .ch-line { display: flex; align-items: baseline; gap: calc(7px * var(--cs)); }
   .chart .ch-price {
     font-family: var(--display); font-size: calc(21px * var(--cs));
@@ -9137,6 +9164,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       save();
       editIdx = null;
       await load();
+      if (window.arcChart) window.arcChart.sync();
     }
 
     function render() {
@@ -9193,6 +9221,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       save();
       if (!tickers.length) lastQuotes = [];   // nothing left to show
       load();
+      if (window.arcChart) window.arcChart.sync();
     }
 
     box.addEventListener("click", e => {
@@ -9253,7 +9282,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         sym = r && r.symbol;
       } catch (_) {}
       if (!sym) sym = q.toUpperCase();
-      if (!tickers.includes(sym)) { tickers.push(sym); save(); await load(); }
+      if (!tickers.includes(sym)) {
+        tickers.push(sym); save(); await load();
+        if (window.arcChart) window.arcChart.sync();
+      }
       return sym;
     }
     async function removeTicker(text) {
@@ -9410,20 +9442,48 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       g.fillStyle = accent; g.fill();
     }
 
+    // Everything switchable: the markets panel's own list, with the watched
+    // stock guaranteed to be in it. Asking to chart something by voice adds it
+    // to the panel, but a stock removed from the panel while it is on the
+    // chart would otherwise leave the tabs with no tab for what is showing.
+    function switchable() {
+      let list = [];
+      try { list = (window.arcMarket && window.arcMarket.list()) || []; } catch (_) {}
+      list = list.map(s => String(s).toUpperCase());
+      if (symbol && list.indexOf(symbol) < 0) list = [symbol].concat(list);
+      return list;
+    }
+
+    function step(dir) {
+      const list = switchable();
+      if (list.length < 2) return;
+      const at = Math.max(0, list.indexOf(symbol));
+      // Wrapping round, because a pair of arrows that go dead at the ends of a
+      // four-item list feels broken rather than bounded.
+      watch(list[(at + dir + list.length) % list.length]);
+    }
+
     function render() {
       if (!symbol) { box.hidden = true; return; }
       box.hidden = false;
       const sym = symbol.replace("-USD", "");
+      const list = switchable();
+      const arrows = list.length > 1;
+      const head = '<div class="ch-top"><span class="ch-head">' +
+        (arrows ? '<span class="ch-nav" data-step="-1" title="previous stock">‹</span>' : "") +
+        '<span class="ch-sym">' + sym + '</span>' +
+        (arrows ? '<span class="ch-nav" data-step="1" title="next stock">›</span>' : "") +
+        '</span>';
       if (failed && !data) {
-        box.innerHTML = '<div class="ch-top"><span class="ch-sym">' + sym + '</span>' +
-          '<span>no data</span></div>' +
+        box.innerHTML = head + '<span>no data</span></div>' +
+          tabsHtml(list) +
           '<div class="ch-foot">Nothing came back for that ticker.</div>';
         return;
       }
       const d = data || {};
       const pct = (d.pct == null) ? "" : (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
       const cls = (d.pct == null) ? "" : (d.pct >= 0 ? "ch-up" : "ch-down");
-      let html = '<div class="ch-top"><span class="ch-sym">' + sym + '</span>' +
+      let html = head +
         '<span>' + range + ' · ' + (d.currency || "") + '</span></div>' +
         '<div class="ch-line"><span class="ch-price">' + money(d.last) + '</span>' +
         '<span class="ch-move ' + cls + '">' + pct + '</span></div>' +
@@ -9432,15 +9492,35 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         html += '<span class="ch-r' + (r === range ? " on" : "") + '" data-r="' + r + '">' +
                 r + '</span>';
       });
-      html += '</div><div class="ch-foot">' +
+      html += '</div>' + tabsHtml(list) + '<div class="ch-foot">' +
         (d.low != null ? "Low " + money(d.low) + " · high " + money(d.high) + " · " : "") +
         'past prices, not a forecast</div>';
       box.innerHTML = html;
       const canvas = box.querySelector("canvas");
       if (canvas) requestAnimationFrame(() => draw(canvas));
+      // Keep the current tab in view when there are more than fit: switching
+      // with the arrows must not leave the lit tab off the side of the card.
+      const on = box.querySelector(".ch-tab.on");
+      if (on && on.scrollIntoView) {
+        try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {}
+      }
+    }
+
+    function tabsHtml(list) {
+      if (!list || list.length < 2) return "";     // one stock needs no tabs
+      let h = '<div class="ch-tabs">';
+      list.forEach(s => {
+        h += '<span class="ch-tab' + (s === symbol ? " on" : "") + '" data-sym="' + s + '">' +
+             s.replace("-USD", "") + '</span>';
+      });
+      return h + "</div>";
     }
 
     box.addEventListener("click", e => {
+      const nav = e.target.closest(".ch-nav");
+      if (nav) { step(parseInt(nav.getAttribute("data-step"), 10) || 1); return; }
+      const tab = e.target.closest(".ch-tab");
+      if (tab) { watch(tab.getAttribute("data-sym")); return; }
       const r = e.target.closest(".ch-r");
       if (!r) return;
       const want = r.getAttribute("data-r");
@@ -9464,7 +9544,23 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       return symbol;
     }
 
-    window.arcChart = { watch, watching: () => symbol, refresh: load };
+    // Called by the markets panel whenever its list changes, so the tabs are
+    // the panel rather than a copy of it that drifts.
+    function sync() {
+      let panel = [];
+      try {
+        panel = ((window.arcMarket && window.arcMarket.list()) || [])
+                  .map(s => String(s).toUpperCase());
+      } catch (_) {}
+      // The charted stock was just removed from the panel: move to whatever is
+      // still there. Leaving the line up would be a chart for something the
+      // user has this second said they are not tracking, with a tab for it and
+      // no way back to it.
+      if (symbol && panel.length && panel.indexOf(symbol) < 0) { watch(panel[0]); return; }
+      render();
+    }
+
+    window.arcChart = { watch, watching: () => symbol, refresh: load, sync, step };
 
     // Nothing watched yet: take the first ticker on the markets panel, so the
     // card arrives with something real in it rather than asking to be set up.

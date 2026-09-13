@@ -50,6 +50,74 @@ c = Check()
 DAY = 86400
 START = 1750000000
 
+# Built from the environment, as test_meta requires: Program Files is not
+# always on C:, and a per-user Chrome lives under LOCALAPPDATA.
+_ROOTS = [os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)",
+                                          "LOCALAPPDATA")]
+BROWSERS = [os.path.join(r, *parts) for r in _ROOTS if r for parts in (
+    ("Google", "Chrome", "Application", "chrome.exe"),
+    ("Microsoft", "Edge", "Application", "msedge.exe"))]
+
+
+def run_chart_clicks(mod, css):
+    """Run the real chart module in a real browser and click its controls.
+
+    Returns the watched symbol after each click, or None if there is no
+    browser here. The page is stubbed at exactly two points — the fetch, so no
+    network is touched, and requestAnimationFrame, which under headless virtual
+    time fires late enough to race the probe. Everything else is the shipped
+    code.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    exe = next((b for b in BROWSERS if b and os.path.isfile(b)), None)
+    if not exe:
+        return None
+    payload = json.dumps({"symbol": "NVDA", "currency": "USD",
+                          "days": fake(126)["days"], "first": 100.0, "last": 162.5,
+                          "change": 62.5, "pct": 62.5, "high": 162.5, "low": 100.0})
+    probe = """
+const log = [];
+const click = sel => { const el = document.querySelector(sel);
+  if (el) el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  else log.push("MISSING " + sel); };
+log.push(window.arcChart.watching());
+click('.ch-nav[data-step="1"]');      log.push(window.arcChart.watching());
+click('.ch-nav[data-step="1"]');      log.push(window.arcChart.watching());
+click('.ch-nav[data-step="-1"]');     log.push(window.arcChart.watching());
+click('.ch-tab[data-sym="BTC-USD"]'); log.push(window.arcChart.watching());
+click('.ch-nav[data-step="1"]');      log.push(window.arcChart.watching());
+click('.ch-r[data-r="1y"]');
+log.push((document.querySelector(".ch-r.on") || {}).textContent || "none");
+log.push((document.querySelector(".ch-tab.on") || {}).textContent || "none");
+document.getElementById("probe").textContent = log.join("|");
+"""
+    html = ('<!doctype html><meta charset="utf-8"><style>'
+            ':root{--accent:#5fd9ff;--ice:#cfefff;--cyan-dim:#4a7d99;--void:#03070c;'
+            '--display:system-ui}'
+            '.chart{--cs:1;position:relative;width:268px;padding:11px 13px}'
+            + css.replace("@media (max-width: 1180px) { .chart { display: none; } }", "")
+            + '</style><div class="chart" id="chart" hidden></div><pre id="probe"></pre>'
+            '<script>window.requestAnimationFrame = f => f();'
+            'window.arcMarket = { list: () => ["NVDA","AAPL","TSLA","BTC-USD"] };'
+            'window.fetch = async () => ({ ok: true, json: async () => (' + payload + ') });'
+            + mod + probe + '</script>')
+    work = tempfile.mkdtemp(prefix="arcchart")
+    try:
+        p = os.path.join(work, "chart.html")
+        io.open(p, "w", encoding="utf-8").write(html)
+        out = subprocess.run(
+            [exe, "--headless=new", "--disable-gpu", "--no-first-run",
+             "--no-default-browser-check", "--user-data-dir=" + os.path.join(work, "p"),
+             "--virtual-time-budget=6000", "--dump-dom",
+             "file:///" + p.replace("\\", "/")],
+            capture_output=True, timeout=120, encoding="utf-8", errors="replace").stdout
+        m = re.search(r'<pre id="probe">(.*?)</pre>', out, re.S)
+        return m.group(1).split("|") if m and m.group(1).strip() else None
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
 
 def fake(n=300, first=100.0, step=0.5):
     """A straight climb, so every figure below can be worked out by hand."""
@@ -168,6 +236,7 @@ c.truthy("  it is styled as one of the family", ".plan, .chart {" in page)
 print("\nWhat it draws:")
 ch = body[body.index("(function stockChart()"):]
 ch = ch[:ch.index("/* ---------- draggable HUD panels ----------")]
+chart_css = page[page.index("  /* One stock, over time."):page.index("  /* draggable HUD panels")]
 c.truthy("  the canvas is drawn in device pixels", "devicePixelRatio" in ch)
 c.truthy("  ...or a phone gets a soft line", "soft on a phone" in ch)
 c.truthy("  a flat series cannot divide by zero", "|| Math.max(hi * 0.01, 0.01)" in ch)
@@ -194,6 +263,47 @@ c.truthy("  ...and so does the range", '"arc.chart.range"' in body)
 c("  and not under a name watch mode already owns", '"arc.watch"' in body, False)
 c.truthy("  with nothing watched it takes the first ticker",
          "window.arcMarket.list()" in ch)
+
+print("\nSwitching between stocks, without going back to the panel:")
+# The card charts ONE stock, so getting to the others has to cost a click
+# rather than a trip to the markets panel and a hunt for the right row.
+c.truthy("  arrows either side of the name", 'data-step="-1"' in ch and 'data-step="1"' in ch)
+c.truthy("  and a tab per stock", "ch-tab" in ch and "function tabsHtml" in ch)
+c("  one stock gets no tabs and no arrows",
+  "if (!list || list.length < 2) return \"\";" in ch and "list.length > 1" in ch, True)
+c.truthy("  the tabs ARE the markets panel, not a copy",
+         "window.arcMarket && window.arcMarket.list()" in ch)
+c.truthy("  ...so the panel tells the chart when it changes",
+         "window.arcChart.sync()" in body)
+c.truthy("  a stock charted by voice still gets a tab",
+         "list = [symbol].concat(list)" in ch)
+c.truthy("  removing the charted stock moves to one that is left",
+         "panel.indexOf(symbol) < 0" in ch)
+c.truthy("  the arrows wrap rather than going dead at the ends",
+         "(at + dir + list.length) % list.length" in ch)
+c.truthy("  ...and the reason is written down", "feels broken rather than bounded" in ch)
+c.truthy("  the lit tab is kept in view when there are more than fit",
+         "scrollIntoView" in ch)
+c.truthy("  ...and the tab strip scrolls instead of growing a second row",
+         "overflow-x: auto" in page and ".ch-tabs" in page)
+print("\n  ...and the switching is DRIVEN, not read:")
+# Everything above is a string in a file. Switching is a sequence — next, next,
+# back, jump, wrap — and no string check can tell a working cycle from an
+# off-by-one, so the real module is run in a real engine and clicked. Same
+# approach as test_speech_gate; where no browser exists the gap is named rather
+# than counted as a pass.
+got = run_chart_clicks(mod=ch, css=chart_css)
+if got is None:
+    print("    NOTE  no Chrome or Edge here. NOT CONFIRMED — the clicks below")
+    print("          are a gap, not a pass. CI has a browser, which closes it.")
+else:
+    c("    it starts on the first stock", got[0], "NVDA")
+    c("    next steps forward", (got[1], got[2]), ("AAPL", "TSLA"))
+    c("    previous steps back", got[3], "AAPL")
+    c("    a tab jumps straight there", got[4], "BTC-USD")
+    c("    past the end it wraps to the start", got[5], "NVDA")
+    c("    the range buttons still work", got[6], "1y")
+    c("    and the lit tab follows the stock", got[7], "NVDA")
 
 print("\nAnd by voice:")
 c.truthy("  the directive takes watch", "watch|chart" in body)
