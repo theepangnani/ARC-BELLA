@@ -217,10 +217,31 @@ opened = []
 real_open = pc._open_default
 pc._open_default = lambda target: opened.append(target)   # never the real handler
 try:
+    # Two refusals can answer here, and which one does depends on where the
+    # repo lives, not on the lock. On the laptop the clone is under $HOME, so
+    # the .py rule is what refuses; on the desktop it is C:\dev\..., outside
+    # FILE_ROOTS, so the folder rule refuses first. Asserting the .py message
+    # made the suite fail on the machine that runs Bella while the file was
+    # still refused. So: refused by either, and nothing reached Windows —
+    # which is the thing that matters.
     for name in ("run.py", "codeguard.py"):
         out = pc.open_file(str(codeguard.ROOT / name))
-        c.truthy("  %-14s refused" % name, "won't 'open'" in out)
+        c.truthy("  %-14s refused" % name,
+                 "won't 'open'" in out or "outside the folders" in out)
     c("  and nothing was handed to Windows to open", opened, [])
+    # And the .py rule on its own, wherever the repo is: the folder rule is
+    # waved through so only the extension can refuse. Without this, the
+    # desktop would never exercise the rule that closed the hole.
+    real_roots = pc._within_roots
+    pc._within_roots = lambda p: True
+    try:
+        for name in ("run.py", "codeguard.py"):
+            out = pc.open_file(str(codeguard.ROOT / name))
+            c.truthy("  %-14s refused for being Python, not for where it is" % name,
+                     "won't 'open'" in out)
+        c("  still nothing handed to Windows", opened, [])
+    finally:
+        pc._within_roots = real_roots
 finally:
     pc._open_default = real_open
 
