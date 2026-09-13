@@ -28,6 +28,7 @@ looks like an update to an old one REPLACES it, so memory stays a picture of
 what is true instead of a pile of everything that ever was.
 """
 
+import contextvars
 import io
 import json
 import os
@@ -53,15 +54,21 @@ REFUSED_SECRET = ("I don't keep passwords, keys or card numbers in memory — "
 # Whose memory this request is about. Set per-request by run.py, the same
 # pattern apply_session_google uses for Google tokens — the alternative is
 # threading an address through every call site including the tool dispatcher.
-_who = threading.local()
+#
+# A ContextVar, like gauth's, and NOT threading.local() as it was: async
+# requests all share the event loop's one thread, so a thread-local let a
+# guest's request overwrite the owner's address while the owner's turn was
+# awaiting Claude, and the owner's "remember this" landed in the guest's
+# memory. whose.py carries the full account of it.
+_who = contextvars.ContextVar("arc_memory_who", default="owner")
 
 
 def use(email: str) -> None:
-    _who.email = (email or "").strip().lower() or "owner"
+    _who.set((email or "").strip().lower() or "owner")
 
 
 def current() -> str:
-    return getattr(_who, "email", "") or "owner"
+    return _who.get() or "owner"
 
 
 def connected() -> bool:

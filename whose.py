@@ -7,15 +7,32 @@ one person used it, and it is the reason a second person cannot be let in: they
 would not get their own notes, they would get YOURS, and their first reminder
 would appear in your evening.
 
-memory.py already solved this for itself: a thread-local address set once per
-request, and a file keyed by it. This is that idea pulled out so the other six
-stores can share ONE notion of who is asking, rather than six that drift.
+memory.py already solved this for itself: an address set once per request, and
+a file keyed by it. This is that idea pulled out so the other six stores can
+share ONE notion of who is asking, rather than six that drift.
 
-WHY THREAD-LOCAL AND NOT AN ARGUMENT. The alternative is threading an address
+WHY SET ONCE AND NOT AN ARGUMENT. The alternative is threading an address
 through every call site, including the tool dispatcher, which hands a tool a
 dict of arguments the model wrote. That would mean either trusting the model to
 say who it is — it must never be able to — or rewriting forty tool signatures.
 The request sets it once; everything underneath reads it.
+
+WHY A CONTEXTVAR AND NOT threading.local(), which is what this was, and it was
+wrong in exactly the way that matters. /api/chat is async: every request runs
+on the SAME thread, the event loop's, so a thread-local is one slot shared by
+everybody. The owner's turn set "owner", awaited Claude, and while it waited a
+guest's request set the guest; when the owner's turn came back to run
+add_note, plan_step or list_memory, current() answered with the guest's address
+— the owner's note filed in the guest's store, or the reverse. Found on the
+laptop while planning streaming, reproduced on the desktop with two overlapping
+requests. A ContextVar belongs to the asyncio task, so each request keeps its
+own across every await, and gauth.py's token path has always worked this way.
+
+Two consequences, both wanted. Work a request hands to a thread
+(asyncio.to_thread, anyio.to_thread) copies the context and so still knows who
+asked — a thread-local silently read the default there. And a task or thread
+started OUTSIDE any request, like the background loops born in lifespan, sees
+the default, as before.
 
 THE COST OF THAT CHOICE, stated plainly because it is real: code that runs
 OUTSIDE a request has no address set, and would quietly read the default one.
@@ -25,23 +42,23 @@ and never mine(), and there is a test that fails if a firing loop reads a store
 through the per-request door.
 """
 
-import threading
+import contextvars
 
 # The address used when nobody has said otherwise: a single-user install, the
 # CLI, a test. Deliberately not an email — it can never collide with a real one.
 DEFAULT = "owner"
 
-_who = threading.local()
+_who = contextvars.ContextVar("arc_whose", default=DEFAULT)
 _owners: set = set()
 
 
 def use(email: str) -> None:
     """Whose data the rest of this request is about. Set by run.py, once."""
-    _who.email = (email or "").strip().lower() or DEFAULT
+    _who.set((email or "").strip().lower() or DEFAULT)
 
 
 def current() -> str:
-    return getattr(_who, "email", "") or DEFAULT
+    return _who.get() or DEFAULT
 
 
 def set_owners(emails) -> None:
