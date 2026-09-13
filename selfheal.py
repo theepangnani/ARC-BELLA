@@ -196,10 +196,25 @@ def _stamp() -> str:
     Milliseconds matter here: two saves in the same second would land on the
     same filename, and the second would silently replace the first — losing a
     copy at the one moment a copy is worth having.
+
+    And milliseconds were not enough on their own. A fast machine saves more
+    than once inside one millisecond (Windows' clock also ticks in ~1-16 ms
+    steps, so time.time() can repeat), and the collision came straight back:
+    test_selfheal's "six saves leave six copies" got 3 on a laptop where it had
+    passed on the desktop. So a stamp is never handed out twice — if the clock
+    has not moved on, the name moves on by one millisecond, which keeps the
+    order and the format exactly as they were.
     """
-    now = time.time()
-    return "%s-%03d" % (time.strftime("%Y%m%d-%H%M%S", time.localtime(now)),
-                        int(now * 1000) % 1000)
+    global _last_ms
+    with _stamp_lock:
+        ms = max(int(time.time() * 1000), _last_ms + 1)
+        _last_ms = ms
+    return "%s-%03d" % (time.strftime("%Y%m%d-%H%M%S", time.localtime(ms / 1000)),
+                        ms % 1000)
+
+
+_last_ms = 0
+_stamp_lock = threading.Lock()
 
 
 def _snapshots(name: str) -> list:
