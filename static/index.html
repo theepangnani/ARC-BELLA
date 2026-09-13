@@ -3149,6 +3149,13 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
         return "";
       });
 
+    // [[voice: butler]] — lifted out BEFORE the reply is spoken, so the answer
+    // to "talk like Jarvis" is already in the new voice.
+    out = out.replace(/\[\[\s*voice\s*:\s*([^\]]{1,40}?)\s*\]\]/gi, (_, name) => {
+      try { chooseVoice(name); } catch (_) {}
+      return "";
+    });
+
     // Fence left open — the model forgot the terminator. Take the rest of the
     // reply rather than reading a raw directive and a wall of code out loud.
     // This one stays LAST of the board rules: unlike the closed fence it eats
@@ -4128,6 +4135,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     neuralVoiceSel.addEventListener("change", () => {
       selectedVoice = neuralVoiceSel.value;
       try { localStorage.setItem("arc.voice", selectedVoice); } catch (_) {}
+      try { loadVoices(); } catch (_) {}
       // Speak a short sample so the choice is audible immediately.
       if (state.booted) speak(SAMPLE_LINE());
     });
@@ -4157,14 +4165,35 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const auto = document.createElement("option");
     auto.value = ""; auto.textContent = "Best voice for this language";
     neuralVoiceSel.appendChild(auto);
+    const group = (label) => {
+      const g = document.createElement("optgroup");
+      g.label = label; neuralVoiceSel.appendChild(g); return g;
+    };
+    const option = (parent, value, text, gender) => {
+      const o = document.createElement("option");
+      o.value = value; o.textContent = text;
+      o.dataset.gender = (gender || "").toLowerCase();
+      parent.appendChild(o);
+    };
     try {
       const r = await fetch("/api/voices?locale=" + encodeURIComponent(locale));
       const d = await r.json();
-      (d.voices || []).forEach(v => {
-        const o = document.createElement("option");
-        o.value = v.short;
-        o.textContent = v.name + (v.gender ? " — " + v.gender.toLowerCase() : "");
-        neuralVoiceSel.appendChild(o);
+      // Characters first: a voice and a way of speaking, named for how they
+      // sound. Then this country's voices, then every other country's in the
+      // same language — which is where the British men were hiding from a
+      // Canadian laptop that only ever showed Clara and Liam.
+      if ((d.personas || []).length) {
+        const g = group("Characters");
+        d.personas.forEach(p => option(g, "persona:" + p.id, p.label, p.gender));
+      }
+      const byLocale = {};
+      (d.voices || []).concat(d.others || []).forEach(v => {
+        (byLocale[v.locale] = byLocale[v.locale] || { label: v.label, list: [] }).list.push(v);
+      });
+      Object.keys(byLocale).forEach(loc => {
+        const g = group(byLocale[loc].label);
+        byLocale[loc].list.forEach(v =>
+          option(g, v.short, v.name + (v.gender ? " — " + v.gender.toLowerCase() : ""), v.gender));
       });
     } catch (_) {}
     // Keep the chosen voice only if it belongs to the language now selected;
@@ -4173,6 +4202,36 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     neuralVoiceSel.value = still ? keep : "";
     selectedVoice = neuralVoiceSel.value;
     try { localStorage.setItem("arc.voice", selectedVoice); } catch (_) {}
+    try { loadVoices(); } catch (_) {}
+  }
+
+  // Whether the chosen voice is a man's, so the browser fallback can match it.
+  // Falling back from the butler to a woman's voice mid-sentence is not a
+  // degraded version of the same assistant; it sounds like somebody else.
+  function chosenVoiceIsMale() {
+    const o = neuralVoiceSel && neuralVoiceSel.selectedOptions && neuralVoiceSel.selectedOptions[0];
+    return !!(o && o.dataset.gender === "male");
+  }
+
+  /* [[voice: butler]] — Bella changing her own voice when asked ("talk like
+     Jarvis", "use a British man"). Client-side like [[mode:]]: it changes how
+     this screen sounds, nothing on the machine. Only something the picker is
+     already offering can be chosen, so a made-up name changes nothing. */
+  function chooseVoice(name) {
+    if (!neuralVoiceSel) return false;
+    const want = (name || "").trim().toLowerCase();
+    const alias = { jarvis: "butler", "british man": "butler", "british male": "butler",
+                    default: "bella", normal: "bella", sonia: "bella" }[want] || want;
+    const opts = Array.from(neuralVoiceSel.options);
+    const hit = opts.find(o => o.value.toLowerCase() === "persona:" + alias)
+             || opts.find(o => o.value && o.textContent.toLowerCase().split(" — ")[0] === alias)
+             || (/^(auto|best)$/.test(alias) ? opts.find(o => o.value === "") : null);
+    if (!hit) return false;
+    neuralVoiceSel.value = hit.value;
+    selectedVoice = hit.value;
+    try { localStorage.setItem("arc.voice", selectedVoice); } catch (_) {}
+    try { loadVoices(); } catch (_) {}
+    return true;
   }
 
   function paintLangHint() {
@@ -5608,6 +5667,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       if (same !== -1) { el.voiceSel.value = same; return; }
     }
 
+    // A man's voice chosen above means the fallback looks for a man too.
+    const male = typeof chosenVoiceIsMale === "function" && chosenVoiceIsMale();
     let best = 0, bestScore = -1;
     voices.forEach((v, i) => {
       const name = (v.name || "").toLowerCase();
@@ -5616,10 +5677,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // 1) British English dominates everything.
       if (lang.startsWith("en-gb")) score += 30;
       else if (lang.startsWith("en")) score += 4;   // other English over non-English
-      // 2) Female within that.
-      if (name.includes("female")) score += 15;
-      if (FEMALE_NAMES.some(n => name.includes(n))) score += 15;
-      if (MALE_NAMES.some(n => name.includes(n))) score -= 20;
+      // 2) The chosen voice's sex within that — female unless a man was picked.
+      const f = (name.includes("female") ? 15 : 0) + (FEMALE_NAMES.some(n => name.includes(n)) ? 15 : 0);
+      const m = MALE_NAMES.some(n => name.includes(n)) ? 20 : 0;
+      score += male ? (m + (name.includes("female") ? -20 : 0) - f / 2) : (f - m);
       // 3) Quality only breaks ties — never enough to beat UK-female.
       if (name.includes("natural")) score += 3;
       if (name.includes("online")) score += 2;

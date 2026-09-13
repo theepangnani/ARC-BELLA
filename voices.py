@@ -261,3 +261,75 @@ def voices_for(locale: str):
     """The voices available in one locale, for the voice picker."""
     loc = (locale or "").strip().lower()
     return [v for v in catalogue() if v["locale"].lower() == loc]
+
+
+def same_language_voices(locale: str):
+    """Every OTHER country's voices for the same language, for the picker.
+
+    The picker used to offer only the device's exact locale. On a Canadian
+    laptop that meant two English voices, Clara and Liam — and the owner went
+    looking for a British man for weeks without knowing Ryan and Thomas were
+    there all along, one setting away. An accent is a choice about how ARC
+    sounds, not about which country the computer thinks it is in.
+    """
+    loc = (locale or "").strip().replace("_", "-").lower()
+    base = loc.split("-")[0]
+    if not base:
+        return []
+    return [v for v in catalogue()
+            if v["locale"].split("-")[0].lower() == base and v["locale"].lower() != loc]
+
+
+# CHARACTERS: a voice AND a way of speaking. A bare voice name says nothing
+# about how it sounds — "RyanNeural" does not tell anybody it is the calm
+# British butler they had in mind — and the same voice slowed a little and
+# pitched a little lower is a different character. These were each rendered and
+# checked to produce audio before they went in.
+#
+# The rate and pitch live HERE and only here. The page names a character; it
+# never sends prosody, so a client cannot hand edge-tts an arbitrary string.
+PERSONAS = [
+    {"id": "bella", "label": "Bella — British woman, warm",
+     "voice": "en-GB-SoniaNeural", "rate": "+0%", "pitch": "+0Hz", "gender": "Female"},
+    {"id": "butler", "label": "Butler — British man, unhurried",
+     "voice": "en-GB-RyanNeural", "rate": "-6%", "pitch": "-4Hz", "gender": "Male"},
+    {"id": "thomas", "label": "Thomas — British man, softer",
+     "voice": "en-GB-ThomasNeural", "rate": "-3%", "pitch": "-2Hz", "gender": "Male"},
+    {"id": "libby", "label": "Libby — British woman, brisk",
+     "voice": "en-GB-LibbyNeural", "rate": "+4%", "pitch": "+0Hz", "gender": "Female"},
+    {"id": "anchor", "label": "Anchor — American man, deep",
+     "voice": "en-US-ChristopherNeural", "rate": "-4%", "pitch": "-3Hz", "gender": "Male"},
+    {"id": "andrew", "label": "Andrew — American man, relaxed",
+     "voice": "en-US-AndrewMultilingualNeural", "rate": "+0%", "pitch": "+0Hz", "gender": "Male"},
+    {"id": "william", "label": "William — Australian man",
+     "voice": "en-AU-WilliamMultilingualNeural", "rate": "+0%", "pitch": "+0Hz", "gender": "Male"},
+    {"id": "connor", "label": "Connor — Irish man",
+     "voice": "en-IE-ConnorNeural", "rate": "+0%", "pitch": "+0Hz", "gender": "Male"},
+]
+
+# What people actually call them. "Talk like Jarvis" is how the owner asked for
+# the butler, so that is a name it answers to — but only as a way of asking;
+# the character itself is not dressed up as somebody else's.
+ALIASES = {"jarvis": "butler", "british man": "butler", "british male": "butler",
+           "sonia": "bella", "ryan": "butler", "default": "bella", "normal": "bella"}
+
+
+def persona(name: str):
+    """A character by id, alias, or 'persona:id'. None if there is no such one."""
+    key = (name or "").strip().lower()
+    if key.startswith("persona:"):
+        key = key[len("persona:"):]
+    key = ALIASES.get(key, key)
+    return next((p for p in PERSONAS if p["id"] == key), None)
+
+
+def personas_for(locale: str):
+    """The characters that speak this language and exist in today's catalogue.
+
+    Checked against the catalogue rather than trusted, for the same reason the
+    catalogue is fetched at all: offline it shrinks to eight voices, and a
+    character whose voice is not among them would fail at the moment it spoke.
+    """
+    base = (locale or "").strip().replace("_", "-").split("-")[0].lower()
+    return [dict(p) for p in PERSONAS
+            if p["voice"].split("-")[0].lower() == base and is_valid(p["voice"])]

@@ -2590,6 +2590,12 @@ async def _edge_tts(text: str, voice: str = "", lang: str = ""):
     replying in Tamil sound like Tamil rather than an English voice reading
     Tamil letters aloud.
     """
+    # A character is a voice plus a way of speaking, and its rate and pitch come
+    # from voices.PERSONAS — never from the request.
+    rate, pitch = "+0%", "+0Hz"
+    p = voices.persona(voice) if voice.startswith("persona:") else None
+    if p and voices.is_valid(p["voice"]):
+        voice, rate, pitch = p["voice"], p["rate"], p["pitch"]
     v = voice if voices.is_valid(voice) else ""
     if not v and lang and not voices.same_language(lang, TTS_VOICE):
         # Only go to the catalogue for a language ARC's OWN voice cannot speak.
@@ -2601,7 +2607,7 @@ async def _edge_tts(text: str, voice: str = "", lang: str = ""):
         v = voices.for_lang(lang)
     if not v:
         v = TTS_VOICE
-    comm = edge_tts.Communicate(text, v)
+    comm = edge_tts.Communicate(text, v, rate=rate, pitch=pitch)
     audio = bytearray()
     async for chunk in comm.stream():
         if chunk.get("type") == "audio" and chunk.get("data"):
@@ -2656,7 +2662,11 @@ async def voices_list(request: Request, _=Depends(require_auth)):
     locale = (request.query_params.get("locale") or "").strip()
     if locale:
         return JSONResponse({"locale": locale,
-                             "voices": voices.voices_for(locale)})
+                             "voices": voices.voices_for(locale),
+                             "others": voices.same_language_voices(locale),
+                             "personas": [{"id": p["id"], "label": p["label"],
+                                           "gender": p["gender"]}
+                                          for p in voices.personas_for(locale)]})
     return JSONResponse({"languages": voices.languages(),
                          "default": TTS_VOICE})
 
