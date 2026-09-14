@@ -18,6 +18,8 @@ import sys
 import time
 import hmac
 import asyncio
+import base64
+import binascii
 import contextvars
 import html
 import json
@@ -32,6 +34,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
 import httpx
+import logging
 import uvicorn
 import anthropic
 import edge_tts
@@ -40,6 +43,13 @@ from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import (Response, FileResponse, JSONResponse, HTMLResponse,
                                RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
+
+# httpx logs every request's full URL at INFO, and some services take their
+# key in the query string (Trello's does). Nothing here turns INFO on today,
+# but one basicConfig(level=INFO) anywhere would copy those keys into
+# arc-server.log, so the ceiling is pinned where it cannot be raised by accident.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # --------------------------------------------------------------------------
 # config
@@ -361,6 +371,43 @@ def guest_image_allowed(who: str, now: float | None = None) -> bool:
             return False
         _guest_images[key] = _guest_images.get(key, 0) + 1
         return True
+
+
+# What the model will accept as one picture: 5 MB at most, in one of four
+# formats. The page's data URL used to be trusted for both — "png" anywhere in
+# its header meant PNG, anything else was called JPEG — so a picture the model
+# refuses (too big, not base64, mislabelled) failed the whole turn after it had
+# already counted against a guest's pictures for the day. Now the bytes decide
+# the type, and a picture that cannot be sent is left out before anything is
+# counted. The type comes from the file's own first bytes, never the header.
+CLIENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+_IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"),
+                (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
+
+
+def client_image(value) -> tuple | None:
+    """(media_type, base64) for a data URL the model can take, else None."""
+    if not isinstance(value, str) or not value.startswith("data:image/") or "," not in value:
+        return None
+    header, b64 = value.split(",", 1)
+    if not header.endswith(";base64") or not 0 < len(b64) < 8_000_000:
+        return None
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    # Both sides of the encoding under the limit: the API's 5 MB has been
+    # reported against the base64 text as well as the file, and the page's own
+    # frames (1280px JPEG) are a few hundred KB, so the stricter reading costs
+    # nothing real.
+    if not raw or len(raw) > CLIENT_IMAGE_MAX_BYTES or len(b64) > CLIENT_IMAGE_MAX_BYTES:
+        return None
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp", b64
+    for magic_bytes, mt in _IMAGE_MAGIC:
+        if raw.startswith(magic_bytes):
+            return mt, b64
+    return None
 
 
 def guest_tools(now: float | None = None) -> set:
@@ -2447,6 +2494,47 @@ STREAMING = (os.getenv("ARC_STREAM", "") or "").strip().lower() in ("1", "true",
 # for the reason whose.py is one — every request shares the event loop's thread.
 _stream_sink = contextvars.ContextVar("arc_stream_sink", default=None)
 
+# Streamed turns still running. create_task keeps only a weak reference, so a
+# turn nobody else held could be collected part-way; this set holds each until
+# it ends.
+_stream_turns: set = set()
+
+
+class _StreamSink(asyncio.Queue):
+    """The queue a streamed turn writes to, and whether anyone is still reading.
+
+    gone: the page went away. stop_when_gone: that ends the turn at the next
+    model call. True for guests only. The owner's turn still runs to its end,
+    because a turn stopped part-way is a job half done (see chat_stream); a
+    guest who closed the page, though, was being paid for by the owner round
+    after round for a reply nobody would read."""
+    gone = False
+    stop_when_gone = False
+
+
+class _Said:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _NoUsage:
+    input_tokens = output_tokens = 0
+    cache_read_input_tokens = cache_creation_input_tokens = 0
+    server_tool_use = None
+
+
+class _StoppedTurn:
+    """Stands in for a model reply once a guest's page has gone: an ordinary
+    end of turn, so chat() finishes normally and still books what the rounds
+    before it cost. Raising here would skip that booking."""
+    stop_reason = "end_turn"
+
+    def __init__(self):
+        self.content = [_Said("The page went away, so I stopped here.")]
+        self.usage = _NoUsage()
+
 
 async def _claude_round(claude, kwargs: dict):
     """One call to the model, streamed to the page when a stream is listening.
@@ -2463,6 +2551,11 @@ async def _claude_round(claude, kwargs: dict):
     sink = _stream_sink.get()
     if sink is None:
         return await claude.messages.create(**kwargs)
+    # Checked before the call, so a round already under way, and every tool it
+    # asked for, finishes; only the NEXT round is not paid for.
+    if sink.gone and sink.stop_when_gone:
+        print(f"{C_DIM}  · stream: the guest's page went away, turn stopped{C_OFF}")
+        return _StoppedTurn()
     # A new round: the page drops any unspoken text from the one before, which
     # was a preamble to tools, or Haiku's before a step-up to Sonnet.
     sink.put_nowait(("round", {}))
@@ -2485,8 +2578,10 @@ async def chat_stream(request: Request, _=Depends(require_auth)):
     JSON, unchanged} or error {status, detail}. The reply in `done` is the one
     that counts; the deltas are only ever a head start on it.
 
-    The turn is not cancelled if the page goes away mid-reply: /api/chat is not
-    either, and a turn stopped between two tool calls is a job half done.
+    The owner's turn is not cancelled if the page goes away mid-reply: /api/chat
+    is not either, and a turn stopped between two tool calls is a job half done.
+    A guest's turn is: it stops before its next model call (_claude_round),
+    once the round in hand and its tools have finished.
     """
     if not STREAMING:
         raise HTTPException(404, "Streaming is off.")
@@ -2495,7 +2590,8 @@ async def chat_stream(request: Request, _=Depends(require_auth)):
     # going away, and a body chat() asked for after that is a body nobody
     # delivers: the turn waited for ever. Starlette keeps what was read here.
     await request.body()
-    q: asyncio.Queue = asyncio.Queue()
+    q = _StreamSink()
+    q.stop_when_gone = is_guest(request)
 
     async def run():
         _stream_sink.set(q)
@@ -2510,20 +2606,30 @@ async def chat_stream(request: Request, _=Depends(require_auth)):
 
     # The task gets its own copy of this request's context, so setting the sink
     # inside it can never leak into another request.
-    asyncio.create_task(run())
+    task = asyncio.create_task(run())
+    _stream_turns.add(task)
+    task.add_done_callback(_stream_turns.discard)
 
     async def events():
-        while True:
-            try:
-                kind, data = await asyncio.wait_for(q.get(), timeout=15)
-            except asyncio.TimeoutError:
-                # A tool round can be silent for a while; the tunnel drops a
-                # connection that says nothing, so it is kept talking.
-                yield ": keepalive\n\n"
-                continue
-            yield "event: %s\ndata: %s\n\n" % (kind, json.dumps(data, ensure_ascii=False))
-            if kind in ("done", "error"):
-                return
+        finished = False
+        try:
+            while True:
+                try:
+                    kind, data = await asyncio.wait_for(q.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    # A tool round can be silent for a while; the tunnel drops a
+                    # connection that says nothing, so it is kept talking.
+                    yield ": keepalive\n\n"
+                    continue
+                yield "event: %s\ndata: %s\n\n" % (kind, json.dumps(data, ensure_ascii=False))
+                if kind in ("done", "error"):
+                    finished = True
+                    return
+        finally:
+            # Closed before the end: the client went away, and Starlette
+            # cancels or closes this generator when it does.
+            if not finished:
+                q.gone = True
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -2773,23 +2879,23 @@ async def chat(request: Request, _=Depends(require_auth)):
     # Camera: the client (phone/webcam) captured a frame and sent it as a data
     # URL. Attach it so ARC can see the real world. Works anywhere (it's the
     # user's own camera), transient — never saved.
-    client_image = payload.get("image")
-    if isinstance(client_image, str) and client_image.startswith("data:image") and "," in client_image:
-        header, b64 = client_image.split(",", 1)
-        mt = "image/png" if "png" in header else "image/jpeg"
-        if 0 < len(b64) < 8_000_000:
-            if guest and not guest_image_allowed(whose.current()):
-                # Over the day's pictures: the words still get an answer, only
-                # the picture is left out, and the model is told so it can say
-                # why rather than answering as if it had looked.
-                extra += ("\n\nNO PICTURE THIS TIME: this guest sent a photo or a shared "
-                          "screen, but today's pictures for guests are used up, so it was "
-                          "not attached. Say so in one short sentence, answer what they "
-                          "said as well as you can without it, and do not describe a "
-                          "picture you have not seen.")
-            else:
-                _attach_to_last_user([{"type": "image",
-                                       "source": {"type": "base64", "media_type": mt, "data": b64}}])
+    # client_image() checks it is a picture the model will take BEFORE the
+    # day's picture cap counts it: one that could only fail is left out uncounted.
+    picture = client_image(payload.get("image"))
+    if picture:
+        mt, b64 = picture
+        if guest and not guest_image_allowed(whose.current()):
+            # Over the day's pictures: the words still get an answer, only
+            # the picture is left out, and the model is told so it can say
+            # why rather than answering as if it had looked.
+            extra += ("\n\nNO PICTURE THIS TIME: this guest sent a photo or a shared "
+                      "screen, but today's pictures for guests are used up, so it was "
+                      "not attached. Say so in one short sentence, answer what they "
+                      "said as well as you can without it, and do not describe a "
+                      "picture you have not seen.")
+        else:
+            _attach_to_last_user([{"type": "image",
+                                   "source": {"type": "base64", "media_type": mt, "data": b64}}])
 
     # --- the prompt itself -------------------------------------------------
     # Two blocks, and the split is doing two jobs at once.
@@ -3418,6 +3524,42 @@ def _tts_key(request: Request, text: str, engine: str, *voice) -> tuple:
     return (who, engine, *voice, text)
 
 
+# Limits on the voice. /api/tts had none, and anyone signed in could ask for
+# thousands of renders at once: every one a job for this machine, and with
+# ARC_PREFER_ELEVEN every one on the owner's ElevenLabs bill. The page speaks in
+# chunks of at most ~220 characters, fetching at most three at a time (the
+# chunk being spoken and two ahead), so none of these is felt by a person
+# listening; they only stop a script. A refused render is not a silent Bella:
+# the page falls back to the browser's own voice on any failure.
+#   - every render, anybody's, waits for one of TTS_RENDERS slots;
+#   - each account has TTS_PER_ACCOUNT renders in flight at most;
+#   - a guest may send TTS_GUEST_MAX_CHARS per request and TTS_GUEST_CHARS_PER_MIN
+#     characters a minute, and never reaches ElevenLabs, which is the owner's
+#     money. The owner has no per-minute budget.
+TTS_RENDERS = 8
+TTS_PER_ACCOUNT = 3
+TTS_GUEST_MAX_CHARS = 1000
+TTS_GUEST_CHARS_PER_MIN = 4000
+_tts_slots = asyncio.Semaphore(TTS_RENDERS)
+_tts_inflight: dict = defaultdict(int)          # account -> renders running
+_tts_guest_chars: dict = defaultdict(deque)     # guest -> (time, chars), last minute
+
+
+def _tts_guest_budget(who: str, chars: int, now: float | None = None) -> bool:
+    """Whether a guest may have `chars` more spoken this minute, booking it if so.
+    No lock: called on the event loop's one thread, with no await inside."""
+    now = time.monotonic() if now is None else now
+    q = _tts_guest_chars[who]
+    while q and now - q[0][0] >= 60:
+        q.popleft()
+    if sum(n for _, n in q) + chars > TTS_GUEST_CHARS_PER_MIN:
+        if not q:
+            _tts_guest_chars.pop(who, None)
+        return False
+    q.append((now, chars))
+    return True
+
+
 @app.post("/api/tts")
 async def tts(request: Request, _=Depends(require_auth)):
     """Return spoken audio so ARC has a natural voice instead of the browser's
@@ -3431,13 +3573,36 @@ async def tts(request: Request, _=Depends(require_auth)):
         raise HTTPException(400, "No text supplied.")
     if len(text) > 5000:
         raise HTTPException(400, "Too much text for one utterance.")
+    guest = is_guest(request)
+    who = "owner"
+    if AUTH_MODE != "open":
+        who = ((current_session(request, touch=False) or {}).get("email") or "").strip().lower() or "owner"
+    if guest:
+        if len(text) > TTS_GUEST_MAX_CHARS:
+            raise HTTPException(400, "Too much text for one utterance.")
+        if not _tts_guest_budget(who, len(text)):
+            raise HTTPException(429, "Slow down a moment.")
+    if _tts_inflight[who] >= TTS_PER_ACCOUNT:
+        raise HTTPException(429, "Slow down a moment.")
+    _tts_inflight[who] += 1
+    try:
+        async with _tts_slots:
+            return await _tts_render(request, text, voice, lang, guest)
+    finally:
+        _tts_inflight[who] -= 1
+        if _tts_inflight[who] <= 0:
+            _tts_inflight.pop(who, None)
+
+
+async def _tts_render(request: Request, text: str, voice: str, lang: str, guest: bool):
 
     # Edge is the default: free, and ~0.5s vs a failed ElevenLabs round-trip
     # that adds 2-3s of pure latency once its quota is spent. Only try
     # ElevenLabs first if explicitly preferred (ARC_PREFER_ELEVEN) and it still
     # has credit; otherwise go straight to Edge (honouring the picked voice).
     audio = None
-    if PREFER_ELEVEN:
+    # Never for a guest: ElevenLabs is billed to the owner (see TTS_RENDERS).
+    if PREFER_ELEVEN and not guest:
         # ElevenLabs has one voice and speaks in the language it is given, so
         # that is its key. Kept apart from Edge's: a cached Edge clip must never
         # answer for the voice somebody chose to pay for.
@@ -3463,7 +3628,9 @@ async def tts(request: Request, _=Depends(require_auth)):
             # and until now nothing on this side recorded why. The sentence
             # itself is NOT logged — it may be anything Bella was saying.
             print(f"{C_AMBER}  ! voice render failed: {type(e).__name__}: {str(e)[:160]}{C_OFF}")
-            raise HTTPException(502, f"Text-to-speech failed: {str(e)[:200]}")
+            # The type name only, to the page: an exception's text can carry
+            # the service's reply or a request. The console keeps the detail.
+            raise HTTPException(502, f"Text-to-speech failed ({type(e).__name__}).")
     if not audio:
         print(f"{C_AMBER}  ! voice render returned no audio ({len(text)} chars){C_OFF}")
         raise HTTPException(502, "Text-to-speech produced no audio.")

@@ -194,6 +194,99 @@ with TestClient(run.app) as client:
     c("  a stranger gets nothing", client.post("/api/chat/stream", json=BODY).status_code, 401)
     session.revoke_all()
 
+# A guest who closes the page mid-turn stops being paid for: the round in hand
+# and its tools finish, the next model call is never made, and what was spent is
+# still booked. The owner's turn runs to its end, as /api/chat's does. Driven
+# through chat_stream itself, closing its event stream the way Starlette does
+# when the client leaves.
+print("\nWhen the page goes away mid-turn:")
+import asyncio      # noqa: E402
+import http.cookies  # noqa: E402
+from starlette.requests import Request  # noqa: E402
+
+os.environ["ARC_GUEST_EMAILS"] = "guest@example.com"
+run.GUEST_EMAILS = {"guest@example.com"}
+
+
+def left_after_first_round(email):
+    """One streamed turn by `email` whose page leaves during round 1."""
+    gate = {}
+    seen = {"stream": 0, "tools": 0}
+
+    class GatedStream(Stream):
+        def __aiter__(self):
+            inner = Stream.__aiter__(self)
+
+            async def gen():
+                async for ev in inner:
+                    yield ev
+                await gate["open"].wait()
+            return gen()
+
+    class Leaving:
+        def __init__(self):
+            self.n = 0
+            outer = self
+
+            class messages:
+                @staticmethod
+                def stream(**kw):
+                    seen["stream"] += 1
+                    outer.n += 1
+                    return GatedStream(script(outer.n))
+            self.messages = messages
+
+    def tool(name, args, **kw):
+        seen["tools"] += 1
+        return "14C, cloudy", False
+
+    async def go():
+        gate["open"] = asyncio.Event()
+        run.app.state.claude = Leaving()
+        run.dispatch_tool = tool
+        sid = session.create(email, "browser")
+        cookie = http.cookies.SimpleCookie()
+        cookie[run.COOKIE] = sid
+        body = json.dumps(BODY).encode()
+        sent = {"done": False}
+
+        async def receive():
+            if not sent["done"]:
+                sent["done"] = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await asyncio.sleep(3600)
+
+        req = Request({"type": "http", "method": "POST", "path": "/api/chat/stream",
+                       "headers": [(b"cookie", cookie.output(header="").strip().encode()),
+                                   (b"content-type", b"application/json")],
+                       "client": ("127.0.0.1", 5000), "server": ("test", 80),
+                       "scheme": "http", "query_string": b"", "app": run.app}, receive)
+        before = run._day["cost"]
+        resp = await run.chat_stream(req)
+        it = resp.body_iterator
+        first = await it.__anext__()
+        await it.aclose()                  # the page went away, mid round 1
+        gate["open"].set()
+        for t in list(run._stream_turns):
+            await asyncio.wait_for(t, 10)
+        seen["first"] = first
+        seen["booked"] = run._day["cost"] > before
+        seen["held"] = len(run._stream_turns)
+        return seen
+
+    return asyncio.run(go())
+
+
+s = left_after_first_round("guest@example.com")
+c.truthy("  (the stream really had started)", "round" in s["first"])
+c("  a guest's turn: round 1 and its tool finish", s["tools"], 1)
+c("  ...and the next model call is never made", s["stream"], 1)
+c("  ...and what round 1 cost is still booked", s["booked"], True)
+c("  ...and the finished turn is let go", s["held"], 0)
+s = left_after_first_round("owner@example.com")
+c("  the owner's turn runs to its end", (s["tools"], s["stream"]), (1, 2))
+session.revoke_all()
+
 src = io.open(ARC / "run.py", encoding="utf-8").read()
 c.truthy("  the one model call in chat() goes through _claude_round",
          "resp = await _claude_round(claude, kwargs)" in src)

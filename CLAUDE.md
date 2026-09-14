@@ -93,6 +93,11 @@ back.
   or 0 is no cap, which is how it ships; the number is the owner's decision.
   Over the cap the words are still answered and the picture is left out. The
   owner is never capped.
+- **The voice** (`/api/tts`) has limits: each account has 3 renders in flight,
+  and a guest has 1000 characters per request and 4000 a minute. Guests are
+  always spoken by the free Edge voice, never ElevenLabs, even with
+  `ARC_PREFER_ELEVEN` on: that bill is the owner's. Before 14 Sep 2026 guests
+  got ElevenLabs too, so a guest hearing a different voice is this, not a fault.
 - **Every personal store is per person** (`whose.py`): notes, plan, panels,
   to-dos, reminders, alarms, price alerts, standing rules. A request reads and
   writes its own slice through `_load()`/`_save()`. The background loops serve

@@ -92,7 +92,7 @@ c.truthy("  the camera wins when there are both",
 # The server path it relies on has no guest check, which is what makes this
 # work for everybody without a new route. Pinned so that one being added later
 # is a decision about screen sharing, not an accident.
-cam = run_src[run_src.index('client_image = payload.get("image")'):]
+cam = run_src[run_src.index('picture = client_image(payload.get("image"))'):]
 cam = cam[:cam.index("# --- the prompt itself")]
 # Moved once, deliberately: the path now has ONE guest check, the owner's
 # per-day picture cap (ARC_GUEST_IMAGES_PER_DAY, off unless set, and over it
@@ -110,7 +110,12 @@ if "NO PICTURE THIS TIME" in _capped:
     _capped = (_capped[:_capped.index("NO PICTURE THIS TIME")] +
                _capped[_capped.index("picture you have not seen"):])
 c("  the server's image path is not closed to guests", "guest" in _capped, False)
-c.truthy("  ...and is bounded", "0 < len(b64) < 8_000_000" in cam)
+# The bound moved into client_image(), which the path calls first: the bytes
+# are checked, and decoded to at most 5 MB, before anything is attached.
+_ci = run_src[run_src.index("def client_image("):]
+_ci = _ci[:_ci.index("\ndef ", 10)]
+c.truthy("  ...and is bounded",
+         "0 < len(b64) < 8_000_000" in _ci and "CLIENT_IMAGE_MAX_BYTES" in _ci)
 frame = fn("sharedScreenFrame")
 c.truthy("  no wider than 1280px", "Math.min(1, 1280 / w)" in frame)
 c.truthy("  as a JPEG", 'toDataURL("image/jpeg", 0.7)' in frame)

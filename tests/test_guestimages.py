@@ -49,6 +49,30 @@ c("  another guest has their own count", run.guest_image_allowed("other@example.
 c("  the next day starts again", run.guest_image_allowed("guest@example.com", now=day1 + 86400), True)
 c("  and yesterday's counts are gone", len(run._guest_images), 1)
 
+print("\nOnly a picture the model can take is a picture:")
+import base64   # noqa: E402
+PNG_B64 = PIXEL.split(",", 1)[1]
+JPEG = base64.b64encode(b"\xff\xd8\xff\xe0" + b"\0" * 20).decode()
+GIF = base64.b64encode(b"GIF89a" + b"\0" * 20).decode()
+WEBP = base64.b64encode(b"RIFF\0\0\0\0WEBPVP8 " + b"\0" * 20).decode()
+c("  a real PNG is PNG", run.client_image(PIXEL), ("image/png", PNG_B64))
+c("  the bytes decide, not the label", run.client_image("data:image/jpeg;base64," + PNG_B64)[0], "image/png")
+c("  JPEG", run.client_image("data:image/png;base64," + JPEG)[0], "image/jpeg")
+c("  GIF", run.client_image("data:image/gif;base64," + GIF)[0], "image/gif")
+c("  WebP", run.client_image("data:image/webp;base64," + WEBP)[0], "image/webp")
+for label, value in (
+        ("not base64", "data:image/png;base64,@@@not*base64@@@"),
+        ("not a picture's bytes", "data:image/png;base64," + base64.b64encode(b"<svg onload=x>").decode()),
+        ("an SVG, which the model does not take", "data:image/svg+xml;base64," + base64.b64encode(b"<svg/>").decode()),
+        ("not base64-encoded at all", "data:image/png," + PNG_B64),
+        ("over 5 MB once decoded", "data:image/png;base64," + base64.b64encode(
+            b"\x89PNG\r\n\x1a\n" + b"\0" * (5 * 1024 * 1024)).decode()),
+        ("under 5 MB as a file but over it as base64", "data:image/png;base64," + base64.b64encode(
+            b"\x89PNG\r\n\x1a\n" + b"\0" * (4 * 1024 * 1024 + 512 * 1024)).decode()),
+        ("empty", "data:image/png;base64,"),
+        ("not a string", {"data": PIXEL})):
+    c("  refused: %s" % label, run.client_image(value), None)
+
 sent = []
 
 
@@ -112,6 +136,17 @@ with TestClient(run.app) as client:
         sent.clear()
         r = client.post("/api/chat", cookies=OWNER, json=body)
     c("  the owner is never capped", (r.status_code, images_in(sent[-1])), (200, 1))
+
+    # A picture that could only fail is left out BEFORE it is counted, so a
+    # guest does not lose a day's picture to a broken upload.
+    run._guest_images.clear()
+    bad = dict(body, image="data:image/png;base64,@@@broken@@@")
+    for _ in range(3):
+        sent.clear()
+        r = client.post("/api/chat", cookies=GUEST, json=bad)
+    c("  a broken picture is left out, and the turn still answers",
+      (r.status_code, images_in(sent[-1])), (200, 0))
+    c("  ...and it is not counted against the day", sum(run._guest_images.values()), 0)
 
     run.GUEST_IMAGES_PER_DAY = 0
     sent.clear()
