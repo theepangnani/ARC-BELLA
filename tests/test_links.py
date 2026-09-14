@@ -128,6 +128,40 @@ try:
 except links.NotLinked as e:
     c.truthy("  a refused refresh says link again", "again" in str(e))
 
+print("\nTwo turns refreshing at once refresh once:")
+import threading   # noqa: E402
+links._store_token("spotify", {"access_token": "old", "refresh_token": "ref-A", "expires_in": 3600})
+data = json.loads(files[0].read_text(encoding="utf-8"))
+data["expires_at"] = time.time() - 5
+files[0].write_text(json.dumps(data), encoding="utf-8")
+refreshes, got_tokens = [], []
+
+
+def rotating(u, data=None, headers=None, timeout=None):
+    # Like Spotify: a refresh token works once, and each refresh hands out a new one.
+    refreshes.append(data["refresh_token"])
+    time.sleep(0.3)
+    if data["refresh_token"] != "ref-A":
+        return resp(400, {"error": "invalid_grant"})
+    return resp(200, {"access_token": "fresh", "refresh_token": "ref-B", "expires_in": 3600})
+
+
+def turn():
+    whose.use(OWNER)
+    try:
+        got_tokens.append(links.token("spotify", post=rotating))
+    except links.NotLinked as e:
+        got_tokens.append("NOT LINKED: %s" % e)
+
+
+ts = [threading.Thread(target=turn) for _ in range(3)]
+for t in ts:
+    t.start()
+for t in ts:
+    t.join()
+c("  the refresh token was spent once", refreshes, ["ref-A"])
+c("  and every turn got the fresh token", got_tokens, ["fresh"] * 3)
+
 print("\nThe device sign-in (Microsoft, GitHub):")
 os.environ["GITHUB_CLIENT_ID"] = "gh-client"
 answers = [resp(200, {"device_code": "DEV-SECRET", "user_code": "ABCD-1234",

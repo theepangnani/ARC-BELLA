@@ -400,17 +400,33 @@ def token(sid: str, post=None) -> str:
     if not data.get("access_token") or not configured(sid):
         raise NotLinked("%s isn't linked. Link it in Connectors." % s["name"])
     if data.get("expires_at") and time.time() >= data["expires_at"]:
-        if not data.get("refresh_token"):
-            raise NotLinked("The %s link has expired. Link it again in Connectors." % s["name"])
-        post = post or httpx.post
-        r = post(s["token_url"], data={
-            "grant_type": "refresh_token", "refresh_token": data["refresh_token"],
-            "client_id": _client_id(sid),
-        }, headers={"Accept": "application/json"}, timeout=TIMEOUT)
-        if r.status_code != 200 or not r.json().get("access_token"):
-            raise NotLinked("The %s link has lapsed. Link it again in Connectors." % s["name"])
-        _store_token(sid, r.json())
-        data = _load(sid)
+        # One refresh at a time per person per service, and the file read
+        # AGAIN once the lock is held. Asked by Claude 1 before tool calls move
+        # off the event loop: two turns at once would both see the token
+        # expired and both refresh. Spotify and Microsoft rotate refresh
+        # tokens, so the second refresh spends a token the first already
+        # replaced, fails, and tells the person to link again for nothing.
+        # With the re-read the second finds a fresh token and uses it.
+        with storefile.lock(_path(sid)):
+            data = _load(sid)
+            if data.get("expires_at") and time.time() >= data["expires_at"]:
+                if not data.get("refresh_token"):
+                    raise NotLinked("The %s link has expired. Link it again in Connectors." % s["name"])
+                post = post or httpx.post
+                r = post(s["token_url"], data={
+                    "grant_type": "refresh_token", "refresh_token": data["refresh_token"],
+                    "client_id": _client_id(sid),
+                }, headers={"Accept": "application/json"}, timeout=TIMEOUT)
+                try:
+                    tok = r.json() if r.status_code == 200 else {}
+                except ValueError:
+                    tok = {}
+                if not tok.get("access_token"):
+                    raise NotLinked("The %s link has lapsed. Link it again in Connectors." % s["name"])
+                _store_token(sid, tok)
+                data = _load(sid)
+    if not data.get("access_token"):
+        raise NotLinked("%s isn't linked. Link it in Connectors." % s["name"])
     return data["access_token"]
 
 
