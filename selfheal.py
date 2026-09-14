@@ -135,7 +135,10 @@ def _count(data) -> int:
 
 
 KEEP_OUT = {".env", "credentials.json", "credentials_web.json", "token.json",
-            "sessions.json", "voices.json"}
+            "sessions.json", "voices.json",
+            # Linked-account tokens (links.py). Never a DATA_FILES entry today;
+            # listed so that adding one by mistake is refused, as sessions.json is.
+            "links"}
 
 KEEP_SNAPSHOTS = 6          # per file; roughly a day of six-hourly saves
 LOG_MAX_BYTES = 4 * 1024 * 1024

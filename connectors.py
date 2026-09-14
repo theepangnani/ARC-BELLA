@@ -53,7 +53,11 @@ from pathlib import Path
 import gcal
 import gextra
 import gmail
+import githubapi
+import microsoft
+import notionapi
 import pc
+import spotifyapi
 import storefile
 import tg
 import whose
@@ -94,6 +98,28 @@ CONNECTORS = [
     {"id": "computer", "name": "This computer",
      "what": "Files, apps, windows and the screen — only from the desktop itself.",
      "tools": _names(pc), "linked": pc.connected},
+    # Accounts linked through links.py. "linked" is per person: a guest turn
+    # never sees the owner's token, because the token file is chosen by
+    # whose.current() and a guest is lent none of these tools anyway.
+    {"id": "spotify", "name": "Spotify",
+     "what": "What's playing, your playlists and top tracks; play and pause on Premium.",
+     "tools": _names(spotifyapi), "linked": spotifyapi.connected},
+    # One Microsoft sign-in, two things a person thinks of separately — the
+    # same split as Contacts and Drive above.
+    {"id": "outlook", "name": "Outlook",
+     "what": "Your Outlook mail and calendar, read-only: never sending, never changing.",
+     "tools": _names(microsoft, {"outlook_search_mail", "outlook_read_mail", "outlook_events"}),
+     "linked": microsoft.connected},
+    {"id": "onedrive", "name": "OneDrive",
+     "what": "Finding and reading your OneDrive files.",
+     "tools": _names(microsoft, {"onedrive_search", "onedrive_read"}),
+     "linked": microsoft.connected},
+    {"id": "github", "name": "GitHub",
+     "what": "Your notifications, repositories and issues, read-only.",
+     "tools": _names(githubapi), "linked": githubapi.connected},
+    {"id": "notion", "name": "Notion",
+     "what": "Searching and reading the pages you've shared with Bella's integration.",
+     "tools": _names(notionapi), "linked": notionapi.connected},
 ]
 BY_ID = {c["id"]: c for c in CONNECTORS}
 
@@ -105,6 +131,11 @@ SEARCHES = {
     "contacts": ("find_contact", lambda q: {"name": q}),
     "calendar": ("list_events",  lambda q: {"days_ahead": 60, "query": q}),
     "computer": ("find_files",   lambda q: {"query": q, "limit": 5}),
+    "outlook":  ("outlook_search_mail", lambda q: {"query": q, "max_results": 5}),
+    "onedrive": ("onedrive_search", lambda q: {"query": q, "limit": 5}),
+    "notion":   ("notion_search", lambda q: {"query": q, "limit": 5}),
+    # Not Spotify or GitHub: "everything about the Lisbon trip" is not a song
+    # or somebody's public repository, and noise there buries the real answer.
 }
 # ARC's own stores are searched too, though they are not connectors anyone
 # would switch off: they are what the person told her.
@@ -117,7 +148,8 @@ _SOURCE = {
     "gmail": "the user's mail", "drive": "the user's Google Drive",
     "contacts": "the user's contacts", "calendar": "the user's calendar",
     "computer": "files on this computer", "memory": "what ARC remembers",
-    "notes": "the user's notes",
+    "notes": "the user's notes", "outlook": "the user's Outlook mail",
+    "onedrive": "the user's OneDrive", "notion": "the user's Notion pages",
 }
 
 
@@ -267,7 +299,8 @@ TOOLS = [
     {"name": "search_connectors",
      "description": (
          "Search EVERYTHING the user has connected at once — mail, Drive, contacts, "
-         "calendar, files on this computer and what you remember — and get the "
+         "calendar, files on this computer, Outlook, OneDrive, Notion and what you "
+         "remember — and get the "
          "results back labelled by source. Use it when they ask to find something "
          "without saying where ('find everything about the Lisbon trip', 'where did "
          "I put the lease', 'what do I have on the Hendricks project'). When they "
@@ -283,7 +316,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "set_connector",
      "description": ("Switch one connector on or off for this person: calendar, gmail, "
-                     "drive, contacts, telegram or computer. Use for 'stop using my "
+                     "drive, contacts, telegram, computer, spotify, outlook, onedrive, "
+                     "github or notion. Use for 'stop using my "
                      "email', 'leave Telegram out of it', 'you can use my Drive again'. "
                      "Off means you will not touch it at all until it is turned back on."),
      "input_schema": {"type": "object", "properties": {

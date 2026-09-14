@@ -50,6 +50,8 @@ tutorial.json
 lessons.json
 # Which connectors each person switched off
 connectors.json
+# Tokens for linked accounts (Spotify, Microsoft, GitHub): secrets, per person
+links/
 
 # Market price alerts (personal watchlist)
 price_alerts.json
