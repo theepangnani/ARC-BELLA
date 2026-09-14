@@ -72,7 +72,7 @@ _series_lock = threading.RLock()
 # What a ticker can look like: AAPL, BRK.B, ^GSPC, EURUSD=X, BTC-USD. Anything
 # else is refused before it reaches Yahoo's URL or the cache, which a guest can
 # fill too — so the cache is also swept of expired entries and capped.
-_TICKER = re.compile(r"^[A-Z0-9.^=\-]{1,16}$")
+_TICKER = re.compile(r"^[A-Z0-9.&^=\-]{1,16}$")      # & for M&M.NS and its like
 _SERIES_MAX = 64
 
 

@@ -43,6 +43,14 @@ class Unreadable(Exception):
     """The file is there and is not a store. Nothing should be written over it."""
 
 
+class Busy(Unreadable):
+    """The file stayed locked by something else (another thread, antivirus, a
+    sync client) past RETRIES. NOT damage, and never to be read as empty: a
+    load that turned this into "no items" and a save that then got through
+    would replace the person's whole slice with just the new item. Anything
+    about to save must let it stop them; only a pure display may swallow it."""
+
+
 _locks: dict = {}
 _guard = threading.Lock()
 _seq = itertools.count()
@@ -75,13 +83,20 @@ def read(path, empty=list):
         except PermissionError:
             time.sleep(WAIT)            # another thread is replacing it
             continue
+        except UnicodeDecodeError:
+            # A hand edit saved in another encoding, or a flipped byte. Damage,
+            # like bad JSON — it used to escape as its own exception and crash
+            # the readers that only catch Unreadable, down to the alarm poll.
+            raise Unreadable("%s is not valid UTF-8 text" % p.name)
+        except OSError as e:
+            raise Unreadable("%s could not be read: %s" % (p.name, e))
         if not text.strip():
             return empty()
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
             raise Unreadable("%s is not valid JSON (line %d)" % (p.name, e.lineno))
-    raise Unreadable("%s stayed busy for %.0f seconds" % (p.name, RETRIES * WAIT))
+    raise Busy("%s stayed busy for %.0f seconds" % (p.name, RETRIES * WAIT))
 
 
 def write(path, blob, indent=None) -> None:

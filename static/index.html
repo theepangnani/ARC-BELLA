@@ -9324,7 +9324,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
      A bug check put <IMG SRC=X ONERROR=...> on the chart this way; it ran, and
      was saved, so it ran again on every load. Anything that is not
      ticker-shaped is refused on the way in, and escaped on the way out anyway. */
-  const TICKER_OK = /^[A-Z0-9.^=\-]{1,16}$/;
+  const TICKER_OK = /^[A-Z0-9.&^=\-]{1,16}$/;     // & for Yahoo's M&M.NS and its like
   const escHtml = s => String(s).replace(/[&<>"']/g,
     c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -9359,7 +9359,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       } catch (_) {}
       if (!sym) sym = q.toUpperCase();       // fall back to raw text as a ticker
       sym = String(sym).toUpperCase();
-      if (!TICKER_OK.test(sym)) { editIdx = null; render(); return; }
+      if (!TICKER_OK.test(sym)) {
+        editIdx = null; render();
+        // Said, not silently dropped: an editor that just closes looks broken.
+        try { addEntry("sys", "SYSTEM", "I couldn't find a stock called '" + q + "'."); } catch (_) {}
+        return;
+      }
       if (idx === -1) {
         if (!tickers.includes(sym)) tickers.push(sym);
       } else {
@@ -9849,7 +9854,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
     // Checked here as well as on the server. Two cheap checks either side of a
     // network hop is the right amount of paranoia for a string the model wrote.
-    const LIVE_OK = /^(?:ticker:[A-Za-z0-9.\-^=]{1,12}|countdown:\d{4}-\d{2}-\d{2}|clock)$/;
+    const LIVE_OK = /^(?:ticker:[A-Za-z0-9.&\-^=]{1,16}|countdown:\d{4}-\d{2}-\d{2}|clock)$/;
 
     function paint(p, index) {
       const id = "userpanel-" + p.id;
@@ -10102,6 +10107,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         if (!el) return;
         el.style.left = el.style.top = el.style.right = el.style.bottom = "";
         el.style.removeProperty("--cs");
+      });
+      // An invented panel has no place in the stylesheet — its stacked top is
+      // set when it is drawn — so clearing it dropped every one below the
+      // bottom of the window. Put them back in their stack.
+      document.querySelectorAll(".userpanel").forEach((el, index) => {
+        el.style.top = (470 + index * 24) + "px";
       });
     });
   })();

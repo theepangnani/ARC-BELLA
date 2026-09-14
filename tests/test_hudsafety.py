@@ -142,7 +142,24 @@ if got is not None:
     c("  watching TSLA", got[0:2], ["TSLA", "TSLA"])
     c("  and showing TSLA's price, not AAPL's late answer", got[2], "222")
 
+print("\nA real ticker with & in it is kept (M&M.NS), and shown safely:")
+got = run("window.fetch = async (u) => ({ ok: true, json: async () => (u.includes('stock-search') ? { symbol: 'M&M.NS' } : { quotes: [{ symbol: 'M&M.NS', price: 1, pct: 0 }] }) });"
+          + "const addEntry = () => {};" + HELPERS + MARKETS, """
+  await wait(50);
+  const sym = await window.arcMarket.add("mahindra");
+  await wait(50);
+  log.push(String(sym), JSON.stringify(window.arcMarket.list()),
+           document.querySelector(".st-sym") ? document.querySelector(".st-sym").textContent : "none");
+""")
+if got is not None:
+    c("  added", got[0], "M&M.NS")
+    c.truthy("  and on the list", "M&M.NS" in got[1])
+    c("  and on screen as itself", got[2], "M&M.NS")
+
 print("\nThe smaller ones:")
+c.truthy("  Reset panels puts invented panels back in their stack, not off the screen",
+         'document.querySelectorAll(".userpanel").forEach((el, index) => {\n        el.style.top = (470 + index * 24) + "px";'
+         in page.replace("\r\n", "\n"))
 c.truthy("  chat mode hides the chart and invented panels",
          "html.chat .chart," in page and "html.chat .userpanel," in page)
 c.truthy("  resizing and Reset panels include invented panels",

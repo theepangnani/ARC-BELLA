@@ -1493,9 +1493,12 @@ def keyboard(text: str = "", key: str = "") -> str:
     else:
         enter = ("Enter was NOT pressed, so if that is a chat box nothing has "
                  "been sent yet — press enter to send it.")
-    return (f"Typed {len(t)} character(s) into {where}. {enter} This confirms "
-            f"where the keystrokes were sent, not that they appeared — check "
-            f"with a screenshot before telling the user it's there.")
+    # With checking on, the picture comes with this result (see _look_after), so
+    # telling the model to go and take one contradicted the rule it is given.
+    tail = ("" if VERIFY else
+            " This confirms where the keystrokes were sent, not that they appeared "
+            "— check with a screenshot before telling the user it's there.")
+    return f"Typed {len(t)} character(s) into {where}. {enter}{tail}"
 
 
 # --- system control --------------------------------------------------------
@@ -1834,12 +1837,61 @@ _CHECK = (
     "do not read it out.")
 
 
-def _needs_look(name: str, args: dict) -> bool:
+# What each tool says when it has actually DONE something. Many of these tools
+# report a refusal or a mistake as ordinary text rather than raising — "I don't
+# know the key", "No address given", "I don't see a window matching" — and the
+# first version photographed those too, with an instruction to judge whether
+# the thing worked, beside a screen that looked perfectly normal. Only these get
+# a picture. A success worded some new way gets none, which is the old
+# behaviour, not a false check; test_checkwork holds these phrases to the code.
+_DONE = {
+    "keyboard": ("Typed ", "Pressed "),
+    "mouse_control": ("Left-clicked", "Double-clicked", "Right-clicked", "Scrolled "),
+    "open_app": ("Opened ", "Asked Windows to open ", "Asked the system to open "),
+    "open_website": ("Opening ",),
+    "open_file": ("Opened ",),
+    "focus_window": ("Switched to ",),
+    "close_window": ("Asked ",),
+    "message_app": ("Opened ",),
+}
+
+
+def _needs_look(name: str, args: dict, said: str = "") -> bool:
     if not VERIFY or name not in _SETTLE:
         return False
-    if name == "mouse_control":
-        return str((args or {}).get("action") or "").strip().lower() in _SEEN_MOUSE
-    return True
+    if name == "mouse_control" and \
+            str((args or {}).get("action") or "").strip().lower() not in _SEEN_MOUSE:
+        return False
+    return str(said).startswith(_DONE.get(name, ()))
+
+
+_FADED = "[A picture of the screen from an earlier step was here; you already checked it.]"
+
+
+def fade_old_checks(convo: list) -> list:
+    """The conversation with every check-your-work picture already in it
+    replaced by one line of text. Called before a round's results are added, so
+    the newest checks keep their pictures and nothing older is re-sent. Only
+    this feature's own pictures: a screenshot the model asked for, or an image
+    the user attached, is left exactly as it was."""
+    out = []
+    for m in convo:
+        content = m.get("content") if isinstance(m, dict) else None
+        if not (isinstance(m, dict) and m.get("role") == "user" and isinstance(content, list)):
+            out.append(m)
+            continue
+        blocks = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list):
+                inner = b["content"]
+                checked = any(isinstance(x, dict) and x.get("type") == "text"
+                              and "CHECK YOUR WORK" in (x.get("text") or "") for x in inner)
+                if checked and any(isinstance(x, dict) and x.get("type") == "image" for x in inner):
+                    b = dict(b, content=[x if not (isinstance(x, dict) and x.get("type") == "image")
+                                         else {"type": "text", "text": _FADED} for x in inner])
+            blocks.append(b)
+        out.append(dict(m, content=blocks))
+    return out
 
 
 def _grab_front():
@@ -1904,7 +1956,7 @@ def run_tool(name: str, args: dict, local: bool = True) -> tuple[str, bool]:
         if isinstance(result, list):
             return result, False
         # Something on the screen changed: hand back the picture that checks it.
-        if _needs_look(name, args):
+        if _needs_look(name, args, str(result)):
             return _look_after(name, str(result)), False
         return str(result), False
     except TypeError as e:

@@ -70,6 +70,8 @@ def _read():
     ever written over it (storefile.py)."""
     try:
         return storefile.shaped(storefile.read(RULES))
+    except storefile.Busy:
+        raise           # busy is not empty: see storefile.Busy
     except storefile.Unreadable:
         return []
 
@@ -271,7 +273,12 @@ def _evaluate_mine(now: float) -> None:
             mine = _pending.setdefault(whose.current(), [])
             mine.append(msg)
             del mine[:-MAX_PENDING]
-            _do(r, msg)
+    # Acted on OUTSIDE the lock: _do pushes to the phone, a network call with a
+    # ten-second timeout, and due() — called by the browser's poll on the event
+    # loop — waits for this same lock. Held across it, a slow ntfy froze the
+    # whole server, alarm polls included.
+    for r, msg in fired:
+        _do(r, msg)
 
 
 def due() -> list:

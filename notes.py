@@ -33,6 +33,8 @@ def _raw() -> object:
     reads strictly instead (storefile.py), so nothing is written over it."""
     try:
         return storefile.shaped(storefile.read(NOTES, dict))
+    except storefile.Busy:
+        raise           # busy is not empty: see storefile.Busy
     except storefile.Unreadable:
         return {}
 

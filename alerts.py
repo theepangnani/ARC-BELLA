@@ -64,6 +64,8 @@ def _read():
     ever written over it (storefile.py)."""
     try:
         return storefile.shaped(storefile.read(ALERTS_FILE))
+    except storefile.Busy:
+        raise           # busy is not empty: see storefile.Busy
     except storefile.Unreadable:
         return []
 

@@ -93,7 +93,19 @@ print("    " + out)
 c.truthy("  it names the window", "“Untitled - Notepad”" in out)
 c.truthy("  says Enter was NOT pressed", "Enter was NOT pressed" in out)
 c.truthy("  so nothing has been sent", "nothing has been sent yet" in out)
-c.truthy("  and that it has not checked the text arrived", "not that they appeared" in out)
+# Moved on 13 Sep 2026. With checking on, the typing result comes back WITH a
+# picture of the window (pc._look_after, test_checkwork.py), so telling the model
+# to go and take one contradicted its rules. With checking off, it still says it.
+c.truthy("  and, with checking on, the picture is what checks the text arrived",
+         pc.VERIFY and "Typed " in pc._DONE["keyboard"] and "not that they appeared" not in out)
+_verify = pc.VERIFY
+pc.VERIFY = False
+pressed.clear()
+c.truthy("  ...while with checking off it says it has not checked",
+         "not that they appeared" in pc.keyboard(text="hello"))
+pc.VERIFY = _verify
+pressed.clear()
+pc.keyboard(text="hello")
 c("  five characters, no Enter", pressed, [("ch", ch) for ch in "hello"])
 
 at("Telegram")

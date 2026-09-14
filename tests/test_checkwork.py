@@ -113,6 +113,51 @@ try:
     c("  in words", isinstance(out, str) and "Nothing was typed" in out, True)
     c("  with no picture taken", len(shots), n)
 
+    print("\nA tool that answers with a refusal instead of raising gets no picture:")
+    real_now = dict(pc._DISPATCH)
+    pc._DISPATCH.update({
+        "keyboard": lambda text="", key="": "I don't know the key 'ctrl+s'. Known: enter, tab.",
+        "open_website": lambda url="": "That doesn't look like a web address: notaurl",
+        "focus_window": lambda title="": "I don't see a window matching 'nope'.",
+        "open_app": lambda name="": "Couldn't find an app called 'nope' on this system.",
+    })
+    n = len(shots)
+    for name, args in (("keyboard", {"key": "ctrl+s"}), ("open_website", {"url": "notaurl"}),
+                       ("focus_window", {"title": "nope"}), ("open_app", {"name": "nope"})):
+        out, _ = pc.run_tool(name, args)
+        c("  %-13s plain words, no check" % name, isinstance(out, str) and "CHECK" not in out, True)
+    c("  and no photograph taken for any of them", len(shots), n)
+    pc._DISPATCH.clear()
+    pc._DISPATCH.update(real_now)
+
+    print("\nEvery success phrase is one the tool really says:")
+    src_now = io.open(ARC / "pc.py", encoding="utf-8").read()
+    for tool, phrases in pc._DONE.items():
+        body = src_now[src_now.index("def %s(" % tool):]
+        body = body[:body.index("\ndef ", 1)]
+        for ph in phrases:
+            c.truthy("  %-13s %r" % (tool, ph), ('"%s' % ph) in body or ("f\"%s" % ph) in body)
+
+    print("\nOld pictures fade, new ones stay, other images are untouched:")
+    img = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "x"}}
+    check = {"type": "tool_result", "tool_use_id": "a",
+             "content": [{"type": "text", "text": "Typed. CHECK YOUR WORK ..."}, img]}
+    asked = {"type": "tool_result", "tool_use_id": "b",
+             "content": [{"type": "text", "text": "Screenshot of monitor 1"}, img]}
+    user_photo = {"role": "user", "content": [{"type": "text", "text": "what is this"}, img]}
+    convo = [user_photo, {"role": "assistant", "content": "x"},
+             {"role": "user", "content": [check, asked]}]
+    faded = pc.fade_old_checks(convo)
+    kinds_after = [x["type"] for x in faded[2]["content"][0]["content"]]
+    c("  the check's picture became a line of text", kinds_after, ["text", "text"])
+    c("  a screenshot the model asked for keeps its image",
+      [x["type"] for x in faded[2]["content"][1]["content"]], ["text", "image"])
+    c("  a photo the user attached is untouched", faded[0], user_photo)
+    c("  and the original conversation is not modified in place",
+      [x["type"] for x in convo[2]["content"][0]["content"]], ["text", "image"])
+    c.truthy("  run.py fades them before adding each round",
+             "convo = pc.fade_old_checks(convo) + [" in io.open(ARC / "run.py", encoding="utf-8").read())
+
     print("\nIt can be switched off:")
     pc._DISPATCH["keyboard"] = lambda text="", key="": "Typed."
     pc.VERIFY = False
@@ -122,7 +167,7 @@ try:
     print("\nIt is wired where it cannot be skipped, and Bella is told:")
     src = io.open(ARC / "pc.py", encoding="utf-8").read()
     c.truthy("  in the tool runner every pc tool goes through",
-             "if _needs_look(name, args):\n            return _look_after(name, str(result)), False"
+             "if _needs_look(name, args, str(result)):\n            return _look_after(name, str(result)), False"
              in src.replace("\r\n", "\n"))
     c.truthy("  on by default", 'os.getenv("ARC_VERIFY_ACTIONS", "1")' in src)
     prompt = io.open(ARC / "prompts" / "main.md", encoding="utf-8").read()

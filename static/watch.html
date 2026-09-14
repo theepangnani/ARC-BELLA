@@ -385,7 +385,7 @@
       // A count axis topping out below ten gets a decimal: rounding labelled
       // the gridline at 0.5 alarms "1", next to the real 1.
       g.fillText(m.fmt === money ? "$" + (+v.toFixed(3)).toString()
-                 : top < 10 && v % 1 ? v.toFixed(1) : num(v), padL - 8, yy);
+                 : top < 10 && v % 1 ? (+v.toFixed(2)).toString() : num(v), padL - 8, yy);
     }
 
     const slot = pw / n;

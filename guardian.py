@@ -90,6 +90,12 @@ TIMEOUT = int(os.getenv("ARC_GUARD_TIMEOUT", "10"))      # seconds to wait for a
 # still inside this limit, and the moment it answers it is back.
 BOOT_LIMIT = int(os.getenv("ARC_GUARD_BOOT", "240"))
 BOOT_POLL = int(os.getenv("ARC_GUARD_BOOT_POLL", "5"))
+# Before anything is stopped, one last, long look. Two ten-second misses a minute
+# apart are what a BUSY server looks like as well as a dead one — a laptop just
+# woken, a long tool call holding the event loop — and ARC has recovered on its
+# own fourteen times in this log. Stopping it is only right if it still says
+# nothing after this long.
+PATIENT = int(os.getenv("ARC_GUARD_PATIENT", "45"))
 # Two misses before acting. One can be a laptop waking up, a GC pause, or the
 # moment a deploy is swapping the process — restarting on the strength of a
 # single timeout would make the guardian the thing causing the outages.
@@ -128,12 +134,12 @@ def status(**fields) -> None:
         pass
 
 
-def answering() -> bool:
+def answering(timeout=None) -> bool:
     req = urllib.request.Request(
         "http://127.0.0.1:%d/api/health" % PORT,
         headers={"User-Agent": "arc-guardian"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as r:
             return r.status in ALIVE
     except urllib.error.HTTPError as e:
         # An HTTP error IS an answer. The gate saying no is the app working.
@@ -169,61 +175,96 @@ def _stop(proc, why: str) -> None:
         note("could not stop pid %s: %s" % (getattr(proc, "pid", "?"), e))
 
 
-def _port_holder() -> int:
-    """The pid LISTENING on this port, or 0. Windows only; elsewhere 0."""
-    if os.name != "nt":
-        return 0
-    try:
-        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
-                             text=True, timeout=15).stdout
-    except Exception:
-        return 0
-    for line in out.splitlines():
+def _listener_in(netstat_output: str) -> int:
+    """The pid listening on PORT in `netstat -ano` output, or 0.
+
+    A listener is recognised by its FOREIGN address — 0.0.0.0:0 or [::]:0 — not
+    by the word LISTENING, which Windows translates (ABHÖREN, EN ESCUCHA...), so
+    on a non-English machine the old match never found anything."""
+    for line in netstat_output.splitlines():
         parts = line.split()
-        if (len(parts) >= 5 and parts[3].upper() == "LISTENING"
-                and parts[1].rsplit(":", 1)[-1] == str(PORT)):
+        if len(parts) < 5 or parts[0].upper() != "TCP":
+            continue
+        local, foreign, pid = parts[1], parts[2], parts[-1]
+        if local.rsplit(":", 1)[-1] != str(PORT):
+            continue
+        if foreign in ("0.0.0.0:0", "[::]:0", "*:*"):
             try:
-                return int(parts[4])
+                return int(pid)
             except ValueError:
                 return 0
+    return 0
+
+
+def _port_holder() -> int:
+    """The pid listening on this port, IPv4 or IPv6, or 0. Windows only."""
+    if os.name != "nt":
+        return 0
+    for proto in ("TCP", "TCPv6"):
+        try:
+            out = subprocess.run(["netstat", "-ano", "-p", proto], capture_output=True,
+                                 text=True, timeout=15).stdout
+        except Exception:
+            continue
+        pid = _listener_in(out)
+        if pid:
+            return pid
     return 0
 
 
 def _image_of(pid: int) -> str:
     try:
         out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"],
-                             capture_output=True, text=True, timeout=15).stdout
+                             capture_output=True, text=True, timeout=15).stdout.strip()
+        # A pid that has gone since netstat answers with a sentence ("INFO: No
+        # tasks are running..."), not a CSV row. That is not an image name.
+        if not out.startswith('"'):
+            return ""
         return out.split(",")[0].strip().strip('"').lower()
     except Exception:
         return ""
 
 
-def clear_the_way() -> None:
-    """Before a start: nothing left over may be competing with it.
+def clear_the_way() -> bool:
+    """Before a start: nothing left over may be competing with it. Returns
+    False when it turns out nothing needs starting.
 
-    The copy this guardian started, if it is still alive and still not
-    answering. And whatever holds the port without answering — a hung ARC, or
-    one started by hand — but ONLY if it is Python: the port belongs to ARC, and
-    something else sitting on it is for a person to look at, not for this to kill.
+    FIRST, one long look (PATIENT). If ARC answers now, it was busy rather than
+    dead, and nothing is stopped — the first version of this skipped that look
+    and would have killed a working server mid-request on two slow checks.
+
+    Then the copy this guardian started, if it is still alive. And whatever
+    holds the port — a hung ARC, or one started by hand — but ONLY if it is
+    Python: the port belongs to ARC, and something else on it is for a person to
+    look at. Only that one process: /T took its children with it, and the
+    Bella app window is a child of the run.py that opened it.
     """
     global _child
+    if answering(timeout=PATIENT):
+        note("ARC was slow to answer, not dead — left running")
+        return False
     if _alive(_child):
-        _stop(_child, "never started answering")
+        _stop(_child, "did not answer")
     _child = None
     pid = _port_holder()
     if pid and pid != os.getpid():
         image = _image_of(pid)
         if image.startswith("python"):
             try:
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                               capture_output=True, timeout=20)
-                note("stopped a %s (pid %d) holding port %d without answering"
-                     % (image, pid, PORT))
+                done = subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                                      capture_output=True, text=True, timeout=20)
+                if getattr(done, "returncode", 0) == 0:
+                    note("stopped a %s (pid %d) holding port %d without answering"
+                         % (image, pid, PORT))
+                else:
+                    note("could not stop pid %d on port %d: %s" % (
+                        pid, PORT, (getattr(done, "stderr", "") or "").strip()[:120]))
             except Exception as e:
                 note("could not stop pid %d on port %d: %s" % (pid, PORT, e))
         elif image:
             note("port %d is held by %s (pid %d), which is not ARC — leaving it "
                  "alone; ARC cannot start until it lets go" % (PORT, image, pid))
+    return True
 
 
 def wait_for_boot():
@@ -297,6 +338,7 @@ def start() -> bool:
 
 def main(cycles=None) -> None:
     """Watch for ever. `cycles` bounds the loop, for the test that drives it."""
+    global _child
     note("guardian watching port %d, checking every %ds" % (PORT, EVERY))
     misses = 0
     failed_restarts = 0
@@ -317,7 +359,10 @@ def main(cycles=None) -> None:
             continue
 
         misses += 1
-        status(state="not answering", port=PORT, misses=misses, restarts=restarts)
+        # Once it has given up, "given up / needs a person" stays on the status
+        # file; overwriting it a minute later hid the one line worth reading.
+        if not quiet:
+            status(state="not answering", port=PORT, misses=misses, restarts=restarts)
         if misses < MISSES:
             # Not an incident yet. A single miss is usually a laptop waking up.
             time.sleep(EVERY)
@@ -326,6 +371,8 @@ def main(cycles=None) -> None:
         if failed_restarts >= GIVE_UP_AFTER:
             if not quiet:
                 clear_the_way()    # a last copy still loading would sit there for ever
+                if answering():
+                    continue
                 note("ARC will not start after %d attempts — leaving it alone now. "
                      "Something needs a person: check the .env, the port, and "
                      "whether python still runs here." % failed_restarts)
@@ -337,8 +384,12 @@ def main(cycles=None) -> None:
 
         note("ARC stopped answering (%d checks) — restarting it" % misses)
         # Nothing left over competing with the new copy: not a previous start,
-        # not a hung process on the port.
-        clear_the_way()
+        # not a hung process on the port. Unless the long look finds it alive.
+        if not clear_the_way():
+            misses = 0
+            status(state="ok", port=PORT, restarts=restarts)
+            time.sleep(EVERY)
+            continue
         if not start():
             failed_restarts += 1
             time.sleep(EVERY)
@@ -351,6 +402,9 @@ def main(cycles=None) -> None:
         if up:
             note("ARC is back, %d second(s) after the restart" % detail)
             failed_restarts = 0
+            # Up means it is simply ARC now, not "the start". Keeping the handle
+            # labelled a server stopped days later as one that never answered.
+            _child = None
             status(state="ok", port=PORT, restarts=restarts)
         else:
             failed_restarts += 1

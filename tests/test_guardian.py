@@ -17,6 +17,14 @@ started, stopped or listened on:
   · a copy that crashes on the way up is noticed at once, not after four minutes
   · something holding the port is stopped only if it is Python
   · after the last attempt, nothing is left loading
+
+And from the second bug check of the same day, which found the first version
+of this fix too eager:
+
+  · a server that is BUSY, not dead, is never stopped: one long look first
+  · only the process on the port is stopped, not its children (the app window)
+  · a failed stop is not logged as a stop
+  · the port is found on a Windows that does not say LISTENING in English
 """
 import importlib
 import io
@@ -71,15 +79,20 @@ class Proc:
         return 0
 
 
-def scenario(up_after=None, dies_after=None, cycles=12, holder=(0, "")):
+def scenario(up_after=None, dies_after=None, cycles=12, holder=(0, ""), slow_but_alive=False,
+             kill_rc=0):
     """Run the guardian loop. ARC is 'down' until the first start, then answers
-    `up_after` seconds after a start (None: never). Returns what happened."""
+    `up_after` seconds after a start (None: never). `slow_but_alive`: the
+    original server misses every quick check but answers a patient one.
+    Returns what happened."""
     clock = Clock()
     events = []
     state = {"started_at": None, "procs": []}
     Proc.count = 0
 
-    def answering():
+    def answering(timeout=None):
+        if slow_but_alive and not state["procs"]:
+            return bool(timeout and timeout >= 30)
         s = state["started_at"]
         return s is not None and up_after is not None and clock.t - s >= up_after \
             and not state["procs"][-1].stopped
@@ -101,7 +114,11 @@ def scenario(up_after=None, dies_after=None, cycles=12, holder=(0, "")):
     guardian.subprocess.Popen = popen
     guardian._port_holder = lambda: holder[0]
     guardian._image_of = lambda pid: holder[1]
-    guardian.subprocess.run = lambda args, **k: killed.append(args)
+    class Done:
+        returncode = kill_rc
+        stderr = "ERROR: Access is denied."
+
+    guardian.subprocess.run = lambda args, **k: killed.append(args) or Done()
     guardian._child = None
     if guardian.LOG.exists():
         guardian.LOG.unlink()
@@ -141,6 +158,33 @@ c.truthy("  a hung pythonw on the port is stopped", any("4242" in a for a in kil
 _, _, log, killed = scenario(up_after=20, cycles=3, holder=(4343, "sqlserver.exe"))
 c("  something else is left alone", killed, [])
 c.truthy("  and the log says what is in the way", "not ARC" in log and "sqlserver.exe" in log)
+
+print("\nA server that is busy, not dead, is left alone:")
+events, procs, log, killed = scenario(slow_but_alive=True, cycles=6, holder=(4242, "pythonw.exe"))
+c("  nothing was stopped", killed, [])
+c("  and nothing was started on top of it", len(events), 0)
+c.truthy("  the log says it was slow, not dead", "slow to answer, not dead" in log)
+
+print("\nOnly the process on the port is stopped, and only a real stop is logged:")
+_, _, log, killed = scenario(up_after=20, cycles=3, holder=(4242, "pythonw.exe"))
+c("  no /T, so the app window it opened survives", any("/T" in a for a in killed), False)
+_, _, log, killed = scenario(up_after=20, cycles=3, holder=(4242, "pythonw.exe"), kill_rc=1)
+c("  a refused stop is not called a stop", "stopped a pythonw" in log, False)
+c.truthy("  it is called what it was", "could not stop pid 4242" in log)
+
+print("\nThe port is found whatever language Windows speaks:")
+guardian_port = guardian.PORT
+GERMAN = """
+  Proto  Lokale Adresse         Remoteadresse          Status           PID
+  TCP    127.0.0.1:18499        0.0.0.0:0              ABHÖREN          1111
+  TCP    127.0.0.1:8499         0.0.0.0:0              ABHÖREN          2222
+  TCP    127.0.0.1:8499         127.0.0.1:50000        HERGESTELLT      2222
+"""
+c("  German netstat, and 18499 is not 8499", guardian._listener_in(GERMAN), 2222)
+IPV6 = "  TCP    [::]:8499              [::]:0                 LISTENING       3333\n"
+c("  an IPv6 listener", guardian._listener_in(IPV6), 3333)
+c("  a connection is not a listener",
+  guardian._listener_in("  TCP  127.0.0.1:8499  127.0.0.1:1  ESTABLISHED  9\n"), 0)
 
 print("\nThe reason is on record:")
 src = io.open(ARC / "guardian.py", encoding="utf-8").read()

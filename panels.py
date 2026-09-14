@@ -58,7 +58,8 @@ MAX_VALUE = 80
 #   ticker:NVDA        the live price, from the quote proxy the panel already has
 #   countdown:2026-11-03   how long until that date (or how long since)
 #   clock              the time, ticking
-LIVE = re.compile(r"^(?:ticker:[A-Za-z0-9.\-^=]{1,12}|countdown:\d{4}-\d{2}-\d{2}|clock)$")
+# & because Yahoo's own tickers use it: M&M.NS, J&KBANK.NS. The page escapes it.
+LIVE = re.compile(r"^(?:ticker:[A-Za-z0-9.&\-^=]{1,16}|countdown:\d{4}-\d{2}-\d{2}|clock)$")
 
 
 def connected() -> bool:
@@ -80,6 +81,8 @@ def _raw() -> object:
     reads strictly instead (storefile.py), so nothing is written over it."""
     try:
         return storefile.shaped(storefile.read(PANELS, dict))
+    except storefile.Busy:
+        raise           # busy is not empty: see storefile.Busy
     except storefile.Unreadable:
         return {}
 
@@ -192,9 +195,13 @@ def panels_for_screen() -> list:
     the page can trust it: every row has a label and a value, and `live` is
     either absent or one of the allow-listed kinds."""
     out = []
+    try:
+        mine = _load()
+    except storefile.Busy:
+        return []       # a display: the next poll, twenty seconds on, will have them
     # Rows that are not objects are skipped, not crashed on: a hand-edited or
     # damaged file answered 500 to a poll that runs every twenty seconds.
-    for p in [p for p in _load() if isinstance(p, dict)][:MAX_PANELS]:
+    for p in [p for p in mine if isinstance(p, dict)][:MAX_PANELS]:
         rows = []
         items = p.get("items") if isinstance(p.get("items"), list) else []
         for r in [r for r in items if isinstance(r, dict)][:MAX_ITEMS]:

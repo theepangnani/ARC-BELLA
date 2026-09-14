@@ -2409,7 +2409,10 @@ async def chat(request: Request, _=Depends(require_auth)):
 
         # Every result goes back in one user turn â€” splitting them teaches the
         # model to stop asking for tools in parallel.
-        convo = convo + [
+        # Earlier check-your-work pictures become a line of text before this
+        # round's are added: each is re-sent on every round, and a ten-step task
+        # was carrying dozens of screenshots it had already looked at.
+        convo = pc.fade_old_checks(convo) + [
             {"role": "assistant", "content": resp.content},
             {"role": "user", "content": results},
         ]
@@ -2856,7 +2859,12 @@ async def alarms_due(request: Request, _=Depends(require_auth)):
         # somebody stops it, but "your seven o'clock didn't go off" is news, and
         # news repeated on every poll is ignored by lunchtime. One device gets
         # it, once, and it stays in that transcript.
-        gone = alarm.missed()
+        # In a try of its own: a damaged missed-alarms file used to throw here
+        # and take the ringing list down with it, so the alarm went unheard.
+        try:
+            gone = alarm.missed()
+        except Exception:
+            gone = []
         return JSONResponse({"ringing": alarm.ringing(), "next": alarm.next_up(),
                              "missed": gone,
                              "missed_said": alarm.missed_message(gone),
@@ -3067,8 +3075,11 @@ async def usage_route(request: Request, _=Depends(require_auth)):
 @app.get("/api/triggers")
 async def triggers_list(request: Request, _=Depends(require_auth)):
     apply_session_memory(request)
-    return JSONResponse({"rules": triggers._load(),
-                         "text": triggers.list_triggers()})
+    try:
+        return JSONResponse({"rules": triggers._load(),
+                             "text": triggers.list_triggers()})
+    except Exception:
+        return JSONResponse({"rules": [], "text": "The rules file could not be read just now."})
 
 
 @app.get("/api/triggers/due")

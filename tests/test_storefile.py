@@ -128,6 +128,65 @@ stop.set()
 t.join()
 c("  300 reads during 300-odd replaces all saw the data", sum(1 for r in reads if r == {OWNER: [1, 2, 3]}), 300)
 
+print("\nA file busy for longer than the retries is NOT read as empty (second check):")
+with whose.acting_as(OWNER):
+    for i in range(5):
+        extras.set_reminder("kept %d" % i, seconds=36000)
+real_read_text = type(extras.REMIND_FILE).read_text
+calls = {"n": 0}
+
+
+def locked_for_a_while(self, *a, **k):
+    # Busy through every retry of the load, then free for the save — the exact
+    # window in which the first fix still replaced the slice with one item.
+    if self.name == "reminders.json" and calls["n"] < storefile.RETRIES:
+        calls["n"] += 1
+        raise PermissionError("held by a sync client")
+    return real_read_text(self, *a, **k)
+
+
+real_wait, storefile.WAIT = storefile.WAIT, 0
+type(extras.REMIND_FILE).read_text = locked_for_a_while
+try:
+    with whose.acting_as(OWNER):
+        try:
+            extras.set_reminder("new", seconds=60)
+            refused = False
+        except storefile.Busy:
+            refused = True
+finally:
+    type(extras.REMIND_FILE).read_text = real_read_text
+    storefile.WAIT = real_wait
+c.truthy("  the save is refused rather than guessed at", refused)
+with whose.acting_as(OWNER):
+    c("  and all five reminders are still there", len(extras._load_rem()), 5)
+extras.REMIND_FILE.unlink()
+
+print("\nA file that is not valid text is damage, not a crash:")
+import plan   # noqa: E402
+io.open(plan.STORE, "wb").write(b'{"owner@example.com": [{"goal": "caf\xe9"}]}')
+try:
+    with whose.acting_as(OWNER):
+        said = plan.as_text()
+    crashed = False
+except Exception:
+    crashed = True
+c("  the plan, read every chat turn, does not crash on it", crashed, False)
+io.open(alarm.MISSED_FILE, "wb").write(b'{"owner@example.com": [{"time": "7am\xff"}]}')
+with whose.acting_as(OWNER):
+    c("  missed alarms read as none", alarm.missed(), [])
+    try:
+        alarm._save_missed([])
+        wrote = True
+    except storefile.Unreadable:
+        wrote = False
+c("  and it is not written over", wrote, False)
+plan.STORE.unlink()
+alarm.MISSED_FILE.unlink()
+run_src_now = io.open(ARC / "run.py", encoding="utf-8").read()
+c.truthy("  and the alarm poll keeps missed alarms from silencing ringing ones",
+         "gone = alarm.missed()\n        except Exception:" in run_src_now.replace("\r\n", "\n"))
+
 print("\nSomebody else's alarm does not keep a guest signed in:")
 if alarm.ALARMS_FILE.exists():
     alarm.ALARMS_FILE.unlink()
@@ -194,6 +253,27 @@ try:
     c("  and once it can save, it pushes once", len(pushed), 1)
     triggers.evaluate()
     c("  and not again inside the cooldown", len(pushed), 1)
+
+    print("\n  ...and a slow push does not hold the lock the browser's poll needs:")
+    if triggers.RULES.exists():
+        triggers.RULES.unlink()
+    with whose.acting_as(OWNER):
+        triggers.add_trigger(kind="price", symbol="TSLA", op="below", value=200, action="push")
+    waited = {}
+
+    def slow_send(*a, **k):
+        t0 = time.time()
+        got = triggers._lock.acquire(timeout=0.5)
+        waited["free"] = got
+        if got:
+            triggers._lock.release()
+        time.sleep(0.2)
+        return True
+    push.send = slow_send
+    t = threading.Thread(target=triggers.evaluate)
+    t.start()
+    t.join()
+    c("  the lock was free while the push was on its way", waited.get("free"), True)
 finally:
     push.send, push.configured, extras.yahoo_quote, triggers._save = real_send, real_conf, real_quote, real_save
     triggers._pending.clear()

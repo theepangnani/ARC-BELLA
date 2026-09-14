@@ -101,6 +101,8 @@ def _read(path):
     ever written over it (storefile.py)."""
     try:
         return storefile.shaped(storefile.read(path))
+    except storefile.Busy:
+        raise           # busy is not empty: see storefile.Busy
     except storefile.Unreadable:
         return []
 
