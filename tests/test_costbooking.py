@@ -187,6 +187,32 @@ c.truthy("  so a million cached reads on Fable 5.1 cost $0.25",
 c.truthy("  and its cache saved 0.975 of the input price on them",
          abs(run.cache_saved("claude-fable-5-1", 1_000_000, 0) - 9.75) < 1e-9)
 
+print("\nArc Watch is given the default model's real rates, not the unknown-model fallback:")
+
+
+async def usage():
+    sid = session.create(OWNER, "desk")
+    transport = httpx.ASGITransport(app=run.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as cl:
+        return (await cl.get("/api/usage?days=7", cookies={run.COOKIE: sid})).json()
+
+
+try:
+    for configured in ("claude-sonnet-5", "claude-fable-5-1"):
+        real_model = run.MODEL
+        run.MODEL = configured
+        try:
+            p = asyncio.run(usage())["prices"]
+        finally:
+            run.MODEL = real_model
+        p_in, p_out = run.prices_for(configured)
+        c("  %-17s in and out" % configured, (p["in"], p["out"]), (p_in, p_out))
+        c.truthy("  %-17s cache read at its own rate" % configured,
+                 abs(p["cache_read"] - p_in * run.cache_read_rate(configured)) < 1e-12)
+        c.truthy("  %-17s cache write at 1.25x" % configured, abs(p["cache_write"] - p_in * 1.25) < 1e-12)
+finally:
+    session.revoke_all()
+
 print("\nThe booking can only happen once:")
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "run.py"), encoding="utf-8").read()
 chat_src = src.split("async def chat(")[1].split("\n@app.")[0]

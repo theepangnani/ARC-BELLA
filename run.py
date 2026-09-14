@@ -2709,6 +2709,11 @@ async def _claude_round(claude, kwargs: dict):
             elif ev.type == "content_block_start" and getattr(ev.content_block, "type", "") in (
                     "tool_use", "server_tool_use"):
                 sink.put_nowait(("tool", {"name": getattr(ev.content_block, "name", "")}))
+        # The usage chat() prices comes from here. In anthropic==0.120.2 the
+        # stream copies input, output, cache and server_tool_use counts from
+        # each message_delta (cumulative) into the final message
+        # (lib/streaming/_messages.py), so it holds the whole call. Checked for
+        # that pin only (Claude 4's cost audit): after an SDK upgrade, look again.
         return await s.get_final_message()
 
 
@@ -4224,9 +4229,14 @@ async def usage_route(request: Request, _=Depends(require_auth)):
         # The default model's rates, kept for the readout, plus the whole
         # table — with more than one brain answering, a single pair no longer
         # explains a day's bill on its own.
-        "prices": {"in": PRICE_IN, "out": PRICE_OUT,
-                   "cache_read": PRICE_IN * CACHE_READ_RATE,
-                   "cache_write": PRICE_IN * CACHE_WRITE_RATE,
+        #
+        # The default model's ACTUAL rates, not PRICE_IN/PRICE_OUT: those are
+        # only the fallback for an id ARC doesn't know ($3/$15), and Arc Watch
+        # estimates old days' cache savings from these, which over-stated them
+        # by half on a Sonnet 5 install (Claude 4's cost audit).
+        "prices": {"in": prices_for(MODEL)[0], "out": prices_for(MODEL)[1],
+                   "cache_read": prices_for(MODEL)[0] * cache_read_rate(MODEL),
+                   "cache_write": prices_for(MODEL)[0] * CACHE_WRITE_RATE,
                    "per_model": {k: {"in": v[0], "out": v[1]}
                                  for k, v in PRICES.items()}},
         "cap": DAILY_COST_CAP,
