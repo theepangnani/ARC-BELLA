@@ -37,6 +37,7 @@ saved, so the snapshots come first and the repairs second. Without that order,
 a reassuring name on it.
 """
 
+import calendar
 import io
 import json
 import os
@@ -238,12 +239,18 @@ def _stamp() -> str:
     passed on the desktop. So a stamp is never handed out twice — if the clock
     has not moved on, the name moves on by one millisecond, which keeps the
     order and the format exactly as they were.
+
+    In UTC, not local time. Backups are ordered by NAME, and local time runs
+    backwards an hour every November: a save at 1:30 after the clocks go back
+    is named earlier than one at 1:50 before, sorts as older, and is the first
+    pruned. UTC never repeats an hour. _stamp_of turns it back into local time
+    for anything said to a person.
     """
     global _last_ms
     with _stamp_lock:
         ms = max(int(time.time() * 1000), _last_ms + 1)
         _last_ms = ms
-    return "%s-%03d" % (time.strftime("%Y%m%d-%H%M%S", time.localtime(ms / 1000)),
+    return "%s-%03d" % (time.strftime("%Y%m%d-%H%M%S", time.gmtime(ms / 1000)),
                         ms % 1000)
 
 
@@ -399,8 +406,9 @@ def _restore(name: str):
 def _stamp_of(snap) -> str:
     try:
         raw = snap.name.split(".")[-2]
-        return "%s-%s-%s at %s:%s" % (raw[0:4], raw[4:6], raw[6:8],
-                                      raw[9:11], raw[11:13])
+        # Stamps are UTC (see _stamp); the owner reads their own clock.
+        utc = calendar.timegm(time.strptime(raw[:15], "%Y%m%d-%H%M%S"))
+        return time.strftime("%Y-%m-%d at %H:%M", time.localtime(utc))
     except Exception:
         return "earlier"
 

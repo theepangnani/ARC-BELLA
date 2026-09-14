@@ -106,6 +106,62 @@ for cmd in good:
     c.truthy("  %-58s prepared" % cmd[:58], "Ready to run" in out)
 pc._pending.clear()
 
+# Each of these got PAST the first version — found by the desktop's bug check,
+# calling check_command directly, nothing run. Built from this folder's real
+# path so they mean the same thing on the laptop and the desktop.
+print("\nBypasses the second bug check found, now refused:")
+R = codeguard.ROOT
+parent = str(R.parent)
+b64 = "SQBFAFgAIAAoAE4AZQB3AA==" * 2
+PF = os.environ.get("ProgramFiles") or os.path.join(os.path.splitdrive(str(R))[0] + os.sep,
+                                                    "Program Files")
+bypasses = [
+    ("a * in the parent's name",  "powershell Set-Content %s*\\%s\\run.py x" % (parent[:-2], R.name)),
+    ("a ? in the folder's name",  "type %s\\%s?\\codeguard.py" % (parent, R.name[:-1])),
+    ("a [] in the folder's name", "del %s\\[%s]%s\\pc.py" % (parent, R.name[0], R.name[1:])),
+    ("the parent, wildcarded",    "del /s /q %s\\*" % parent),
+    ("a file name as a pattern",  "Set-Content codeguard.p? x"),
+    ("a file name in brackets",   "Remove-Item run.[p]y"),
+    ("powershell -ec",            "powershell -ec " + b64),
+    ("powershell /enc",           "powershell /enc " + b64),
+    ("powershell -encodedc",      "powershell -EncodedC " + b64),
+    ("py -c",                     'py -c "print(1)"'),
+    ("py -3 -c",                  'py -3 -c "print(1)"'),
+    ("pythonw -c",                "pythonw -c 1"),
+    ("python3.12 -X utf8 -c",     "python3.12 -X utf8 -c 1"),
+    ("a program piped to python", "type x.txt | python"),
+    ("python reading stdin",      "python - < x.txt"),
+    ("perl -e",                   "perl -e 1"),
+    # From the environment, not typed out: test_meta refuses a drive path in
+    # a suite, because one once passed only on the machine it was written on.
+    ("git by its full path",      '"%s" checkout .' % os.path.join(PF, "Git", "cmd", "git.exe")),
+    ("git by a quoted path",      "& '%s' reset --hard"
+     % os.path.join(PF, "Git", "cmd", "git.exe").replace("\\", "/")),
+    ("the folder beside a \\",    "cd ..\\%s" % R.name),
+]
+for label, cmd in bypasses:
+    c.truthy("  %-28s refused" % label, bool(codeguard.check_command(cmd)))
+
+print("\nAnd the innocent things the first version refused, now allowed:")
+real_folders = codeguard._folder_names
+# The desktop's clone is called "arc" — an ordinary word. Pretended here, so
+# the laptop (whose folder is arc-bella) tests the case that actually bit.
+codeguard._folder_names = lambda: ["arc", "arc-voice-assistant"]
+try:
+    for cmd in ["echo arc is great", "type readme.md", "Get-Content license",
+                "Get-Process | Select-Object *", "python backup.py -c config.ini",
+                "Get-ChildItem C:\\Users\\Public\\*.pdf",
+                "curl https://example.com/index.html"]:
+        c("  %-40s allowed" % cmd, codeguard.check_command(cmd), None)
+    for label, cmd in [("cd into the short name", "cd arc"),
+                       ("the short name beside a \\", "type \\dev\\arc\\x"),
+                       ("the long name on its own", "echo arc-voice-assistant"),
+                       ("a generic name beside a \\", "Set-Content static\\index.html x"),
+                       ("a short name as a pattern", "cd ar?")]:
+        c.truthy("  %-28s still refused" % label, bool(codeguard.check_command(cmd)))
+finally:
+    codeguard._folder_names = real_folders
+
 print("\nThrough the tool door the model uses, a refusal is a failure:")
 out, failed = pc.run_tool("prepare_command", {"command": "git pull"}, local=True)
 c("  failed", failed, True)
@@ -159,6 +215,44 @@ finally:
         else:
             pc.RAN_LOG.unlink()
     codeguard._tripped.clear()
+    codeguard._last["snap"] = None     # the probe's removal is not a later change
+
+print("\nA change made AFTER a command returns still locks, at the next one:")
+real_run = pc._run
+pc._run = lambda cmd, shell=False, timeout=None: subprocess.CompletedProcess(cmd, 0, "ok", "")
+pushed = []
+try:
+    import push
+    real_send = push.send
+    push.send = lambda *a, **k: pushed.append((a, k)) or True
+    cid = pc.prepare_command("ipconfig").rsplit("[command:", 1)[1].rstrip("]")
+    c.truthy("  the first command runs", pc.run_prepared(cid).startswith("Ran "))
+    # What a detached "start /b" left behind would do, seconds later.
+    victim.write_text("# written after the command returned\n", encoding="utf-8")
+    cid = pc.prepare_command("ipconfig").rsplit("[command:", 1)[1].rstrip("]")
+    said = refused(pc.run_prepared, cid)
+    c.truthy("  the next command is refused", "switched off" in said)
+    c.truthy("  naming the file", "_codelock_probe.py" in said)
+    c.truthy("  and the phone is told it was after", pushed and "after" in str(pushed[0]))
+    # Outside the window, an edit is the owner's: no lock.
+    codeguard._tripped.clear()
+    codeguard._last.update(at=codeguard._last["at"] - codeguard.DETACHED_WINDOW - 1)
+    c("  but a change long after the last command is not blamed on it",
+      codeguard.since_last(codeguard.snapshot()), [])
+finally:
+    pc._run = real_run
+    push.send = real_send
+    if victim.exists():
+        victim.unlink()
+    if pc.RAN_LOG.exists():
+        kept = [ln for ln in pc.RAN_LOG.read_text(encoding="utf-8").splitlines(True)
+                if "_codelock_probe.py" not in ln and "\tipconfig" not in ln]
+        if kept:
+            pc.RAN_LOG.write_text("".join(kept), encoding="utf-8")
+        else:
+            pc.RAN_LOG.unlink()
+    codeguard._tripped.clear()
+    codeguard._last["snap"] = None
 
 print("\nTyping is refused into terminals and editors showing the code:")
 focus = {"hwnd": 7, "title": "", "exe": ""}
@@ -190,8 +284,62 @@ said = refused(pc.keyboard, text="x")
 c.truthy("  Bella's own page is still refused as her page, not as code",
          "ARC's own page" in said and codeguard.LAW not in said)
 
+print("\nWindows the second bug check found, now refused:")
+for label, title, exe in [
+    ("VS Code, terminal or not",  "Welcome - Visual Studio Code", "Code.exe"),
+    ("Cursor",                    "notes.txt - Cursor", "cursor.exe"),
+    ("PowerShell ISE",            "Windows PowerShell ISE", "powershell_ise.exe"),
+    ("the py launcher",           "py", "py.exe"),
+    ("pyw",                       "", "pyw.exe"),
+    ("node",                      "Node.js", "node.exe"),
+    ("git-bash",                  "MINGW64:/c/Users", "git-bash.exe"),
+    ("Explorer (its address bar runs commands)", "Downloads", "explorer.exe"),
+]:
+    at(title, exe)
+    said = refused(pc.keyboard, text="x")
+    c.truthy("  %-26s refused" % label, codeguard.LAW in said)
+    c("  %-26s nothing pressed" % "", pressed, [])
+
+print("\nAnd innocent titles are not:")
+for title, exe in [("README.md - Notepad", "notepad.exe"),
+                   ("LICENSE - Notepad", "notepad.exe"),
+                   ("C:\\site\\index.html - Notepad++", "notepad++.exe")]:
+    c("  %-34s allowed" % title, codeguard.check_window(title, exe), None)
+c.truthy("  but index.html in Notepad, which cannot say whose, is refused",
+         bool(codeguard.check_window("index.html - Notepad", "notepad.exe")))
+
+print("\nTyped text with a line break is read as a command:")
+at("Untitled - Notepad")
+said = refused(pc.keyboard, text="git checkout .\n")
+c.truthy("  'git checkout .⏎' refused", codeguard.LAW in said)
+c("  nothing pressed", pressed, [])
+
+print("\nEnter that moves focus stops the typing:")
+real_focused = pc._focused
+at("Search", "searchhost.exe")
+
+
+def moved_after_enter():
+    # Until Enter is pressed, the Start search; after it, the terminal it opened.
+    if any(p == ("vk", 0x0D) for p in pressed):
+        return 8, "Windows PowerShell"
+    return 7, "Search"
+
+
+pc._focused = moved_after_enter
+pc._exe_of = lambda h: "powershell.exe" if h == 8 else "searchhost.exe"
+try:
+    said = refused(pc.keyboard, text="powershell\nRemove-Item x\n")
+    c.truthy("  stopped, and says why", "Enter moved focus" in said and codeguard.LAW in said)
+    c.truthy("  nothing after the Enter was typed",
+             ("ch", "R") not in pressed and pressed[-1] == ("vk", 0x0D))
+finally:
+    pc._focused = lambda: (focus["hwnd"], focus["title"])
+    pc._exe_of = lambda h: focus["exe"]
+
 at("Untitled - Notepad")
 c.truthy("  an ordinary window still types", pc.keyboard(text="hi").startswith("Typed 2"))
+c.truthy("  including lines", pc.keyboard(text="dear bob\nhello\n").startswith("Typed 15"))
 at("Telegram", "telegram.exe")
 c.truthy("  and so does a chat app", pc.keyboard(key="enter").startswith("Pressed enter"))
 
@@ -219,8 +367,8 @@ pc._open_default = lambda target: opened.append(target)   # never the real handl
 try:
     # Two refusals can answer here, and which one does depends on where the
     # repo lives, not on the lock. On the laptop the clone is under $HOME, so
-    # the .py rule is what refuses; on the desktop it is C:\dev\..., outside
-    # FILE_ROOTS, so the folder rule refuses first. Asserting the .py message
+    # the .py rule is what refuses; on the desktop it is outside $HOME, and so
+    # outside FILE_ROOTS, and the folder rule refuses first. Asserting the .py message
     # made the suite fail on the machine that runs Bella while the file was
     # still refused. So: refused by either, and nothing reached Windows —
     # which is the thing that matters.
@@ -240,6 +388,18 @@ try:
             c.truthy("  %-14s refused for being Python, not for where it is" % name,
                      "won't 'open'" in out)
         c("  still nothing handed to Windows", opened, [])
+        # The rest of the family the second bug check found: they run too.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for ext in (".pyc", ".pyo", ".url", ".appref-ms"):
+                f = os.path.join(d, "thing" + ext)
+                open(f, "w").close()
+                c.truthy("  %-14s refused" % ext, "won't 'open'" in pc.open_file(f))
+            f = os.path.join(d, "letter.pdf")
+            open(f, "w").close()
+            c.truthy("  but a pdf still opens", pc.open_file(f).startswith("Opened"))
+        c("  and only the pdf was handed to Windows", [os.path.basename(x) for x in opened],
+          ["letter.pdf"])
     finally:
         pc._within_roots = real_roots
 finally:

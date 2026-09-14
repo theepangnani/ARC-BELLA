@@ -104,6 +104,22 @@ c("  six saves leave six copies", len(list(BACKUPS.glob("notes.json.*.bak"))),
 c.truthy("  and they still sort oldest-last",
          selfheal._restore("notes.json")[1] == [{"text": "note 5"}])
 
+# Named in UTC, so the hour the clocks go back cannot name a newer copy older.
+# And shown to a person in their own time, not UTC's.
+_real_time, _real_last = selfheal.time.time, selfheal._last_ms
+selfheal.time.time = lambda: 1793512800.5          # 2026-11-01 06:00:00.500 UTC
+try:
+    selfheal._last_ms = 0
+    stamp = selfheal._stamp()
+finally:
+    selfheal.time.time = _real_time
+    selfheal._last_ms = _real_last     # or every later stamp is named in November
+c("  a backup is named in UTC", stamp, "20261101-060000-500")
+from pathlib import Path as _P                     # noqa: E402
+c("  and read back in local time",
+  selfheal._stamp_of(_P("notes.json.%s.bak" % stamp)),
+  time.strftime("%Y-%m-%d at %H:%M", time.localtime(1793512800)))
+
 print("\nThe do-not-touch list is a guard, not a comment:")
 selfheal.DATA_FILES["sessions.json"] = ([], "sign-ins")     # the mistake, made deliberately
 (DATA / "sessions.json").write_text("{}", encoding="utf-8")

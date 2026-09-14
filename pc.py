@@ -617,6 +617,13 @@ _EXEC_EXT = {
     # the launcher, so "open that .py file" RAN it: the exact thing this set
     # exists to stop, through the one door that was left open.
     ".py", ".pyw", ".pyz", ".pyzw",
+    # And the rest of the family the desktop's bug check found: compiled Python
+    # runs through the same launcher; .url and .website open whatever they
+    # point at, file:// included; .appref-ms and .application install and run
+    # a ClickOnce app. The others are installers or run script on open.
+    ".pyc", ".pyo", ".url", ".website", ".appref-ms", ".application",
+    ".appx", ".msix", ".appinstaller", ".msp", ".mst", ".chm", ".scf", ".inf",
+    ".wsh", ".psc1", ".settingcontent-ms",
 }
 
 
@@ -1472,6 +1479,12 @@ def keyboard(text: str = "", key: str = "") -> str:
         # named "arc", and Bella's own title "ARC — Ambient Response Core"
         # would otherwise be refused as ARC's code instead of as ARC's page.
         refusal = codeguard.check_window(title, _exe_of(hwnd))
+        # Text with a line break in it is a command line whenever it lands in
+        # something that runs lines — a box the window check did not know
+        # about, or Win+R / the Start search opened by a keystroke a moment
+        # ago. So it is read the way a shell command is.
+        if not refusal and "\n" in t:
+            refusal = codeguard.check_command(t)
         if refusal:
             raise RuntimeError("Nothing was typed. " + refusal)
     where = ("the window “%s”" % title[:80]) if title else "the focused window"
@@ -1480,9 +1493,21 @@ def keyboard(text: str = "", key: str = "") -> str:
         _tap_vk(_VK[k])
         return f"Pressed {k} in {where}."
 
-    for ch in t:
+    for i, ch in enumerate(t):
         if ch == "\n":
             _tap_vk(0x0D)
+            # Enter can move focus: "powershell⏎" typed into the Start search
+            # opens a terminal, and the next line would be typed into it. So
+            # the window is asked again after every Enter, before another key.
+            if i + 1 < len(t):
+                h2, t2 = _focused()
+                again = ("the window in front is now ARC's own page"
+                         if h2 and ARC_WINDOW.lower() in t2.lower()
+                         else codeguard.check_window(t2, _exe_of(h2)) if h2 else None)
+                if again:
+                    raise RuntimeError(
+                        f"Stopped after {i + 1} of {len(t)} character(s): Enter "
+                        f"moved focus. {again}")
         else:
             _tap_unicode(ch)
     if t.endswith("\n"):
@@ -1600,9 +1625,15 @@ def _check_code_after(stamp: str, cmd: str, before: dict) -> None:
     the owner's own, made in an editor while the command ran, and a revert
     would destroy it."""
     try:
-        files = codeguard.changed(before, codeguard.snapshot())
+        after = codeguard.snapshot()
+        files = codeguard.changed(before, after)
+        codeguard.settle(after)
     except Exception:
         return
+    _code_changed(stamp, cmd, files, "A command ARC ran changed her code")
+
+
+def _code_changed(stamp: str, cmd: str, files: list, what: str) -> None:
     if not files:
         return
     codeguard.trip(files)
@@ -1613,7 +1644,7 @@ def _check_code_after(stamp: str, cmd: str, before: dict) -> None:
         pass
     try:
         import push   # lazily: pc is imported by tests that never load push
-        push.send(f"A command ARC ran changed her code: {', '.join(files[:5])}. "
+        push.send(f"{what}: {', '.join(files[:5])}. "
                   f"Commands are switched off until you restart her.",
                   title="ARC code lock", tags="warning", priority=5)
     except Exception:
@@ -1632,6 +1663,15 @@ def run_prepared(command_id: str) -> str:
         raise RuntimeError(refusal)
     stamp = dt.datetime.now().isoformat(timespec="seconds")
     before = codeguard.snapshot()
+    # Something the LAST command started may have written after it returned.
+    # Caught here, before this one runs, and it locks like any other change —
+    # the message says "after", because if it was the owner editing in the
+    # meantime, that is what they need to know to judge it.
+    drift = codeguard.since_last(before)
+    if drift:
+        _code_changed(stamp, "(between commands, after an earlier one)", drift,
+                      "ARC's code changed after a command she ran had finished")
+        raise RuntimeError(_shell_locked())
     try:
         try:
             r = _run(cmd, shell=True)
