@@ -169,6 +169,39 @@ CASES = [
     (("plan my week around my three deadlines", "move the gym to thursday"), SMART,
      "reworking a plan, in the person's own words"),
 
+    # ------------------------------------------ edits in the person's own words
+    # EDIT (router.py): a short "make/change/add/use ..." inherits the brain of
+    # the request before it. Probed 14 Sep 2026, the day it landed.
+    (("write me a python script that renames files", "add logging"), SMART,
+     "adding to the code it just wrote"),
+    (("explain how caching works", "make it shorter"), SMART, "rewriting a hard answer"),
+    (("draft an email to my landlord", "make it more polite"), SMART, "rewriting a draft"),
+    (("compare the iPhone and the Pixel", "add the Galaxy too"), SMART, "widening a comparison"),
+    (("compare tesla and apple", "but what about ford"), SMART, "the same comparison, one more"),
+    (("click the blue button", "use the other one"), SMART, "still at the screen"),
+    (("write me a python script that renames files", "make it recursive", "add logging"), SMART,
+     "an edit of an edit walks back to the script"),
+    (("play something", "switch to jazz"), FAST, "an edit of an easy turn stays easy"),
+    (("what's the weather", "actually, make that Paris"), FAST, "the same lookup, another city"),
+    ("make a note to buy milk", FAST, "an edit word with nothing before it is judged as itself"),
+    ("change the voice to the butler", FAST, "one setting"),
+    (("explain how caching works", "add milk to my shopping list"), FAST,
+     "a new, easy request that happens to start with 'add'; EDIT cannot tell it from"
+     " an edit, and inherits the hard turn", MISS),
+    (("plan my week around my three deadlines", "put on some music"), FAST,
+     "'put on' is play, not 'put the gym on thursday'", MISS),
+    (("write me a python script that renames files", "make it recursive", "and add logging"), SMART,
+     "an edit that starts with 'and'; EDIT is anchored to the first word", MISS),
+
+    # ------------------------------------------- the words added on 14 Sep 2026
+    ("zip code for Toronto", FAST, "a postcode is not programming"),
+    ("what's the dress code", FAST, "a lookup; only area/zip/postal/post are excused from 'code'", MISS),
+    ("find the nearest gas station", FAST, "a maps lookup; 'find the' was added to HANDS", MISS),
+    ("what's the time? and why is it dark?", SMART, "one of the two questions is hard"),
+    ("is it raining? is it cold?", FAST,
+     "two easy questions; the fix only excuses questions EASY knows, and it knows"
+     " 'what's the weather', not 'is it raining'", MISS),
+
     # ----------------------------------------------------------------- traps
     # The same words as the hard lists, meaning something easy.
     ("what type of tree is this", FAST, "'type of' is a noun phrase"),
