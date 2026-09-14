@@ -228,13 +228,20 @@ with TestClient(run.app) as client:
              run_src.count("is_local_request(request) and not guest") >= 2)
     c.truthy("  the screen is only attached when local",
              "if see_screen and local and pc.connected():" in run_src)
-    # And over HTTP: the HUD greys both buttons out when this is false, so a
-    # guest is not offered them in the first place.
+    # And over HTTP: the HUD stops offering the desktop's screen when this is
+    # false, so a guest is never shown the owner's.
     c("  a guest is told there is no computer",
       client.get("/api/health", cookies=GUEST).json().get("computer"), False)
-    c.truthy("  ...and the page disables the buttons on exactly that",
-             "liveScreenBtn.disabled = !canSeeScreen;" in body
-             and "canSeeScreen = !!h.computer;" in body)
+    # Moved on 14 Sep 2026, deliberately. The owner asked for Live screen for
+    # everybody, so off the desktop the button now shares the person's OWN
+    # device screen through the browser (test_screenshare.py) instead of being
+    # greyed out. What this guards is unchanged: canSeeScreen, the desktop's
+    # screen, still follows h.computer and nothing else, and see_screen is still
+    # sent only when it is true.
+    c.truthy("  ...and the page offers the desktop's screen on exactly that",
+             "canSeeScreen = !!h.computer;" in body
+             and "liveScreenBtn.disabled = !canSeeScreen && !canShareScreen;" in body
+             and "see_screen: (liveScreen && canSeeScreen) ? liveScreenMode : false," in body)
 
     print("\nNeither poll holds a session open by itself:")
     # Arc Watch left on a second screen refreshes every minute for ever. If

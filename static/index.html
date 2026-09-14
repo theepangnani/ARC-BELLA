@@ -3063,6 +3063,16 @@ You are an upbeat, motivating coach in the user's corner.
   // When Live screen is on, the server attaches a screenshot to every message.
   // Tell ARC plainly so it uses it and never claims it can't see the screen.
   function screenBlock() {
+    if (!canSeeScreen && screenShared()) {
+      // A shared screen is somewhere else entirely. Without this the model
+      // treats the picture as the desktop's and reaches for the mouse tools, or
+      // reads it as a camera photo of "what I'm pointing at".
+      return "\n\nSCREEN SHARED FROM THEIR DEVICE: the image attached to their message is a live capture of the " +
+        "screen (or window) they chose to share from the device they are using right now, not a camera photo and " +
+        "NOT the home computer. You CAN see it: read it, spot errors, explain what's there. You CANNOT click, type " +
+        "or scroll on that device, and your computer tools act on a different machine, so never use them for this " +
+        "screen; guide them in words (\"click the blue Save button, top right\") instead.";
+    }
     if (!(liveScreen && canSeeScreen)) return "";
     const many = monitorCount > 1 && liveScreenMode !== "primary";
     let s = "\n\nLIVE SCREEN IS ON: a current screenshot of the user's screen is attached to their message. " +
@@ -6719,7 +6729,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           see_screen: (liveScreen && canSeeScreen) ? liveScreenMode : false,
           // A camera frame captured on THIS device (phone/webcam), attached to
           // this one message so ARC can see the real world. Cleared right after.
-          image: pendingCameraImage
+          // Or, with no camera frame, the screen this device is sharing (Live
+          // screen off the desktop). Null when nothing is shared.
+          image: pendingCameraImage || sharedScreenFrame()
         });
       const init = { method: "POST", headers: { "Content-Type": "application/json" },
                      body: reqBody, signal: ctrl.signal };
@@ -8049,8 +8061,87 @@ Answer questions about the date, day, or time directly from the above. Do not sa
              + "message. Click the button to turn it off.");
   }
 
+  /* Live screen for everybody. The desktop's own Live screen is the server
+     taking a screenshot of THIS machine, which is exactly why it is local-only:
+     over the funnel it would show a guest the owner's home PC. So anywhere else
+     the same button shares the screen of the device the person is actually on,
+     through the browser's own picker (getDisplayMedia). It is their screen,
+     their choice of window, and the browser shows its own "sharing" bar.
+
+     One frame goes with each message, through the same `image` field as the
+     camera, so it works for guests and the server needed no new route. ARC can
+     SEE it and nothing more: nothing on that device can be clicked or typed on,
+     and screenBlock() tells the model so, or it would reach for the desktop's
+     mouse tools and act on a screen nobody is looking at.
+
+     Not stopped when this tab is hidden, which was the obvious rule and the
+     wrong one: sharing means switching to the window being shown, and that
+     hides this tab every single time. It stops on a click here, on the
+     browser's "Stop sharing" (the track ends), and when the page goes away.
+     Watch mode never uses it — that stays desktop-only and never goes through
+     askClaude. Nothing is saved anywhere. */
+  const canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  let sharedStream = null;
+  let sharedVideo = null;
+
+  function screenShared() {
+    return !!(sharedStream && sharedVideo &&
+              sharedStream.getVideoTracks().some(t => t.readyState === "live"));
+  }
+
+  async function startScreenShare() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    await video.play();
+    sharedStream = stream;
+    sharedVideo = video;
+    stream.getVideoTracks().forEach(t => t.addEventListener("ended", () => {
+      // The browser's own "Stop sharing" button, or the shared window closed.
+      if (sharedStream !== stream) return;
+      stopScreenShare();
+      paintLiveScreen();
+      addEntry("sys", "SYSTEM", "Screen sharing stopped. I can't see your screen now.");
+    }));
+  }
+
+  function stopScreenShare() {
+    const stream = sharedStream;
+    sharedStream = null;
+    sharedVideo = null;
+    if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+  }
+  window.addEventListener("pagehide", stopScreenShare);
+
+  // The current frame, as the camera sends one: a JPEG no wider than 1280px.
+  // Synchronous on purpose — the video is already playing, so askClaude can
+  // take a frame at the instant the message goes without waiting on anything.
+  // Null when nothing is shared, or the frame is not ready, so a turn never
+  // fails for want of a picture.
+  function sharedScreenFrame() {
+    if (!screenShared()) return null;
+    try {
+      // HAVE_CURRENT_DATA: before it there is no frame to draw, and a blank
+      // picture sent as "their screen" would be worse than none.
+      if (sharedVideo.readyState < 2) return null;
+      const w = sharedVideo.videoWidth, h = sharedVideo.videoHeight;
+      if (!w || !h) return null;
+      const scale = Math.min(1, 1280 / w);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      canvas.getContext("2d").drawImage(sharedVideo, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", 0.7);
+    } catch (_) { return null; }
+  }
+
   function liveScreenLabel() {
-    if (!canSeeScreen) return "Live screen: n/a";
+    if (!canSeeScreen) {
+      if (!canShareScreen) return "Live screen: n/a";
+      return screenShared() ? "Live screen: sharing" : "Live screen: off";
+    }
     if (!liveScreen) return "Live screen: off";
     if (monitorCount > 1) return "Live screen: " + (liveScreenMode === "primary" ? "primary" : "all screens");
     return "Live screen: on";
@@ -8058,13 +8149,38 @@ Answer questions about the date, day, or time directly from the above. Do not sa
 
   function paintLiveScreen() {
     if (!liveScreenBtn) return;
-    liveScreenBtn.classList.toggle("on", liveScreen && canSeeScreen);
+    liveScreenBtn.classList.toggle("on", (liveScreen && canSeeScreen) || (!canSeeScreen && screenShared()));
     liveScreenBtn.textContent = liveScreenLabel();
   }
 
-  if (liveScreenBtn) liveScreenBtn.addEventListener("click", () => {
+  if (liveScreenBtn) liveScreenBtn.addEventListener("click", async () => {
     if (!canSeeScreen) {
-      addEntry("sys", "SYSTEM", "Live screen only works on the desktop app, not over the phone.");
+      if (!canShareScreen) {
+        addEntry("sys", "SYSTEM", "This browser can't share its screen. Phones mostly can't; "
+          + "try from a computer, or use the camera button to show me something.");
+        return;
+      }
+      if (screenShared()) {
+        stopScreenShare();
+        paintLiveScreen();
+        addEntry("sys", "SYSTEM", "Screen sharing off.");
+        return;
+      }
+      try {
+        await startScreenShare();
+      } catch (e) {
+        stopScreenShare();
+        paintLiveScreen();
+        // Cancelling the picker is a choice, not a fault; only a real refusal
+        // needs explaining.
+        if (!(e && e.name === "NotAllowedError" && /cancel|dismiss/i.test(e.message || ""))) {
+          addEntry("sys", "SYSTEM", "Screen sharing didn't start. Allow screen sharing for this site if it asked, then try again.");
+        }
+        return;
+      }
+      paintLiveScreen();
+      addEntry("sys", "SYSTEM", "Sharing your screen: I'll see it with every message. I can look, "
+        + "not click. Stop it here or with your browser's Stop sharing button. Nothing is saved.");
       return;
     }
     // off → primary → all screens → off, cheapest first, collapsing to a plain
@@ -10762,8 +10878,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       canSeeScreen = !!h.computer;
       monitorCount = Math.max(1, parseInt(h.monitors, 10) || 1);
       if (liveScreenBtn) {
-        liveScreenBtn.disabled = !canSeeScreen;
+        // Off the desktop the button shares this device's own screen instead,
+        // so it is only unusable where the browser cannot share at all.
+        liveScreenBtn.disabled = !canSeeScreen && !canShareScreen;
         if (!canSeeScreen) liveScreen = false;
+        else if (screenShared()) stopScreenShare();   // the desktop sees its own screen
         else restoreLiveScreen();
         paintLiveScreen();
       }
