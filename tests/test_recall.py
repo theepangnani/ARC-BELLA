@@ -14,6 +14,7 @@ people saving at once both keep everything.
 """
 import json
 import os
+import re
 import sys
 import threading
 
@@ -175,5 +176,113 @@ kept = json.loads(memory.STORE.read_text(encoding="utf-8"))
 c("  nothing refused or raised", errors, [])
 c("  the owner kept all 60", len(kept.get(OWNER, [])), 60)
 c("  the guest kept all 60", len(kept.get(GUEST, [])), 60)
+
+
+# --------------------------------------------------------------------------
+# Kept, and not deleted by mistake. The checks above are about the FILE; these
+# are about the facts in it. Each one was a real way to lose something true,
+# found on 14 Sep 2026 — a wrong delete is unrecoverable, where a duplicate is
+# only untidy, so every doubt here resolves to keeping both.
+
+def texts():
+    return [m["text"] for m in memory.facts()]
+
+
+print("\nForget takes what was named, not everything containing its letters:")
+fresh()
+memory.use(OWNER)
+memory.remember("The owner has a sister called Maya and a team at work")
+memory.remember("The owner drinks green tea")
+# Substring matching made this "Forgotten 2." — "tea" is inside "team".
+c("  'tea' does not reach 'team'", memory.forget("tea"), "Forgotten 1.")
+c("  and the other fact is still there", texts(),
+  ["The owner has a sister called Maya and a team at work"])
+fresh()
+memory.remember("The owner likes cats")
+memory.remember("The owner studied communication at university")
+c("  'cat' does not reach 'communication'", memory.forget("cat"), "Forgotten 1.")
+c.truthy("  ...which is kept", any("communication" in t for t in texts()))
+fresh()
+memory.remember("The owner likes green tea, no sugar")
+c("  'the tea thing' still finds the tea fact", memory.forget("the tea thing"), "Forgotten 1.")
+
+print("\nWhen a subject matches several facts, none go until somebody says which:")
+fresh()
+memory.remember("The owner's sister Maya lives in Leeds")
+memory.remember("The owner's sister has two children")
+said = memory.forget("sister")
+c.truthy("  it asks rather than deleting", said.startswith("That matches 2 things"))
+c.truthy("  and names each, with an id to pick by",
+         all(m["text"] in said and m["id"] in said for m in memory.facts()))
+c("  nothing was forgotten", memory.count(), 2)
+pick = memory.facts()[1]
+c("  the id then takes exactly that one", memory.forget(pick["id"]), "Forgotten 1.")
+c("  leaving the other", texts(), ["The owner's sister Maya lives in Leeds"])
+fresh()
+memory.remember("The owner likes jazz")
+# Kept apart on purpose: remembered normally, the richer fact would replace
+# the one it covers, and there would be nothing to choose between.
+memory.remember("The owner likes jazz festivals", supersede=False)
+c("  a phrase that IS one fact takes that fact alone",
+  memory.forget("the owner likes jazz"), "Forgotten 1.")
+c("  ...not its longer neighbour", texts(), ["The owner likes jazz festivals"])
+c("  'all' still means all", memory.forget("all"), "Forgotten all 1.")
+
+print("\nTwo facts saved in the same millisecond are still two ids:")
+fresh()
+_real_time = memory.time.time
+memory.time.time = lambda: 1700000000.0
+try:
+    memory.remember("The owner lives in Markham")
+    memory.remember("The owner plays the piano")
+finally:
+    memory.time.time = _real_time
+ids = [m["id"] for m in memory.facts()]
+# They were both m1700000000000, so forgetting "one" of them took both.
+c("  different ids", len(set(ids)), 2)
+c("  forgetting one id forgets one fact", memory.forget(ids[0]), "Forgotten 1.")
+c("  and the other is kept", texts(), ["The owner plays the piano"])
+c.truthy("  ids keep their old shape, which stored files already use",
+         all(re.match(r"^m\d+$", i) for i in ids))
+
+print("\nA shorter restatement never eats the detail of a richer fact:")
+fresh()
+memory.remember("Her sister Maya lives in Leeds")
+memory.remember("Her sister is Maya")
+# The old rule divided by the SMALLER set of words, so anything wholly inside
+# an older fact counted as a restatement of it — and Leeds was gone.
+c.truthy("  Leeds survives", any("Leeds" in t for t in texts()))
+fresh()
+memory.remember("The owner is allergic to peanuts and shellfish")
+memory.remember("The owner is allergic to peanuts")
+c.truthy("  so does the shellfish allergy", any("shellfish" in t for t in texts()))
+c("  the reverse is fine: a richer fact may replace the thing it covers",
+  memory._supersedes("Her sister Maya lives in Leeds", "Her sister is Maya"), True)
+c("  a real rewording still replaces",
+  memory._supersedes("His sister is Maya", "His sister is called Maya"), True)
+c("  ...and so does its mirror",
+  memory._supersedes("His sister is called Maya", "His sister is Maya"), True)
+c("  a one-word fact is never folded into a longer one",
+  memory._supersedes("The owner's daughter is vegetarian", "Vegetarian"), False)
+for new, old in (("Theepan works in Toronto", "Theepan lives in Toronto"),
+                 ("Theepan finished the Python course", "Theepan is learning Python"),
+                 ("The owner has a cat", "The owner has a dog"),
+                 ("His brother lives in Leeds", "His sister lives in Leeds"),
+                 ("The owner dislikes coffee", "The owner likes coffee")):
+    c("  still two facts: %r / %r" % (new, old), memory._supersedes(new, old), False)
+
+print("\nThe cap (pinned, not settled):")
+# KNOWN, and waiting on the owner. At MAX_FACTS the oldest fact is dropped with
+# nothing said — usually the oldest is their name. Whether to warn or to refuse
+# the new one is the owner's call (put to them via Claude 1, 14 Sep 2026). This
+# pins today's behaviour so that the change, when it comes, is deliberate: when
+# it lands, this check is expected to fail — replace it with the chosen rule.
+fresh()
+memory.remember("The owner's name is Sam")
+for i in range(memory.MAX_FACTS):
+    memory.remember("Filler %d" % i, supersede=False)
+c("  the cap is still %d" % 200, memory.MAX_FACTS, 200)
+c("  KNOWN: the oldest is dropped silently at the cap",
+  any("Sam" in t for t in texts()), False)
 
 c.done()

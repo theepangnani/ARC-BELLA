@@ -160,8 +160,8 @@ def _keys(text: str) -> set:
     return {w for w in words if len(w) > 2 and w not in _STOP}
 
 
-# Deliberately high, and it only catches a RESTATEMENT — "his sister is called
-# Maya" replacing "his sister is Maya". Not an update.
+# It only catches a RESTATEMENT — "his sister is called Maya" replacing "his
+# sister is Maya". Not an update.
 #
 # The tempting threshold is about two thirds, which would also fold "finished
 # the Python course" onto "is learning Python". It would equally fold "works in
@@ -169,17 +169,48 @@ def _keys(text: str) -> set:
 # of them is unrecoverable. A duplicate is untidy; a wrongly-replaced fact is
 # simply gone.
 #
+# It was an 80% overlap measured against the SMALLER of the two facts, and that
+# was the hole: anything wholly inside an older fact counted as restating it.
+# "Her sister is Maya" deleted "Her sister Maya lives in Leeds", and "allergic
+# to peanuts" deleted "allergic to peanuts and shellfish" — the short one was
+# kept and the detail was gone. So the new fact must now carry EVERY word that
+# carried the old one's meaning: a richer fact may replace what it covers, a
+# poorer one never replaces anything. And an old fact of a single word
+# ("Vegetarian") is folded only into the same word, since one word inside a
+# longer fact is too thin to say the longer fact is about the same thing.
+#
 # So staleness is not handled here at all. Every fact carries its date into the
 # prompt, and the model weighs "5 months ago" against "today" itself — which is
 # a judgement it can actually make and a word-overlap ratio cannot.
-SUPERSEDE_AT = 0.8
+
+# Words that change how a fact is phrased but not what it says, ignored only
+# when deciding whether one fact restates another — "his sister is called
+# Maya" and "his sister is Maya" are the same fact.
+_PHRASING = {"called", "named", "known"}
 
 
 def _supersedes(new: str, old: str) -> bool:
-    a, b = _keys(new), _keys(old)
+    a, b = _keys(new) - _PHRASING, _keys(old) - _PHRASING
     if not a or not b:
         return False
-    return len(a & b) / min(len(a), len(b)) >= SUPERSEDE_AT
+    if len(b) < 2:
+        return a == b
+    return b <= a
+
+
+def _new_id(mine: list) -> str:
+    """Unique within this account's facts.
+
+    It was "m" + the millisecond, so two facts saved in the same millisecond —
+    an import, or a fast disk — shared an id, and forget(id) took both. Same
+    shape as ever, since stored facts and anything holding an id already use it;
+    it just steps past one that is taken.
+    """
+    taken = {m.get("id") for m in mine}
+    n = int(time.time() * 1000)
+    while "m%d" % n in taken:
+        n += 1
+    return "m%d" % n
 
 
 def remember(fact: str = "", supersede: bool = True) -> str:
@@ -210,8 +241,7 @@ def remember(fact: str = "", supersede: bool = True) -> str:
                     replaced = m.get("text") or ""
                     mine.remove(m)
                     break
-        mine.append({"id": "m%d" % int(time.time() * 1000),
-                     "text": f, "at": time.time()})
+        mine.append({"id": _new_id(mine), "text": f, "at": time.time()})
         del mine[:-MAX_FACTS]
         all_of_it[current()] = mine
         try:
@@ -221,6 +251,44 @@ def remember(fact: str = "", supersede: bool = True) -> str:
     if replaced:
         return "Noted, and I've dropped the older version (%s)." % replaced[:60]
     return "Noted."
+
+
+# Said about a subject rather than being part of it: "forget the tea thing".
+_VAGUE = {"thing", "things", "stuff", "fact", "facts", "about", "bit", "one",
+          "part", "remember", "forget", "please", "what", "said"}
+
+
+def _flat(text: str) -> str:
+    """Lower case, words only — for "is this phrase that whole fact?"."""
+    return " ".join(re.findall(r"[^\W_]+", (text or "").lower(), re.UNICODE))
+
+
+def _names(text: str, words) -> bool:
+    """Every word appears in text as a WHOLE word (a plural allowed).
+
+    Not a substring. forget("tea") used to take "a team at work" with it, and
+    forget("cat") took "studied communication": whatever held the letters went.
+    """
+    low = (text or "").lower()
+    return all(re.search(r"(?<![^\W_])%s(?:s|es)?(?![^\W_])" % re.escape(w), low, re.UNICODE)
+               for w in words)
+
+
+def _matching(mine: list, w: str) -> list:
+    """The facts a forget(w) is about: an id, the whole fact, or its words."""
+    by_id = [m for m in mine if m.get("id") == w]
+    if by_id:
+        return by_id
+    exact = [m for m in mine if _flat(m.get("text")) == _flat(w)]
+    if exact:
+        return exact
+    phrase = _flat(w)
+    if phrase:
+        hits = [m for m in mine if _names(m.get("text"), [phrase])]
+        if hits:
+            return hits
+    words = _keys(w) - _VAGUE
+    return [m for m in mine if _names(m.get("text"), words)] if words else []
 
 
 def forget(which: str = "") -> str:
@@ -240,10 +308,22 @@ def forget(which: str = "") -> str:
             all_of_it[current()] = []
             said = "Forgotten all %d." % n
         else:
-            keep = [m for m in mine
-                    if m.get("id") != w and w not in (m.get("text") or "").lower()]
-            if len(keep) == len(mine):
+            gone = _matching(mine, w)
+            if not gone:
                 return "Nothing I know matches '%s'." % which
+            # Several DIFFERENT facts share the subject: delete none, and ask.
+            # "Forget my sister" might mean the wrong name or everything about
+            # her, and a guess that deletes is the one that cannot be taken
+            # back. Copies of one identical fact are not a choice, so they go
+            # together — as does an id shared by two facts saved before ids
+            # were unique, but only if they say the same thing.
+            if len({_flat(m.get("text")) for m in gone}) > 1:
+                return ("That matches %d things, so I haven't forgotten any yet: %s. "
+                        "Say which one." % (
+                            len(gone), "; ".join("'%s' (id %s)" % (m.get("text"), m.get("id"))
+                                                 for m in gone[:10])
+                            + ("; and %d more" % (len(gone) - 10) if len(gone) > 10 else "")))
+            keep = [m for m in mine if all(m is not g for g in gone)]
             all_of_it[current()] = keep
             said = "Forgotten %d." % (len(mine) - len(keep))
         # "Forgotten" when it was not is the worse lie of the two: somebody
@@ -362,7 +442,8 @@ TOOLS = [
          "Remove something ARC remembers — by subject, or 'all'. Use when the user "
          "says 'forget that', 'that's wrong', 'stop remembering X'. If a fact is "
          "merely out of date, prefer just remembering the new version, which "
-         "replaces it."),
+         "replaces it. If a subject matches several different facts, nothing is "
+         "removed and they are listed with ids: ask which, then forget by id."),
      "input_schema": {"type": "object", "properties": {
          "which": {"type": "string", "description": "Subject, id, or 'all'"}},
          "required": ["which"]}},
