@@ -68,7 +68,17 @@ DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 # from. One sign-in covers both: proving who you are, and granting the tools.
 IDENTITY_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 
-SCOPES = IDENTITY_SCOPES + CAL_SCOPES + MAIL_SCOPES + CONTACTS_SCOPES + DRIVE_SCOPES
+# YouTube, read-only: subscriptions, liked videos, playlists, search. Asked for
+# ONLY when ARC_GOOGLE_YOUTUBE is on, because asking Google for a scope the
+# Cloud project has not enabled and listed on its consent screen can fail the
+# whole sign-in — and this sign-in is also how everybody logs in to ARC. So the
+# owner enables the YouTube Data API, adds the scope, sets the flag, and signs
+# in again; until then nothing about signing in changes for anyone.
+YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
+YOUTUBE_ON = (os.getenv("ARC_GOOGLE_YOUTUBE", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+SCOPES = (IDENTITY_SCOPES + CAL_SCOPES + MAIL_SCOPES + CONTACTS_SCOPES + DRIVE_SCOPES
+          + (YOUTUBE_SCOPES if YOUTUBE_ON else []))
 
 
 class NotConnected(Exception):

@@ -16,6 +16,25 @@ gitignored, is never backed up by self-repair and is never exported. **Unlink**
 in the sheet deletes the token. Guests can't link accounts, and none of these
 tools is lent to guests.
 
+## YouTube
+
+What Bella gets: your subscriptions, liked videos, playlists, search, and a
+video's details (its length, channel and description). Read-only: she can't
+subscribe, like, comment or change playlists, because those act in public
+under your name. To watch something, she opens it in the browser.
+
+YouTube uses the same Google sign-in as Calendar and Gmail, so there is no new
+account to link:
+
+1. In the Google Cloud project that ARC's sign-in uses, enable the **YouTube Data API v3**.
+2. On the OAuth consent screen, add the scope `https://www.googleapis.com/auth/youtube.readonly`.
+3. Put `ARC_GOOGLE_YOUTUBE=1` in `.env` and restart.
+4. Sign in to ARC again and tick YouTube on Google's consent screen.
+
+Until step 3 is done, sign-in doesn't ask for YouTube at all. This is on
+purpose: asking for a scope the project hasn't enabled could break the
+sign-in that everyone uses to log in.
+
 ## Spotify
 
 What Bella gets: what's playing, recent plays, top tracks and artists,
@@ -78,6 +97,39 @@ the integration. Nothing else in your workspace.
 
 This one belongs to the owner only.
 
+## Work tools: monday.com, Todoist, Trello, Asana, ClickUp, Linear, Airtable, Slack
+
+Each of these uses a **personal token** that you create in the service and put
+in `.env`. Only the owner can use them. They're tokens rather than a Link
+button because every one of these services ties its sign-in to a client
+secret, and ARC is built to keep no secrets beyond `.env`. All of them are
+**read-only**: Bella can find and read, but never move a card, close an
+issue, tick a task, edit a record or post a message.
+
+| Service | Put in `.env` | Where to get it | What Bella reads |
+|---|---|---|---|
+| monday.com | `MONDAY_TOKEN` | Avatar, Developers, My access tokens | boards, your items, board items, search |
+| Todoist | `TODOIST_TOKEN` | Settings, Integrations, Developer | today's and overdue tasks, projects, search |
+| Trello | `TRELLO_KEY` and `TRELLO_TOKEN` | A Power-Up's API key at trello.com/power-ups/admin, then a read-only token | boards, your cards, board cards, search |
+| Asana | `ASANA_TOKEN` | Developer console, personal access token | your tasks, projects, search, task details |
+| ClickUp | `CLICKUP_TOKEN` | Settings, Apps, API token | teams, your tasks, task details |
+| Linear | `LINEAR_API_KEY` | Settings, Security & access, Personal API keys (read-only) | your issues, search, issue details |
+| Airtable | `AIRTABLE_TOKEN` | airtable.com/create/tokens with **data.records:read** and **schema.bases:read** only | bases, tables, records |
+| Slack | `SLACK_USER_TOKEN` | A Slack app at api.slack.com/apps with only these user scopes: `search:read channels:history channels:read groups:history groups:read im:history im:read users:read` | search, channels, channel messages |
+
+Slack is reached only through a fixed list of read methods, so nothing that
+posts, reacts or uploads can be called, whatever is asked.
+
+## Dropbox
+
+What Bella gets: finding, listing and reading text files. Nothing is
+uploaded, moved, shared or deleted.
+
+1. At dropbox.com/developers/apps, create an app with Scoped access.
+2. Under Permissions, tick only `account_info.read`, `files.metadata.read` and `files.content.read`.
+3. Add the redirect URIs, as for Spotify (`http://127.0.0.1:8420/oauth/link/dropbox/callback`, and so on).
+4. Put the **App key** in `.env` as `DROPBOX_CLIENT_ID=`. There is no secret: ARC uses PKCE with offline access.
+
 ## Asked for, and not possible
 
 These appear in the sheet with the reason, so nobody has to guess:
@@ -90,6 +142,8 @@ These appear in the sheet with the reason, so nobody has to guess:
 - **TikTok**: only an approved app can use the API, and it gives your own profile and videos.
 - **iMessage**: Apple offers no API, and it can't be reached from Windows.
 - **Facebook Messenger**: the API is for businesses answering customers.
+- **Discord**: only bots are allowed, and only in servers that add them. Reading your own account is against Discord's rules.
+- **Netflix**: the public API closed in 2014.
 
 What Bella can already do without any of these: open Spotify, YouTube or
 Instagram in the browser (`open_website`), and read the screen when you ask.

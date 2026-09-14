@@ -157,10 +157,22 @@ import spotifyapi
 import microsoft
 import githubapi
 import notionapi
+import youtubeapi
+import mondayapi
+import linearapi
+import airtableapi
+import slackapi
+import dropboxapi
+import todoistapi
+import trelloapi
+import asanaapi
+import clickupapi
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
             memory, lessons, maps, plan, panels, connectors, spotifyapi,
-            microsoft, githubapi, notionapi)
+            microsoft, githubapi, notionapi, youtubeapi,
+            mondayapi, linearapi, airtableapi, slackapi, dropboxapi,
+            todoistapi, trelloapi, asanaapi, clickupapi)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -410,6 +422,23 @@ PASSIVE_TOOLS = {
     "github_notifications", "github_my_repos", "github_search", "github_repo",
     "github_issues",
     "notion_search", "notion_read_page", "notion_query_database",
+    # YouTube through the Google sign-in, youtube.readonly: nothing it can do
+    # acts in public under their name.
+    "youtube_search", "youtube_subscriptions", "youtube_liked", "youtube_playlists",
+    "youtube_video",
+    # Work tools, owner-only tokens, and only reads: nothing here moves a card,
+    # closes an issue or edits a record (each module refuses to).
+    "monday_boards", "monday_my_items", "monday_board_items", "monday_search",
+    "linear_my_issues", "linear_search", "linear_issue",
+    "airtable_bases", "airtable_tables", "airtable_records",
+    # Slack reads through an allow-list of read methods (no chat.*), Dropbox
+    # through an allow-list of read endpoints (no upload, move or share).
+    "slack_search", "slack_channels", "slack_channel_messages",
+    "dropbox_search", "dropbox_list", "dropbox_read",
+    "todoist_tasks", "todoist_projects", "todoist_search",
+    "trello_boards", "trello_my_cards", "trello_board_cards", "trello_search",
+    "asana_my_tasks", "asana_projects", "asana_search", "asana_task",
+    "clickup_teams", "clickup_my_tasks", "clickup_task", "clickup_search",
     # showing info on the user's own second screen is harmless output, not a
     # change to their machine — no consent prompt needed.
     "show_on_display", "clear_display",
@@ -2015,6 +2044,9 @@ async def health(request: Request, _=Depends(require_auth)):
                                          ("mail", gauth.MAIL_SCOPES),
                                          ("contacts", gauth.CONTACTS_SCOPES),
                                          ("drive", gauth.DRIVE_SCOPES))
+                                         # Only once it is asked for at all.
+                                         + ((("youtube", gauth.YOUTUBE_SCOPES),)
+                                            if gauth.YOUTUBE_ON else ())
                       if gauth.ungranted(needs)],
         "contacts_drive": gextra.connected() and not {"drive", "contacts"} <= off,
         "telegram": tg.connected() and not guest and "telegram" not in off,
@@ -2091,7 +2123,10 @@ async def connectors_set_route(cid: str, request: Request, _=Depends(require_aut
 # the account's display name for the sheet. Never the token: that stays in
 # links/ and is read only by the toolkit making a call.
 LINK_KITS = {"spotify": spotifyapi, "microsoft": microsoft, "github": githubapi,
-             "notion": notionapi}
+             "notion": notionapi, "monday": mondayapi, "linear": linearapi,
+             "airtable": airtableapi, "slack": slackapi, "dropbox": dropboxapi,
+             "todoist": todoistapi, "trello": trelloapi, "asana": asanaapi,
+             "clickup": clickupapi}
 
 
 def _link_redirect_uri(request: Request, sid: str) -> str:

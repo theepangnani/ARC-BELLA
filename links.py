@@ -92,6 +92,75 @@ SERVICES = {
         "setup": ("Create an internal integration at notion.so/my-integrations, share "
                   "the pages Bella may read with it, and put its secret in .env as NOTION_TOKEN."),
     },
+    # Asked for next ("monday and stuff"): the work tools people actually keep
+    # their lives in. Each is a personal token in .env, owner only, because
+    # every one of these services ties OAuth to a client SECRET, and a secret
+    # is exactly what this file has been written to avoid. Read-only toolkits.
+    "monday": {
+        "name": "monday.com", "flow": "token", "env": "MONDAY_TOKEN", "owner_only": True,
+        "scopes": [],
+        "setup": ("In monday.com, open your avatar, Developers, My access tokens, copy "
+                  "your personal token, and put it in .env as MONDAY_TOKEN."),
+    },
+    "todoist": {
+        "name": "Todoist", "flow": "token", "env": "TODOIST_TOKEN", "owner_only": True,
+        "scopes": [],
+        "setup": ("In Todoist, Settings, Integrations, Developer, copy the API token, "
+                  "and put it in .env as TODOIST_TOKEN."),
+    },
+    "trello": {
+        "name": "Trello", "flow": "token", "env": "TRELLO_TOKEN", "env_extra": ["TRELLO_KEY"],
+        "owner_only": True, "scopes": [],
+        "setup": ("Create a Power-Up at trello.com/power-ups/admin for its API key, "
+                  "generate a read-only token from it, and put them in .env as "
+                  "TRELLO_KEY and TRELLO_TOKEN."),
+    },
+    "asana": {
+        "name": "Asana", "flow": "token", "env": "ASANA_TOKEN", "owner_only": True,
+        "scopes": [],
+        "setup": ("In Asana, open the developer console (My settings, Apps, Developer "
+                  "apps), create a personal access token, and put it in .env as ASANA_TOKEN."),
+    },
+    "clickup": {
+        "name": "ClickUp", "flow": "token", "env": "CLICKUP_TOKEN", "owner_only": True,
+        "scopes": [],
+        "setup": ("In ClickUp, Settings, Apps, generate your personal API token, and "
+                  "put it in .env as CLICKUP_TOKEN."),
+    },
+    "linear": {
+        "name": "Linear", "flow": "token", "env": "LINEAR_API_KEY", "owner_only": True,
+        "scopes": [],
+        "setup": ("In Linear, Settings, Security & access, Personal API keys, create a "
+                  "read-only key, and put it in .env as LINEAR_API_KEY."),
+    },
+    "airtable": {
+        "name": "Airtable", "flow": "token", "env": "AIRTABLE_TOKEN", "owner_only": True,
+        "scopes": [],
+        "setup": ("At airtable.com/create/tokens, create a token with data.records:read "
+                  "and schema.bases:read only, and put it in .env as AIRTABLE_TOKEN."),
+    },
+    "slack": {
+        "name": "Slack", "flow": "token", "env": "SLACK_USER_TOKEN", "owner_only": True,
+        "scopes": ["search:read", "channels:history", "channels:read", "groups:history",
+                   "groups:read", "im:history", "im:read", "users:read"],
+        "setup": ("Create a Slack app at api.slack.com/apps, add ONLY these user token "
+                  "scopes: search:read, channels:history, channels:read, groups:history, "
+                  "groups:read, im:history, im:read, users:read — install it to your "
+                  "workspace, and put the User OAuth Token in .env as SLACK_USER_TOKEN."),
+    },
+    "dropbox": {
+        "name": "Dropbox", "flow": "redirect", "env": "DROPBOX_CLIENT_ID",
+        "auth_url": "https://www.dropbox.com/oauth2/authorize",
+        "token_url": "https://api.dropboxapi.com/oauth2/token",
+        # Without offline access Dropbox hands out a four-hour token and no
+        # refresh token, and the link dies by teatime.
+        "auth_extra": {"token_access_type": "offline"},
+        "scopes": ["account_info.read", "files.metadata.read", "files.content.read"],
+        "setup": ("Create an app at dropbox.com/developers/apps (Scoped access), tick "
+                  "only account_info.read, files.metadata.read and files.content.read, "
+                  "add this instance's /oauth/link/dropbox/callback as a redirect URI, "
+                  "and put the App key in .env as DROPBOX_CLIENT_ID."),
+    },
 }
 
 # Asked for, and not possible, with the honest reason. Shown in the sheet so
@@ -113,6 +182,11 @@ UNAVAILABLE = [
      "why": "Apple offers no API for iMessage, and it cannot be reached from Windows."},
     {"id": "messenger", "name": "Facebook Messenger",
      "why": "Messenger's API is for businesses answering customers, not for your own chats."},
+    {"id": "discord", "name": "Discord",
+     "why": ("Discord only lets bots in, to servers that add them. Reading your own DMs "
+             "or servers as you is against its rules and gets accounts banned.")},
+    {"id": "netflix", "name": "Netflix",
+     "why": "Netflix closed its public API in 2014. Bella can open it for you, not see into it."},
 ]
 
 _pending: dict = {}      # state -> {service, who, verifier, redirect, at}
@@ -126,7 +200,16 @@ def _client_id(sid: str) -> str:
 
 def configured(sid: str) -> bool:
     """The owner has done the one-time setup on this instance."""
-    return sid in SERVICES and bool(_client_id(sid))
+    return (sid in SERVICES and bool(_client_id(sid))
+            and all((os.getenv(e) or "").strip() for e in SERVICES[sid].get("env_extra", ())))
+
+
+def extra(sid: str, env: str) -> str:
+    """A second setting a token service needs (Trello's API key). Only names
+    listed in the service's env_extra can be read this way."""
+    if env not in SERVICES.get(sid, {}).get("env_extra", ()):
+        raise KeyError(env)
+    return (os.getenv(env) or "").strip()
 
 
 def _path(sid: str) -> Path:
@@ -207,6 +290,7 @@ def start_redirect(sid: str, redirect_uri: str, bind: str = "") -> str:
         "client_id": _client_id(sid), "response_type": "code",
         "redirect_uri": redirect_uri, "code_challenge_method": "S256",
         "code_challenge": challenge, "scope": " ".join(s["scopes"]), "state": state,
+        **s.get("auth_extra", {}),
     })
     return "%s?%s" % (s["auth_url"], q)
 

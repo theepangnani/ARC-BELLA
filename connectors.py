@@ -53,12 +53,22 @@ from pathlib import Path
 import gcal
 import gextra
 import gmail
+import airtableapi
+import asanaapi
+import clickupapi
+import dropboxapi
 import githubapi
+import linearapi
 import microsoft
+import mondayapi
 import notionapi
 import pc
+import slackapi
 import spotifyapi
 import storefile
+import todoistapi
+import trelloapi
+import youtubeapi
 import tg
 import whose
 
@@ -92,6 +102,9 @@ CONNECTORS = [
     {"id": "contacts", "name": "Google Contacts",
      "what": "Looking people up: phone numbers and addresses.",
      "tools": _names(gextra, {"find_contact"}), "linked": gextra.connected},
+    {"id": "youtube", "name": "YouTube",
+     "what": "Your subscriptions, liked videos and playlists, and video details. Read-only.",
+     "tools": _names(youtubeapi), "linked": youtubeapi.connected},
     {"id": "telegram", "name": "Telegram",
      "what": "Reading your chats and drafting messages you send yourself.",
      "tools": _names(tg), "linked": tg.connected},
@@ -120,6 +133,33 @@ CONNECTORS = [
     {"id": "notion", "name": "Notion",
      "what": "Searching and reading the pages you've shared with Bella's integration.",
      "tools": _names(notionapi), "linked": notionapi.connected},
+    {"id": "monday", "name": "monday.com",
+     "what": "Your boards and the items assigned to you, read-only.",
+     "tools": _names(mondayapi), "linked": mondayapi.connected},
+    {"id": "linear", "name": "Linear",
+     "what": "Your issues, search and issue details, read-only.",
+     "tools": _names(linearapi), "linked": linearapi.connected},
+    {"id": "airtable", "name": "Airtable",
+     "what": "Your bases, tables and records, read-only.",
+     "tools": _names(airtableapi), "linked": airtableapi.connected},
+    {"id": "slack", "name": "Slack",
+     "what": "Searching your Slack and reading channels, read-only: never posting.",
+     "tools": _names(slackapi), "linked": slackapi.connected},
+    {"id": "dropbox", "name": "Dropbox",
+     "what": "Finding, listing and reading your Dropbox files.",
+     "tools": _names(dropboxapi), "linked": dropboxapi.connected},
+    {"id": "todoist", "name": "Todoist",
+     "what": "Today's and overdue tasks, projects and search, read-only.",
+     "tools": _names(todoistapi), "linked": todoistapi.connected},
+    {"id": "trello", "name": "Trello",
+     "what": "Your boards and cards, read-only.",
+     "tools": _names(trelloapi), "linked": trelloapi.connected},
+    {"id": "asana", "name": "Asana",
+     "what": "Your tasks and projects, read-only.",
+     "tools": _names(asanaapi), "linked": asanaapi.connected},
+    {"id": "clickup", "name": "ClickUp",
+     "what": "Your tasks, read-only.",
+     "tools": _names(clickupapi), "linked": clickupapi.connected},
 ]
 BY_ID = {c["id"]: c for c in CONNECTORS}
 
@@ -134,6 +174,8 @@ SEARCHES = {
     "outlook":  ("outlook_search_mail", lambda q: {"query": q, "max_results": 5}),
     "onedrive": ("onedrive_search", lambda q: {"query": q, "limit": 5}),
     "notion":   ("notion_search", lambda q: {"query": q, "limit": 5}),
+    "dropbox":  ("dropbox_search", lambda q: {"query": q, "limit": 5}),
+    "slack":    ("slack_search", lambda q: {"query": q, "limit": 5}),
     # Not Spotify or GitHub: "everything about the Lisbon trip" is not a song
     # or somebody's public repository, and noise there buries the real answer.
 }
@@ -150,6 +192,7 @@ _SOURCE = {
     "computer": "files on this computer", "memory": "what ARC remembers",
     "notes": "the user's notes", "outlook": "the user's Outlook mail",
     "onedrive": "the user's OneDrive", "notion": "the user's Notion pages",
+    "dropbox": "the user's Dropbox", "slack": "the user's Slack workspace",
 }
 
 
@@ -316,8 +359,9 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "set_connector",
      "description": ("Switch one connector on or off for this person: calendar, gmail, "
-                     "drive, contacts, telegram, computer, spotify, outlook, onedrive, "
-                     "github or notion. Use for 'stop using my "
+                     "drive, contacts, youtube, telegram, computer, spotify, outlook, "
+                     "onedrive, github, notion, monday, linear, airtable, slack, dropbox, "
+                     "todoist, trello, asana or clickup. Use for 'stop using my "
                      "email', 'leave Telegram out of it', 'you can use my Drive again'. "
                      "Off means you will not touch it at all until it is turned back on."),
      "input_schema": {"type": "object", "properties": {
