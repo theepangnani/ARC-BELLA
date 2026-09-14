@@ -2147,6 +2147,9 @@ async def chat(request: Request, _=Depends(require_auth)):
     local = is_local_request(request) and not guest
     apply_session_google(request)   # use THIS signed-in user's own Google account
     apply_session_memory(request)   # ...and THIS user's own memory
+    # What the person said, before anything is attached to their message: a
+    # habit may only be made of these words. See lessons.heard.
+    lessons.heard(messages)
     tools = all_tools(local, guest)
     if guest:
         # The personality prompt arrives from the client and describes the full
