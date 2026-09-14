@@ -51,7 +51,7 @@ class Creds:
 
     def refresh(self, request):
         refreshing.set()
-        time.sleep(0.2)                  # long enough for the others to pile up
+        time.sleep(0.8)                  # long enough for the others to pile up
         refreshes.append(threading.get_ident())
         self.blob["token"] = "fresh"
 
@@ -96,7 +96,7 @@ def reader():
     # A read caught mid-write (or, on Windows, mid-swap) comes back as no
     # scopes at all, which the chips show as "not connected".
     gate.wait()
-    end = time.time() + 0.6
+    end = time.time() + 1.4
     while time.time() < end:
         t0 = time.monotonic()
         got_scopes = gauth.granted_scopes()
@@ -109,7 +109,7 @@ def reader():
 
 ts = [threading.Thread(target=turn) for _ in range(3)] + [threading.Thread(target=reader)]
 [t.start() for t in ts]
-[t.join(10) for t in ts]
+[t.join(20) for t in ts]
 
 print("Three turns with an expired Google token at once:")
 c("  nothing failed", errors, [])
@@ -117,9 +117,11 @@ c("  Google was asked to refresh exactly once", len(refreshes), 1)
 c("  every turn got the fresh token", got, ["fresh"] * 3)
 c("  the file holds the fresh token", json.loads(tok.read_text(encoding="utf-8"))["token"], "fresh")
 # granted_scopes runs on the event loop (health, all_tools), so it must not
-# queue behind a refresh holding the file's lock across its HTTP call.
+# queue behind a refresh holding the file's lock across its HTTP call. The
+# refresh takes 0.8s; a read that queued behind it would wait most of that, so
+# 0.4s leaves room for a loaded machine without letting the old bug pass.
 c.truthy("  asking for the scopes never waited out the refresh (longest %.3fs)"
-         % max(scope_waits or [0]), bool(scope_waits) and max(scope_waits) < 0.15)
+         % max(scope_waits or [0]), bool(scope_waits) and max(scope_waits) < 0.4)
 c("  no temporary file was left behind", [p.name for p in DATA.glob("token-under-test.json.*.tmp")], [])
 
 c.done()
