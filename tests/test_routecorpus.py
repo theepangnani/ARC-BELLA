@@ -20,6 +20,12 @@ round: it passes while the router still gets it wrong and FAILS once the router
 gets it right. That failure is good news. It means a fix landed, so take the
 MISS mark off that case and it becomes an ordinary guard. Router changes belong
 to whoever owns router.py (Claude 3 on 14 Sep 2026), not to this file.
+
+OWNER'S CALLS. Three misses were over-priced rather than wrong (a long polite
+weather question and two hockey scores going to Sonnet). Asked whether to send
+them to the cheap brain, the owner said "they all work" (14 Sep 2026), so they
+are pinned as SMART, as the router answers them. Moving them to FAST is now a
+decision to take back to the owner, not a fix.
 """
 import os
 import sys
@@ -61,8 +67,8 @@ CASES = [
     ("how cold is it in Toronto", FAST, "'how' asking for a number is not 'how come'"),
     ("weather in London this weekend", FAST, "no verb at all, still a lookup"),
     ("hey can you tell me what the weather is going to be like on saturday afternoon",
-     FAST, "an easy question asked politely is still easy; word count alone should not"
-     " make it hard", MISS),
+     SMART, "the owner's call (14 Sep 2026, 'they all work'): long polite questions may"
+     " cost Sonnet; was a MISS for FAST"),
 
     # ------------------------------------------------------------------ music
     ("play some jazz", FAST, "one media call"),
@@ -105,8 +111,8 @@ CASES = [
     ("convert 50 dollars to euros", FAST, "a conversion"),
     ("what's 15 percent of 80", FAST, "one sum Haiku does not get wrong"),
     ("what's the name of that song", FAST, "a lookup"),
-    ("who won the leafs game last night", FAST,
-     "a score; seven words with nothing hard in them should not cost Sonnet", MISS),
+    ("who won the leafs game last night", SMART,
+     "the owner's call (14 Sep 2026, 'they all work'): left on Sonnet; was a MISS for FAST"),
 
     # ------------------------------------------------------- work at the screen
     # The expensive day: 11 Sep 2026, 99 Haiku turns and 320 clicks.
@@ -213,7 +219,9 @@ CASES = [
      "a note about the day, not a window on screen"),
     ("what's the area code for Toronto", FAST, "a lookup, not programming"),
     ("what's my plan for today", FAST, "reading the plan store, not planning"),
-    ("leafs vs habs score", FAST, "a score; 'vs' reads as a comparison", MISS),
+    ("leafs vs habs score", SMART,
+     "the owner's call (14 Sep 2026, 'they all work'): 'vs' reads as a comparison, and"
+     " that is left alone; was a MISS for FAST"),
     ("what's the weather and what time is it", FAST, "two lookups; 'and' is not a clause"),
     ("what time is it? what's the weather?", FAST,
      "two lookups, each a standing phrase"),

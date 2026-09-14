@@ -156,6 +156,10 @@ SERVICES = {
         # refresh token, and the link dies by teatime.
         "auth_extra": {"token_access_type": "offline"},
         "scopes": ["account_info.read", "files.metadata.read", "files.content.read"],
+        # Unlinking tells Dropbox too (see unlink). Documented as "disables the
+        # access token used to authenticate the call" and, per Dropbox's own
+        # offline-access guide, the refresh token behind it.
+        "revoke_url": "https://api.dropboxapi.com/2/auth/token/revoke",
         "setup": ("Create an app at dropbox.com/developers/apps (Scoped access), tick "
                   "only account_info.read, files.metadata.read and files.content.read, "
                   "add this instance's /oauth/link/dropbox/callback as a redirect URI, "
@@ -247,14 +251,66 @@ def account(sid: str) -> str:
     return str(_load(sid).get("account") or "") if linked(sid) else ""
 
 
-def unlink(sid: str) -> bool:
-    p = _path(sid)
-    with storefile.lock(p):
-        try:
-            p.unlink()
-            return True
-        except FileNotFoundError:
-            return False
+# Short on purpose: somebody pressed Disconnect and is waiting, and a service
+# that does not answer must not hold the removal up.
+REVOKE_TIMEOUT = 4
+
+
+def _revoke(sid: str, post=None) -> str:
+    """Tell the service the token is finished. Returns a word for the log,
+    never the token or the service's reply.
+
+    Deleting the file alone was not a disconnect: the access and refresh tokens
+    stayed valid at the service, so anyone holding a copy kept the link. Only
+    services that DOCUMENT a revoke a client-id-only app can call have a
+    revoke_url, and the rest are not guessed (checked against each provider's
+    own docs, 2026-09-14):
+      · Spotify has no revoke endpoint; the person removes access at
+        spotify.com/account/apps.
+      · Microsoft has no RFC 7009 endpoint; Graph's revokeSignInSessions signs
+        the person out of EVERY app, needs an admin-consented permission and
+        does not work for personal accounts. Far too wide for one Disconnect.
+      · GitHub's DELETE /applications/{client_id}/token needs the client
+        secret, which this file is written never to hold.
+    """
+    s = SERVICES.get(sid) or {}
+    url = s.get("revoke_url")
+    if not url or s.get("flow") == "token":
+        return "no revoke endpoint"
+    if not _load(sid).get("access_token"):
+        return "nothing to revoke"
+    post = post or httpx.post
+    try:
+        # Dropbox's revoke authenticates WITH the token it revokes, so an
+        # expired access token is refreshed first (which, with PKCE, needs only
+        # the client id). Revoking that token takes its refresh token with it.
+        access = token(sid, post=post)
+        r = post(url, headers={"Authorization": "Bearer %s" % access}, timeout=REVOKE_TIMEOUT)
+        return "revoked" if 200 <= r.status_code < 300 else "refused (%s)" % r.status_code
+    except Exception as e:
+        # The type only: an exception's text can carry a request, and a
+        # request here carries the token.
+        return "failed (%s)" % type(e).__name__
+
+
+def unlink(sid: str, post=None) -> bool:
+    """Revoke at the service where it can be done, then delete the token file
+    — ALWAYS, whatever the revoke did. A revoke that fails, refuses or times
+    out must never leave the link in place."""
+    outcome = "interrupted"
+    try:
+        outcome = _revoke(sid, post=post)
+    finally:
+        p = _path(sid)
+        with storefile.lock(p):
+            try:
+                p.unlink()
+                removed = True
+            except FileNotFoundError:
+                removed = False
+        if removed:
+            print("  links: %s unlinked, revoke %s" % (sid, outcome))
+    return removed
 
 
 def _store_token(sid: str, tok: dict, account_name: str = "") -> None:
