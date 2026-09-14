@@ -172,6 +172,21 @@ c.truthy("  with its tokens and the same cost the cap was charged",
          and abs(note_records[0]["cost"] - added) < 1e-12 and added > 0)
 c("  and not as a turn", note_records[0].get("turn") if note_records else None, False)
 
+print("\nPrices, per the pricing page (platform.claude.com/docs/en/about-claude/pricing, 2026-09-14):")
+for mid, want in (("claude-opus-4-5-20251101", (5.0, 25.0)), ("claude-opus-4-1-20250805", (15.0, 75.0)),
+                  ("claude-opus-4-20250514", (15.0, 75.0)), ("claude-sonnet-4-5-20250929", (3.0, 15.0)),
+                  ("claude-sonnet-4-20250514", (3.0, 15.0)), ("claude-3-5-haiku-20241022", (0.8, 4.0)),
+                  ("claude-fable-5-1", (10.0, 50.0)), ("claude-opus-4-6", (5.0, 25.0)),
+                  ("claude-sonnet-4-6", (3.0, 15.0))):
+    c("  %-28s" % mid, run.prices_for(mid), want)
+c("  cache reads are 0.1x by default", run.cache_read_rate("claude-sonnet-5"), 0.1)
+c("  ...and on Fable 5", run.cache_read_rate("claude-fable-5"), 0.1)
+c("  but 0.025x on Fable 5.1", run.cache_read_rate("claude-fable-5-1"), 0.025)
+c.truthy("  so a million cached reads on Fable 5.1 cost $0.25",
+         abs(run.turn_cost("claude-fable-5-1", cache_read=1_000_000) - 0.25) < 1e-9)
+c.truthy("  and its cache saved 0.975 of the input price on them",
+         abs(run.cache_saved("claude-fable-5-1", 1_000_000, 0) - 9.75) < 1e-9)
+
 print("\nThe booking can only happen once:")
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "run.py"), encoding="utf-8").read()
 chat_src = src.split("async def chat(")[1].split("\n@app.")[0]

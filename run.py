@@ -1084,15 +1084,38 @@ DAILY_COST_CAP = float(os.getenv("ARC_DAILY_COST_CAP", "5.0"))    # dollars; 0 =
 # half on the majority of turns — the same shape of error as the flat rate this
 # table replaced, arriving as a stale constant instead of a missing one.
 # Checked against platform.claude.com/docs/en/about-claude/pricing, 2026-08-26.
+#
+# The older ids below were missing and fell back to PRICE_IN/PRICE_OUT ($3/$15),
+# which UNDER-counts Opus 4.5 ($5) and Opus 4 and 4.1 ($15) — the direction the
+# comment above says must never happen — should ARC_MODEL ever name one. Added
+# from the same page, rechecked 2026-09-14 (Claude 4's cost audit). Prefixes
+# are matched longest first, so "claude-opus-4" never prices an Opus 4.6.
 PRICES = {
     "claude-haiku-4-5":  (1.0, 5.0),
+    "claude-3-5-haiku":  (0.8, 4.0),
+    "claude-sonnet-4":   (3.0, 15.0),
+    "claude-sonnet-4-5": (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-sonnet-5":   (2.0, 10.0),
+    "claude-opus-4":     (15.0, 75.0),
+    "claude-opus-4-1":   (15.0, 75.0),
+    "claude-opus-4-5":   (5.0, 25.0),
     "claude-opus-4-6":   (5.0, 25.0),
     "claude-opus-4-7":   (5.0, 25.0),
     "claude-opus-4-8":   (5.0, 25.0),
     "claude-opus-5":     (5.0, 25.0),
     "claude-fable-5":    (10.0, 50.0),
+    "claude-fable-5-1":  (10.0, 50.0),
+}
+
+# Cache reads are 0.1x the input price on every model but these, where the page
+# says 0.025x ("Cache hits and refreshes on Claude Fable 5.1 ... are priced at
+# 0.025x the base input price. All other models use the standard 0.1x
+# multiplier." — platform.claude.com/docs/en/about-claude/pricing, 2026-09-14).
+# A flat 0.1x billed a cached Fable 5.1 turn's reads at four times their price
+# and under-stated what its cache saved. Matched by prefix, like PRICES.
+CACHE_READ_RATES = {
+    "claude-fable-5-1": 0.025,
 }
 
 
@@ -1735,12 +1758,22 @@ CACHE_WRITE_RATE = 1.25
 SEARCH_COST = float(os.getenv("ARC_SEARCH_COST", "0.01"))
 
 
+def cache_read_rate(model) -> float:
+    """The cache-read multiplier for a model: CACHE_READ_RATE unless
+    CACHE_READ_RATES says otherwise."""
+    m = str(model or "")
+    for key in sorted(CACHE_READ_RATES, key=len, reverse=True):
+        if m.startswith(key):
+            return CACHE_READ_RATES[key]
+    return CACHE_READ_RATE
+
+
 def turn_cost(model, tok_in=0, tok_out=0, cache_read=0, cache_write=0,
               searches=0) -> float:
     """What one turn cost, at the price of the model that actually answered."""
     p_in, p_out = prices_for(model)
     return (tok_in / 1e6 * p_in
-            + cache_read / 1e6 * p_in * CACHE_READ_RATE
+            + cache_read / 1e6 * p_in * cache_read_rate(model)
             + cache_write / 1e6 * p_in * CACHE_WRITE_RATE
             + tok_out / 1e6 * p_out
             + searches * SEARCH_COST)
@@ -1756,7 +1789,7 @@ def cache_saved(model, cache_read=0, cache_write=0) -> float:
     is, and only the spoken figure is kept at zero or above.
     """
     p_in = prices_for(model)[0]
-    return (cache_read * (1 - CACHE_READ_RATE)
+    return (cache_read * (1 - cache_read_rate(model))
             - cache_write * (CACHE_WRITE_RATE - 1)) / 1e6 * p_in
 
 

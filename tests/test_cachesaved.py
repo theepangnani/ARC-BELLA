@@ -100,8 +100,11 @@ c.truthy("  the Haiku rounds of a stepped-up turn",
 c.truthy("  and the rest of the turn",
          re.search(r"saved = cache_saved\(model, cache_read - at_step\[2\],\s*"
                    r"cache_write - at_step\[3\]\) \+ early_saved", run_src) is not None)
+# Moved (Claude 4's cost audit): the saving now reads the model's own cache
+# rate, since Fable 5.1's is 0.025x, so the flat-rate formula appears nowhere
+# and the per-model one exactly once, in cache_saved.
 c("  no reads-only formula is left behind",
-  run_src.count("(1 - CACHE_READ_RATE)"), 1)
+  (run_src.count("(1 - CACHE_READ_RATE)"), run_src.count("(1 - cache_read_rate(model))")), (0, 1))
 
 print("\nThe stored figure keeps a loss:")
 stats._days.clear()
