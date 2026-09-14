@@ -46,6 +46,8 @@ panels.json
 missed_alarms.json
 # Who has been shown the first-visit tour
 tutorial.json
+# How each person has taught ARC to work with them
+lessons.json
 
 # Market price alerts (personal watchlist)
 price_alerts.json

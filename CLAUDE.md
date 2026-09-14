@@ -22,7 +22,8 @@ runs tools on the owner's machine and Google account.
   must not be able to rewrite the rulebook.
 - Toolkits — one module per area (`gcal`, `gmail`, `gextra`, `tg`, `pc`,
   `extras`, `media`, `display`, `notes`, `push`, `alerts`, `alarm`, `market`,
-  `automation`, `selfheal`, `stats`, `triggers`, `memory`, `maps`, `plan`),
+  `automation`, `selfheal`, `stats`, `triggers`, `memory`, `lessons`, `maps`,
+  `plan`),
   each exporting `TOOLS` and `connected()`.
 - Storage is flat JSON files in `ARC_DATA_DIR`. No database.
 
@@ -143,7 +144,8 @@ never through git, never through email:
 - `.env` — API keys, the allowlists, `ARC_SECRET`
 - `credentials_web.json`, `token.json`, `google_sessions/` — Google sign-in
 - the owner's data, if it should follow them: `memory.json`, `notes.json`,
-  `alarms.json`, `todos.json`, `reminders.json`, `triggers.json`, `usage.json`
+  `alarms.json`, `todos.json`, `reminders.json`, `triggers.json`, `usage.json`,
+  `lessons.json`
 - `docs/SECURITY.md`
 
 `.gitignore` already refuses all of them. If you add a file that holds a

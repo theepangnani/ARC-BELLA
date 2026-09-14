@@ -140,6 +140,7 @@ import prompt
 import stats
 import triggers
 import memory
+import lessons
 import plan
 import panels
 import retry
@@ -150,7 +151,7 @@ import tutorial
 import router
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
-            memory, maps, plan, panels)
+            memory, lessons, maps, plan, panels)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -367,6 +368,11 @@ PASSIVE_TOOLS = {
     # just requested would be the consent prompt at its most pointless; it is
     # their data, on their display, and "take it down" undoes it entirely.
     "make_panel", "list_panels", "remove_panel",
+    # A habit the user just taught her ("shorter", "stop calling me sir"). It is
+    # their instruction about her own manner, kept for next time — asking "may
+    # I remember that you asked me to stop asking?" would be the joke writing
+    # itself. Forgetting one stays gated, like delete_note.
+    "learn_lesson", "list_lessons",
     # listing price alerts just reads them back; setting/clearing stays gated.
     "list_price_alerts",
     # Same split for alarms: list is a read, and silencing one that is ringing
@@ -2087,16 +2093,40 @@ async def chat(request: Request, _=Depends(require_auth)):
         # the owner's notes, then hits a refusal it can't explain. Telling it the
         # shape of the account up front is the difference between a demo that
         # feels deliberate and one that feels broken.
-        extra += (
-            "\n\nGUEST ACCOUNT — this is not your owner.\n"
-            "You are signed in as a guest. You have their own Google account "
-            "(calendar, mail, drive, contacts), plus weather, stocks, news and "
-            "web search. You do NOT have this machine, its screens, Telegram, "
-            "the owner's notes, memory, todos, reminders or phone alerts, and "
-            "you must not claim otherwise or offer to use them. If asked for "
-            "one, say plainly that it's off on a guest account and move on. "
-            "Never repeat anything you were told about the owner personally."
-        )
+        # Which of the two it says follows guest_tools(), asked now. It used to
+        # be one fixed paragraph from before the week's loan, so during the loan
+        # a guest was told "you do NOT have notes, reminders, alarms" while
+        # holding tools for all of them — and the model, believing the prompt
+        # over its own tool list, refused things the guest was allowed to do.
+        if guest_extra_live():
+            extra += (
+                "\n\nGUEST ACCOUNT — this is not your owner.\n"
+                "You are signed in as a guest, with extra access for this week. "
+                "You have their own Google account (calendar, mail, drive, "
+                "contacts), weather, stocks, news and web search, and THEIR OWN "
+                "notes, memory, to-do list, reminders, alarms, price alerts and "
+                "standing rules — kept separately from the owner's, so use them "
+                "freely. You can read the owner's Telegram chats and draft a "
+                "message, but only the owner can send one. You do NOT have this "
+                "machine, its screens, music or the owner's phone. If asked for "
+                "one of those, say plainly that it's off on a guest account and "
+                "move on. Never repeat anything you were told about the owner "
+                "personally, and do not call them sir or madam — use their name "
+                "if you know it."
+            )
+        else:
+            extra += (
+                "\n\nGUEST ACCOUNT — this is not your owner.\n"
+                "You are signed in as a guest. You have their own Google account "
+                "(calendar, mail, drive, contacts), plus weather, stocks, news and "
+                "web search, and your own plan and panels. You do NOT have this "
+                "machine, its screens, Telegram, notes, memory, todos, reminders, "
+                "alarms or phone alerts, and you must not claim otherwise or offer "
+                "to use them. If asked for one, say plainly that it's off on a "
+                "guest account and move on. Never repeat anything you were told "
+                "about the owner personally, and do not call them sir or madam — "
+                "use their name if you know it."
+            )
     else:
         # What alarms are set, in the turn context. Without this "is my alarm
         # still on?" costs a tool call and a round trip, and — worse — the model
@@ -2120,6 +2150,12 @@ async def chat(request: Request, _=Depends(require_auth)):
     if not payload.get("room") and not payload.get("no_tools"):
         try:
             extra += memory.block()
+        except Exception:
+            pass
+        # And how they have taught her to work with them — the same footing as
+        # memory: per person, server-side, and out of room mode. See lessons.py.
+        try:
+            extra += lessons.block()
         except Exception:
             pass
 

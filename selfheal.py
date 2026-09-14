@@ -69,6 +69,9 @@ DATA_FILES = {
     "panels.json":       ([], "panels"),
     "missed_alarms.json": ([], "missed alarms"),
     "tutorial.json":     ([], "tour record"),
+    # What each person has taught ARC about how to work with them (lessons.py).
+    # Registered the day it was written, not after a bug check found it.
+    "lessons.json":      ([], "habits you've taught me"),
     # A dict, not a list — the shape check below is what makes that matter, and
     # it would catch a file that had somehow become the wrong kind of thing.
     "usage.json":        ({}, "usage record"),
@@ -94,7 +97,7 @@ DATA_FILES = {
 # must never make.
 PER_PERSON = {"notes.json", "todos.json", "reminders.json", "alarms.json",
               "price_alerts.json", "triggers.json", "plan.json", "panels.json",
-              "missed_alarms.json", "tutorial.json"}
+              "missed_alarms.json", "tutorial.json", "lessons.json"}
 
 
 def _shape_ok(name: str, data) -> bool:
