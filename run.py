@@ -332,6 +332,9 @@ def dispatch_tool(name: str, args: dict, local: bool = True,
     kit = TOOL_OWNER.get(name)
     if kit is None:
         return f"No such tool: {name}", True
+    # Before it runs, not after: a mail read that errors halfway may still have
+    # handed back somebody else's words. See lessons.saw.
+    lessons.saw(name)
     if kit is pc:
         return pc.run_tool(name, args, local=local)
     if kit is automation and not local:
@@ -368,11 +371,12 @@ PASSIVE_TOOLS = {
     # just requested would be the consent prompt at its most pointless; it is
     # their data, on their display, and "take it down" undoes it entirely.
     "make_panel", "list_panels", "remove_panel",
-    # A habit the user just taught her ("shorter", "stop calling me sir"). It is
-    # their instruction about her own manner, kept for next time — asking "may
-    # I remember that you asked me to stop asking?" would be the joke writing
-    # itself. Forgetting one stays gated, like delete_note.
-    "learn_lesson", "list_lessons",
+    # Reading back the habits the user taught her changes nothing. LEARNING one
+    # is gated: it was listed here, and with mail and the web passive too, one
+    # ask-first turn could read an email and write its instructions into the
+    # system prompt of every future turn with nobody approving either step
+    # (Claude 1's bug check of 320b83c). Forgetting one stays gated as well.
+    "list_lessons",
     # listing price alerts just reads them back; setting/clearing stays gated.
     "list_price_alerts",
     # Same split for alarms: list is a read, and silencing one that is ringing
@@ -1334,6 +1338,10 @@ def apply_session_memory(request: Request) -> str:
     if AUTH_MODE == "open" and who == whose.DEFAULT and OWNER_EMAILS:
         who = sorted(OWNER_EMAILS)[0]
     whose.use(who)
+    # A new turn has read nothing yet, so it may learn a habit until it does.
+    # Here, in the request itself, because the record is a ContextVar and
+    # starting it inside a worker thread would leave the request without it.
+    lessons.turn_begins()
     return who
 
 
@@ -2412,6 +2420,10 @@ async def chat(request: Request, _=Depends(require_auth)):
             b.type in ("server_tool_use", "web_search_tool_result")
             for b in resp.content
         )
+        # The server-side search never passes through dispatch_tool, so it is
+        # recorded here: a page the web returned is somebody else's words too.
+        if searched:
+            lessons.saw("web_search")
 
         # Server-side tools hit their own iteration cap and ask to be resumed.
         # Re-send with no new input; the server picks up where it stopped.
