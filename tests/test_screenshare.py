@@ -58,8 +58,13 @@ c.truthy("  through the browser's own picker",
 c.truthy("  no audio is asked for", "audio: false" in fn("startScreenShare"))
 c.truthy("  only offered where the browser can do it",
          "const canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);" in body)
-c.truthy("  the button is usable wherever either works",
-         "liveScreenBtn.disabled = !canSeeScreen && !canShareScreen;" in body)
+c.truthy("  the button is never greyed out, so a phone can press it and be told why",
+         "liveScreenBtn.disabled = false;" in body
+         and "liveScreenBtn.disabled = !canSeeScreen" not in body)
+c.truthy("  its tooltip no longer says desktop only", "with every message (desktop only)" not in page
+         and "anywhere else it shares the screen or window you pick" in page)
+c.truthy("  its tooltip follows what pressing it will do",
+         "liveScreenBtn.title = canSeeScreen" in fn("paintLiveScreen"))
 c.truthy("  a phone is told why not, and offered the camera",
          "This browser can't share its screen." in body and "use the camera button" in body)
 label = fn("liveScreenLabel")

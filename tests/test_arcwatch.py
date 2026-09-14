@@ -240,7 +240,7 @@ with TestClient(run.app) as client:
     # sent only when it is true.
     c.truthy("  ...and the page offers the desktop's screen on exactly that",
              "canSeeScreen = !!h.computer;" in body
-             and "liveScreenBtn.disabled = !canSeeScreen && !canShareScreen;" in body
+             and "liveScreenBtn.disabled = false;" in body
              and "see_screen: (liveScreen && canSeeScreen) ? liveScreenMode : false," in body)
 
     print("\nNeither poll holds a session open by itself:")

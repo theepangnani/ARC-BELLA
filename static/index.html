@@ -2133,7 +2133,7 @@
 
       <div class="cgroup" data-group="see">
         <div class="chead">What ARC can see</div>
-        <button id="liveScreenBtn" title="Let ARC see your current screen with every message (desktop only). Nothing is saved.">Live screen: off</button>
+        <button id="liveScreenBtn" title="Let ARC see your screen with every message. On the desktop it sees this computer; anywhere else it shares the screen or window you pick. Nothing is saved.">Live screen: off</button>
         <button id="watchBtn" title="Watch mode: ARC keeps an eye on your screen and only speaks up when something meaningful changes (desktop only). Nothing is saved.">Watch screen: off</button>
         <button id="cameraBtn" title="Capture one photo from your camera and ask ARC what it sees. Nothing is saved.">📷 Show ARC (camera)</button>
         <button id="displayBtn" title="Open ARC's second-screen dashboard — a big clock, live markets, and whatever you ask ARC to show. Drag it to your second monitor and press F for full screen.">🖥 Open second screen</button>
@@ -8158,6 +8158,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (!liveScreenBtn) return;
     liveScreenBtn.classList.toggle("on", (liveScreen && canSeeScreen) || (!canSeeScreen && screenShared()));
     liveScreenBtn.textContent = liveScreenLabel();
+    liveScreenBtn.title = canSeeScreen
+      ? "Let ARC see this computer's screen with every message. Nothing is saved."
+      : canShareScreen
+        ? "Share this device's screen or a window with ARC: she sees it with every message, and can look but not click. Nothing is saved."
+        : "This browser can't share its screen. Press for more, or use the camera button.";
   }
 
   if (liveScreenBtn) liveScreenBtn.addEventListener("click", async () => {
@@ -10899,9 +10904,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       canSeeScreen = !!h.computer;
       monitorCount = Math.max(1, parseInt(h.monitors, 10) || 1);
       if (liveScreenBtn) {
-        // Off the desktop the button shares this device's own screen instead,
-        // so it is only unusable where the browser cannot share at all.
-        liveScreenBtn.disabled = !canSeeScreen && !canShareScreen;
+        // Off the desktop the button shares this device's own screen instead.
+        // Never disabled: where the browser cannot share at all (most phones),
+        // pressing it says why and points at the camera, and a greyed-out
+        // button explains nothing.
+        liveScreenBtn.disabled = false;
         if (!canSeeScreen) liveScreen = false;
         else if (screenShared()) stopScreenShare();   // the desktop sees its own screen
         else restoreLiveScreen();
