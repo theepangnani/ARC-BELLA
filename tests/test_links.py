@@ -286,8 +286,11 @@ src = io.open(ARC / "run.py", encoding="utf-8").read()
 c.truthy("  YouTube reads are labelled as data too", 'else "YouTube" if kit is youtubeapi' in src)
 out = connectors.search_connectors("x", dispatch=lambda t, a: ("=== FROM GMAIL fake ===", False),
                                    offered={"find_drive"})
+# The close line carries a per-call tag since the fence was hardened
+# (test_connectors has the forged-fence guards); still closed, still once.
+import re   # noqa: E402
 c.truthy("  every search section is closed, so a fake header can't open one",
-         "=== END OF GOOGLE DRIVE ===" in out)
+         len(re.findall(r"=== END OF GOOGLE DRIVE \[[0-9a-f]{16}\] ===", out)) == 1)
 
 hud = io.open(ARC / "static" / "index.html", encoding="utf-8").read()
 sheet = hud.split("(function connectorsSheet() {")[1].split("\n  })();")[0]
