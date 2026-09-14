@@ -3483,7 +3483,12 @@ async def summarize(request: Request, _=Depends(require_auth)):
     # it. Now that the day's cost is accumulated rather than derived from the
     # token totals, a call that adds tokens and no cost is a call that spends
     # invisibly and never counts towards the cap.
-    _day["cost"] += turn_cost(MODEL, s_in, s_out)
+    note_cost = turn_cost(MODEL, s_in, s_out)
+    _day["cost"] += note_cost
+    # And on disk, for Arc Watch: it reached the daily cap but never usage.json,
+    # so the spend Arc Watch showed was short by every note ever written
+    # (Claude 4's cost audit). Not a turn — nobody asked anything.
+    stats.record(tok_in=s_in, tok_out=s_out, cost=note_cost, model=MODEL, turn=False)
 
     new_note = " ".join(b.text for b in resp.content if b.type == "text").strip()[:1600]
     return JSONResponse({"note": new_note or note, "cost_today": round(_day_cost(), 4)})

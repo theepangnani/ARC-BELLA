@@ -134,6 +134,44 @@ for label, exc in (("a dropped connection", anthropic.APIConnectionError(request
     status, recs, added = turn([Resp([ToolBlk("weather")], Usage(500, 10), stop="tool_use"), exc])
     c("  %-21s books its first round, once" % label, (len(recs), recs[0]["tok_in"] if recs else 0), (1, 500))
 
+print("\nThe rolling note (/api/summarize) is on Arc Watch, not only on the cap:")
+note_records = []
+
+
+class NoteFake:
+    class messages:
+        @staticmethod
+        async def create(**kw):
+            return Resp([Blk("- planning the Lisbon trip")], Usage(3000, 120))
+
+    async def close(self):
+        pass
+
+
+real_record = run.stats.record
+run.stats.record = lambda **kw: note_records.append(kw)
+run.app.state.claude = NoteFake()
+before = run._day["cost"]
+try:
+    async def summarize():
+        sid = session.create(OWNER, "desk")
+        transport = httpx.ASGITransport(app=run.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as cl:
+            return await cl.post("/api/summarize", cookies={run.COOKIE: sid}, json={
+                "note": "", "messages": [{"role": "user", "content": "let's plan Lisbon"},
+                                         {"role": "assistant", "content": "Happy to."}]})
+    r = asyncio.run(summarize())
+finally:
+    run.stats.record = real_record
+    session.revoke_all()
+added = run._day["cost"] - before
+c("  the note came back", r.status_code, 200)
+c("  recorded once", len(note_records), 1)
+c.truthy("  with its tokens and the same cost the cap was charged",
+         note_records and note_records[0]["tok_in"] == 3000 and note_records[0]["tok_out"] == 120
+         and abs(note_records[0]["cost"] - added) < 1e-12 and added > 0)
+c("  and not as a turn", note_records[0].get("turn") if note_records else None, False)
+
 print("\nThe booking can only happen once:")
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "run.py"), encoding="utf-8").read()
 chat_src = src.split("async def chat(")[1].split("\n@app.")[0]
