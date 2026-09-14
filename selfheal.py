@@ -391,6 +391,19 @@ def export_all(path: str = "") -> str:
     try:
         if target.is_dir():
             target = target / ("arc-export-%s.json" % _stamp())
+        # The path comes from a request or the model, so the write must not be
+        # a way to overwrite something: a .json file, never inside ARC's own
+        # folder unless it is a fresh export beside the data, and never over an
+        # existing file that isn't an earlier export.
+        import codeguard
+        fresh = target.name.lower().startswith("arc-export-")
+        if target.suffix.lower() != ".json":
+            return "Exports are .json files. Give a folder, or a name ending in .json."
+        if codeguard._inside_root(str(target)) and not (
+                fresh and target.resolve().parent == DATA_DIR.resolve()):
+            return "I won't write an export inside ARC's own folder. Pick another folder."
+        if target.exists() and not fresh:
+            return "%s already exists and isn't an ARC export, so I won't write over it." % target.name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(out, ensure_ascii=False, indent=1),
                           encoding="utf-8")

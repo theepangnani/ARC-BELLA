@@ -114,6 +114,42 @@ def _within_roots(p: Path) -> bool:
     return any(rp == r.resolve() or r.resolve() in rp.parents for r in FILE_ROOTS)
 
 
+# Inside the allowed folders, but not Bella's to read: keys, credentials,
+# browser and app data. read_file is a passive tool, so it runs without asking,
+# and a line of injected text in a web page or an email can ask for it. The
+# same folders find_files already skips, plus the files that are secrets by
+# name. Checked on the RESOLVED path, so a link or a short name can't dodge it.
+_PRIVATE_DIRS = {"appdata", "node_modules", "__pycache__"}
+_PRIVATE_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "known_hosts",
+                  "authorized_keys", ".env", "credentials", "token.json",
+                  "sessions.json", ".git-credentials",
+                  ".netrc", ".pgpass")
+_PRIVATE_EXT = {".pem", ".key", ".p12", ".pfx", ".kdbx", ".keychain", ".ppk",
+                ".gpg", ".asc", ".jks", ".keystore", ".ovpn", ".rdp"}
+
+
+def _private(p: Path) -> bool:
+    try:
+        rp = p.resolve()
+    except Exception:
+        return True
+    parts = rp.parts
+    for r in FILE_ROOTS:
+        try:
+            parts = rp.relative_to(r.resolve()).parts
+            break
+        except (ValueError, OSError):
+            continue
+    for part in parts[:-1]:
+        low = part.lower()
+        if low.startswith(".") or low in _PRIVATE_DIRS:
+            return True
+    name = rp.name.lower()
+    if name.startswith(".") or rp.suffix.lower() in _PRIVATE_EXT:
+        return True
+    return any(n in name for n in _PRIVATE_NAMES)
+
+
 def _run(cmd, shell=False, timeout=None):
     try:
         return subprocess.run(cmd, shell=shell, capture_output=True, text=True,
@@ -593,6 +629,9 @@ def read_file(path: str, max_chars: int = 4000) -> str:
     p = Path(path).expanduser()
     if not _within_roots(p):
         return f"Refused: {path} is outside the allowed folders."
+    if _private(p):
+        return (f"Refused: {path} looks private (keys, credentials, hidden or app data), "
+                f"so I don't read it. Open it yourself if you need it.")
     if not p.is_file():
         return f"No such file: {path}"
     try:
