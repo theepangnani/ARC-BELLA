@@ -160,20 +160,31 @@ def run_page(probe, panels_json):
             + MODULE +
             "\n(async () => { const log = []; const wait = ms => new Promise(r => setTimeout(r, ms));" + probe +
             " document.getElementById('probe').textContent = log.join('|'); })();</script>")
-    work = tempfile.mkdtemp(prefix="arcwidgets")
-    try:
-        p = os.path.join(work, "t.html")
-        io.open(p, "w", encoding="utf-8").write(html)
-        out = subprocess.run(
-            [exe, "--headless=new", "--no-first-run", "--no-default-browser-check", "--window-size=1200,520",
-             "--user-data-dir=" + os.path.join(work, "u"), "--virtual-time-budget=6000",
-             "--dump-dom", "file:///" + p.replace("\\", "/")],
-            capture_output=True, timeout=120, encoding="utf-8", errors="replace").stdout
-        m = re.search(r'<pre id="probe">(.*?)</pre>', out, re.S)
-        import html as _h
-        return [_h.unescape(x) for x in m.group(1).split("|")] if m and m.group(1).strip() else None
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    import html as _h
+    # Up to three tries. Alone this takes a few seconds; in the full suite on a
+    # loaded laptop one run went past its timeout (Claude 2, 14 Sep), which is
+    # the machine being busy, not the widgets being wrong. A try that finishes
+    # without the probe written counts as a failed try too, never as "no
+    # browser": that used to pass silently.
+    for attempt in range(3):
+        work = tempfile.mkdtemp(prefix="arcwidgets")
+        try:
+            p = os.path.join(work, "t.html")
+            io.open(p, "w", encoding="utf-8").write(html)
+            out = subprocess.run(
+                [exe, "--headless=new", "--no-first-run", "--no-default-browser-check", "--window-size=1200,520",
+                 "--user-data-dir=" + os.path.join(work, "u"), "--virtual-time-budget=6000",
+                 "--dump-dom", "file:///" + p.replace("\\", "/")],
+                capture_output=True, timeout=90, encoding="utf-8", errors="replace").stdout
+            m = re.search(r'<pre id="probe">(.*?)</pre>', out, re.S)
+            if m and m.group(1).strip():
+                return [_h.unescape(x) for x in m.group(1).split("|")]
+            print("  (the browser run came back without its probe, try %d of 3)" % (attempt + 1))
+        except subprocess.TimeoutExpired:
+            print("  (the browser run timed out, try %d of 3)" % (attempt + 1))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    return False
 
 
 EVIL = '<img src=x onerror="window.pwned=1">'
@@ -213,6 +224,8 @@ got = run_page("""
 """, [{"id": "p1", "title": EVIL, "items": []}])
 if got is None:
     print("  (no Chrome or Edge here — the browser half is checked where there is one)")
+elif got is False:
+    c.truthy("  the browser half ran (three tries, none finished)", False)
 else:
     c.truthy("  the gallery lists the built-in cards and the person's own", got[0].startswith("Weather,Markets,"))
     c.truthy("  a panel title that is a tag is shown as text", EVIL in got[0])
