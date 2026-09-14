@@ -55,7 +55,7 @@ c("  it knows exactly which files are its business",
   # check found them with no backups and missing from the export.
   # lessons joined with lessons.py itself. memory joined the same day, once
   # memory.py stopped writing over damage and so needed something to repair it.
-  ["alarms.json", "lessons.json", "memory.json", "missed_alarms.json", "notes.json", "panels.json", "plan.json",
+  ["alarms.json", "connectors.json", "lessons.json", "memory.json", "missed_alarms.json", "notes.json", "panels.json", "plan.json",
    "price_alerts.json", "reminders.json", "todos.json", "triggers.json",
    "tutorial.json", "usage.json"])
 for secret in ("credentials.json", "credentials_web.json", "token.json", ".env"):

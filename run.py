@@ -149,9 +149,11 @@ import redact
 import whose
 import tutorial
 import router
+import connectors
+import storefile
 TOOLKITS = (gcal, gmail, gextra, tg, pc, extras, media, display, notes, push,
             alerts, alarm, market, automation, selfheal, stats, triggers,
-            memory, lessons, maps, plan, panels)
+            memory, lessons, maps, plan, panels, connectors)
 TOOL_OWNER = {t["name"]: kit for kit in TOOLKITS for t in kit.TOOLS}
 
 
@@ -318,6 +320,12 @@ def all_tools(local: bool = True, guest: bool = False):
     tools = [t for kit in kits for t in kit.TOOLS]
     if guest:
         tools = [t for t in tools if t["name"] in guest_tools()]
+    # Last, and only ever a removal: a connector the person switched off takes
+    # its tools out of what is left. Nothing above is widened by a switch being
+    # on — the guest tier and the desktop-only kits have already decided.
+    off = connectors.switched_off_tools()
+    if off:
+        tools = [t for t in tools if t["name"] not in off]
     return tools
 
 
@@ -335,6 +343,19 @@ def dispatch_tool(name: str, args: dict, local: bool = True,
     # Before it runs, not after: a mail read that errors halfway may still have
     # handed back somebody else's words. See lessons.saw.
     lessons.saw(name)
+    # Switched off in Connectors: refused here too, for the same reason as the
+    # guest check above — the offered list is not what stops the work.
+    if name in connectors.switched_off_tools():
+        return ("That's switched off in Connectors, so I won't use it. It can be "
+                "turned back on there, or by asking me."), True
+    if kit is connectors:
+        # The search fans out through THIS function, so every gate above —
+        # guest tier, desktop-only, switches, the lessons record — applies to
+        # each source exactly as if the model had called it itself.
+        return connectors.run_tool(
+            name, args,
+            dispatch=lambda n, a: dispatch_tool(n, a, local=local, guest=guest),
+            offered={t["name"] for t in all_tools(local, guest)})
     if kit is pc:
         return pc.run_tool(name, args, local=local)
     if kit is automation and not local:
@@ -356,6 +377,11 @@ PASSIVE_TOOLS = {
     "read_email", "search_email", "find_contact",
     "read_drive", "find_drive",
     "tg_list_chats", "tg_read_chat",
+    # Asking every connected source at once is only those same reads, run
+    # together through dispatch_tool (connectors.SEARCHES, each checked passive
+    # by test_connectors), and listing the switches reads a file. FLIPPING a
+    # switch is not here: set_connector stays gated.
+    "search_connectors", "list_connectors",
     # showing info on the user's own second screen is harmless output, not a
     # change to their machine — no consent prompt needed.
     "show_on_display", "clear_display",
@@ -1896,10 +1922,15 @@ async def health(request: Request, _=Depends(require_auth)):
     # telegram/computer as online here would light up controls that then fail.
     guest = is_guest(request)
     local = is_local_request(request) and not guest
+    # Whose switches: set by the same call every per-person route makes.
+    apply_session_memory(request)
+    # A connector switched off reads as not connected, so the page stops the
+    # agenda and meeting polls instead of drawing a calendar Bella won't touch.
+    off = connectors.off_ids()
     return {
         "claude": bool(ANTHROPIC_KEY),
-        "calendar": gcal.connected(),
-        "email": gmail.connected(),
+        "calendar": gcal.connected() and "calendar" not in off,
+        "email": gmail.connected() and "gmail" not in off,
         # Linked at all, and which permissions were left unticked on the way in.
         # A dark chip could mean "no Google account" or "you pressed Continue
         # before ticking Calendar", and those need opposite instructions.
@@ -1909,8 +1940,8 @@ async def health(request: Request, _=Depends(require_auth)):
                                          ("contacts", gauth.CONTACTS_SCOPES),
                                          ("drive", gauth.DRIVE_SCOPES))
                       if gauth.ungranted(needs)],
-        "contacts_drive": gextra.connected(),
-        "telegram": tg.connected() and not guest,
+        "contacts_drive": gextra.connected() and not {"drive", "contacts"} <= off,
+        "telegram": tg.connected() and not guest and "telegram" not in off,
         "guest": guest,
         # What this account is entitled to. Sent so the page can grey out what
         # it cannot have instead of offering it and failing — the honest reason
@@ -1920,7 +1951,7 @@ async def health(request: Request, _=Depends(require_auth)):
         "entitled": sorted(ENTITLEMENTS.get(tier(request), set())),
         # Computer control is real only for the local desktop; over the tunnel
         # the phone gets everything else but not shell/system control.
-        "computer": pc.connected() and local,
+        "computer": pc.connected() and local and "computer" not in off,
         # How many screens are attached, so the UI can offer a per-monitor
         # choice only when there is actually a choice to make.
         "monitors": len(pc._list_monitors()) if local else 0,
@@ -1936,6 +1967,48 @@ async def health(request: Request, _=Depends(require_auth)):
         "models": MODEL_CHOICES,
         "default_brain": DEFAULT_BRAIN,
     }
+
+
+@app.get("/api/connectors")
+async def connectors_route(request: Request, _=Depends(require_auth)):
+    """The Connectors sheet: every connector, linked or not, usable from THIS
+    request or not, and on or off for THIS person.
+
+    `available` is worked out from all_tools() for this very request, so a
+    guest's sheet shows Computer and Telegram as unavailable rather than as a
+    switch that would do nothing — the page shows what the gates allow and
+    never decides it.
+    """
+    apply_session_google(request)
+    apply_session_memory(request)
+    guest = is_guest(request)
+    local = is_local_request(request) and not guest
+    # Offered BEFORE the switches, so a connector switched off still reads as
+    # available-if-you-turn-it-on rather than vanishing from its own sheet.
+    kits = [k for k in TOOLKITS if k.connected() and (local or k not in (pc, automation))]
+    offered = {t["name"] for k in kits for t in k.TOOLS}
+    if guest:
+        offered &= guest_tools()
+    return JSONResponse({"connectors": connectors.status(offered)})
+
+
+@app.post("/api/connectors/{cid}")
+async def connectors_set_route(cid: str, request: Request, _=Depends(require_auth)):
+    """Flip one switch for this person. Only ever a removal of what the gates
+    already allow — turning a switch ON cannot give anyone a tool they lacked."""
+    apply_session_memory(request)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    if cid not in connectors.BY_ID:
+        raise HTTPException(404, "No such connector.")
+    try:
+        said = connectors.set_on(cid, bool(body.get("on")))
+    except storefile.Unreadable as e:
+        raise HTTPException(503, "Couldn't save that just now: %s" % e)
+    return JSONResponse({"ok": True, "said": said, "on": connectors.is_on(cid)})
 
 
 def _claude_error(e) -> HTTPException:
@@ -3349,7 +3422,9 @@ async def calendar_upcoming(request: Request, _=Depends(require_auth)):
     """Timed events starting within ?lead minutes, for the meeting-nudge poller.
     Uses THIS user's own calendar; the client de-dupes what it has announced."""
     apply_session_google(request)
-    if not gcal.connected():
+    apply_session_memory(request)
+    # Switched off in Connectors is the same as not linked, for a poll: quiet.
+    if not gcal.connected() or not connectors.is_on("calendar"):
         return JSONResponse({"events": []})
     try:
         lead = int(request.query_params.get("lead", "10"))
@@ -3378,7 +3453,8 @@ async def calendar_agenda(request: Request, _=Depends(require_auth)):
     simply have not connected Google is a panel that trains you to ignore it.
     """
     apply_session_google(request)
-    if not gcal.connected():
+    apply_session_memory(request)
+    if not gcal.connected() or not connectors.is_on("calendar"):
         return JSONResponse({"events": [], "connected": False})
     try:
         import anyio

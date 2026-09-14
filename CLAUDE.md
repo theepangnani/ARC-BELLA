@@ -23,7 +23,7 @@ runs tools on the owner's machine and Google account.
 - Toolkits — one module per area (`gcal`, `gmail`, `gextra`, `tg`, `pc`,
   `extras`, `media`, `display`, `notes`, `push`, `alerts`, `alarm`, `market`,
   `automation`, `selfheal`, `stats`, `triggers`, `memory`, `lessons`, `maps`,
-  `plan`),
+  `plan`, `connectors`),
   each exporting `TOOLS` and `connected()`.
 - Storage is flat JSON files in `ARC_DATA_DIR`. No database.
 
@@ -145,7 +145,7 @@ never through git, never through email:
 - `credentials_web.json`, `token.json`, `google_sessions/` — Google sign-in
 - the owner's data, if it should follow them: `memory.json`, `notes.json`,
   `alarms.json`, `todos.json`, `reminders.json`, `triggers.json`, `usage.json`,
-  `lessons.json`
+  `lessons.json`, `connectors.json`
 - `docs/SECURITY.md`
 
 `.gitignore` already refuses all of them. If you add a file that holds a

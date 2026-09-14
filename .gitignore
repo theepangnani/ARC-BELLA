@@ -48,6 +48,8 @@ missed_alarms.json
 tutorial.json
 # How each person has taught ARC to work with them
 lessons.json
+# Which connectors each person switched off
+connectors.json
 
 # Market price alerts (personal watchlist)
 price_alerts.json
