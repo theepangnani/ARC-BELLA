@@ -40,6 +40,7 @@ WHAT A LESSON CANNOT DO, and the reason this is not a free-for-all:
 import contextvars
 import os
 import re
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -163,6 +164,45 @@ def saw(name: str) -> None:
     t = _turn.get()
     if t is not None and name not in CLEAN:
         t["read"].add(name)
+    if name not in CLEAN:
+        _outside_now(name)
+
+
+# The same record, outliving the request. [[remember: ...]] is not a tool: the
+# page strips it from the finished reply and POSTs it to /api/chat/remember, a
+# separate request whose turn record is new and has read nothing — so a fact
+# lifted out of a mail sailed past the fence above and into the prompt of every
+# future turn. The route asks read_outside_within() instead.
+#
+# Per person (whose), a time and tool NAMES only, never what was read; pruned on
+# every write so it cannot grow. In process memory, so a restart clears it:
+# that fails OPEN for a remember that lands in the seconds after a restart,
+# which is accepted because the page sends it straight after the reply — a
+# restart mid-reply loses that reply anyway.
+_outside = {}
+_outside_lock = threading.Lock()
+OUTSIDE_WINDOW = 15 * 60
+
+
+def _outside_now(name: str) -> None:
+    who = (whose.current() or "").strip().lower()
+    now = time.time()
+    with _outside_lock:
+        for k in list(_outside):
+            _outside[k] = {n: at for n, at in _outside[k].items()
+                           if now - at < OUTSIDE_WINDOW}
+            if not _outside[k]:
+                del _outside[k]
+        _outside.setdefault(who, {})[name] = now
+
+
+def read_outside_within(seconds: float = OUTSIDE_WINDOW) -> list:
+    """Tools through which this person's turns read outside text, lately."""
+    who = (whose.current() or "").strip().lower()
+    now = time.time()
+    with _outside_lock:
+        got = _outside.get(who) or {}
+        return sorted(n for n, at in got.items() if now - at < seconds)
 
 
 # Letters that look Latin and are not. NFKC folds full-width and stylised

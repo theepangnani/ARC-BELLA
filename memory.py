@@ -36,6 +36,7 @@ import re
 import threading
 import time
 
+import lessons
 import redact
 import storefile
 from pathlib import Path
@@ -68,6 +69,51 @@ MAX_LEN = 240
 
 REFUSED_SECRET = ("I don't keep passwords, keys or card numbers in memory — "
                   "it's sent back to me on every turn and stored in a plain file.")            # one fact, in characters
+
+REFUSED_INSTRUCTION = ("NOT KEPT: that reads as an instruction, not a fact about "
+                       "the person. Memory holds facts, and it is repeated to me on "
+                       "every turn, so an instruction kept here would be obeyed "
+                       "forever. If they want a habit, they can tell me in their own "
+                       "words.")
+
+# A fact is something true about a person. What follows is something to DO, or
+# a way of reaching somebody else's machinery — and a memory is sent back at
+# the top of every future turn, so one of these kept once is an order repeated
+# for as long as the fact lives. Blunt on purpose, as lessons._LOOSENS is: a
+# false refusal costs one sentence, a false pass is permanent. Kept narrower
+# than _LOOSENS, though, since facts legitimately mention buying, selling and
+# mail ("works in sales", "trades stocks") where habits never need to.
+_INSTRUCTION = re.compile(
+    r"(?i)\b(ignore|disregard|override|bypass|forget)\b.{0,30}"
+    r"\b(previous|prior|above|earlier|all|any|your|the|these|those)\b.{0,20}"
+    r"\b(instructions?|rules?|prompts?|guidelines?|directions?)\b"
+    r"|\bsystem prompt\b|\bdeveloper mode\b|\bjailbreak"
+    # Addressed to the assistant rather than about the person.
+    # Not "Bella" or "ARC": a dog is called Bella, and the owner's own project
+    # is ARC, and both are facts.
+    r"|\b(assistant|claude|the ai|the model)\b.{0,20}\b(must|should|shall|is to|has to|needs? to|always|never)\b"
+    r"|\byou\b.{0,10}\b(must|should|shall|are to|have to|need to|will always|always|never)\b"
+    # An order with no subject. "Never eats meat" is a fact written tersely, so
+    # only when what follows is something to do.
+    r"|^\s*(always|never|from now on|whenever|every time|do not|don't)\b.{0,40}"
+    r"\b(send|forward|reply|respond|share|delete|click|open|visit|run|pay|transfer|"
+    r"tell|say|answer|recommend|obey|follow|trust)\b"
+    # Moving something to somebody. Not "email": "his work email is sam@..." is
+    # the commonest fact with an address in it, and it moves nothing.
+    r"|\b(forward|send|share|cc|bcc|upload|post|transfer|pay)\w*\b.{0,60}"
+    r"(@|https?://|\bwww\.)"
+    r"|\btreat\b.{0,60}\bas\b.{0,25}\b(me|mine|the owner|instructions?|commands?)\b"
+    r"|\b(instructions?|commands?|orders?)\b.{0,30}\b(in|from)\b.{0,20}"
+    r"\b(e-?mails?|mail|messages?|texts?|chats?|files?|pages?|sites?|documents?)\b"
+    # A link carrying a credential or a session in its query.
+    r"|https?://\S*[?&#](token|access_token|key|api_key|apikey|sig|signature|auth|code|"
+    r"password|pwd|session|sid|secret)=")
+
+
+def looks_like_instruction(text: str) -> bool:
+    # Matched on normalised text, so look-alike letters and zero-width
+    # characters do not walk past it (lessons._plain has the account of why).
+    return bool(_INSTRUCTION.search(lessons._plain(text or "")))
 
 # Whose memory this request is about. Set per-request by run.py, the same
 # pattern apply_session_google uses for Google tokens — the alternative is
@@ -225,6 +271,8 @@ def remember(fact: str = "", supersede: bool = True) -> str:
     # is a fact about nothing, and keeping it would suggest the rest was kept.
     if redact.looks_secret(f):
         return (REFUSED_SECRET + " A password manager is the right place for it.")
+    if looks_like_instruction(f):
+        return REFUSED_INSTRUCTION
     with _lock:
         try:
             all_of_it = _load()
