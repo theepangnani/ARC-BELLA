@@ -327,6 +327,42 @@ def guest_extra_live(now: float | None = None) -> bool:
     return False
 
 
+# Pictures a guest may send per day: a camera photo or a shared screen, one
+# per message. Every one is an image the owner pays the model to look at, and
+# screen sharing for everybody means a guest sharing all afternoon sends one
+# with every sentence. How many is the owner's call, not a guess made here:
+# unset or 0 is no cap at all, which is how it ships. The owner is never capped.
+def _guest_image_cap() -> int:
+    try:
+        return max(0, int((os.getenv("ARC_GUEST_IMAGES_PER_DAY", "") or "0").strip()))
+    except ValueError:
+        return 0
+
+
+GUEST_IMAGES_PER_DAY = _guest_image_cap()
+_guest_images: dict = {}          # (address, date) -> pictures accepted today
+_guest_images_lock = threading.Lock()
+
+
+def guest_image_allowed(who: str, now: float | None = None) -> bool:
+    """Whether a guest's picture may be attached, counting it if so.
+
+    Memory only: a restart forgives the day's count, which errs towards the
+    guest, and nothing about what anyone sent is kept on disk. Yesterday's
+    counts are dropped as today's arrive, so the dict never grows."""
+    if not GUEST_IMAGES_PER_DAY:
+        return True
+    day = time.strftime("%Y-%m-%d", time.localtime(now or time.time()))
+    key = ((who or "").lower(), day)
+    with _guest_images_lock:
+        for k in [k for k in _guest_images if k[1] != day]:
+            del _guest_images[k]
+        if _guest_images.get(key, 0) >= GUEST_IMAGES_PER_DAY:
+            return False
+        _guest_images[key] = _guest_images.get(key, 0) + 1
+        return True
+
+
 def guest_tools(now: float | None = None) -> set:
     """What a guest may touch at this moment."""
     return (GUEST_TOOLS | GUEST_EXTRA_TOOLS) if guest_extra_live(now) else GUEST_TOOLS
@@ -2706,8 +2742,18 @@ async def chat(request: Request, _=Depends(require_auth)):
         header, b64 = client_image.split(",", 1)
         mt = "image/png" if "png" in header else "image/jpeg"
         if 0 < len(b64) < 8_000_000:
-            _attach_to_last_user([{"type": "image",
-                                   "source": {"type": "base64", "media_type": mt, "data": b64}}])
+            if guest and not guest_image_allowed(whose.current()):
+                # Over the day's pictures: the words still get an answer, only
+                # the picture is left out, and the model is told so it can say
+                # why rather than answering as if it had looked.
+                extra += ("\n\nNO PICTURE THIS TIME: this guest sent a photo or a shared "
+                          "screen, but today's pictures for guests are used up, so it was "
+                          "not attached. Say so in one short sentence, answer what they "
+                          "said as well as you can without it, and do not describe a "
+                          "picture you have not seen.")
+            else:
+                _attach_to_last_user([{"type": "image",
+                                       "source": {"type": "base64", "media_type": mt, "data": b64}}])
 
     # --- the prompt itself -------------------------------------------------
     # Two blocks, and the split is doing two jobs at once.

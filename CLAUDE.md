@@ -88,6 +88,11 @@ back.
   It covers everything except the PC and the owner's phone (`notify_phone`),
   and it expires on its own: `guest_tools()` is asked per request, never
   settled at import.
+- **Pictures from guests** — a camera photo or a shared screen, one per
+  message — are capped per guest per day by `ARC_GUEST_IMAGES_PER_DAY`. Unset
+  or 0 is no cap, which is how it ships; the number is the owner's decision.
+  Over the cap the words are still answered and the picture is left out. The
+  owner is never capped.
 - **Every personal store is per person** (`whose.py`): notes, plan, panels,
   to-dos, reminders, alarms, price alerts, standing rules. A request reads and
   writes its own slice through `_load()`/`_save()`. The background loops serve

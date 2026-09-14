@@ -89,7 +89,22 @@ c.truthy("  the camera wins when there are both",
 # is a decision about screen sharing, not an accident.
 cam = run_src[run_src.index('client_image = payload.get("image")'):]
 cam = cam[:cam.index("# --- the prompt itself")]
-c("  the server's image path is not closed to guests", "guest" in cam, False)
+# Moved once, deliberately: the path now has ONE guest check, the owner's
+# per-day picture cap (ARC_GUEST_IMAGES_PER_DAY, off unless set, and over it
+# the words are still answered — tests/test_guestimages.py). Anything else
+# mentioning guests here is still a decision this guard should stop.
+c("  ...its one guest check is the picture cap, exactly once",
+  cam.count("guest and not guest_image_allowed("), 1)
+_over = cam[cam.index("guest and not guest_image_allowed("):]
+_over = _over[:_over.index("else:")]
+c.truthy("  ...and over the cap the picture is dropped, not the turn",
+         "extra +=" in _over and "return" not in _over and "raise" not in _over
+         and "HTTPException" not in _over)
+_capped = cam.replace("guest and not guest_image_allowed(", "")
+if "NO PICTURE THIS TIME" in _capped:
+    _capped = (_capped[:_capped.index("NO PICTURE THIS TIME")] +
+               _capped[_capped.index("picture you have not seen"):])
+c("  the server's image path is not closed to guests", "guest" in _capped, False)
 c.truthy("  ...and is bounded", "0 < len(b64) < 8_000_000" in cam)
 frame = fn("sharedScreenFrame")
 c.truthy("  no wider than 1280px", "Math.min(1, 1280 / w)" in frame)
