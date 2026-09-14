@@ -97,11 +97,12 @@ def granted_scopes() -> set[str]:
     """
     tok = _tok()
     try:
-        # Under the file's lock: on Windows a read that lands on the instant a
-        # refresh swaps the file in is refused, and an empty set here says
-        # "not granted" about an account that is.
-        with storefile.lock(tok):
-            return set(json.loads(tok.read_text(encoding="utf-8")).get("scopes") or [])
+        # Not under the file's lock: service() holds that across a refresh,
+        # which is an HTTP call, and this runs on the event loop (health,
+        # all_tools). storefile.read retries the read Windows refuses on the
+        # instant a refresh swaps the file in, and the swap is atomic, so the
+        # read is never torn and never an empty "not granted" either.
+        return set(storefile.read(tok, dict).get("scopes") or [])
     except Exception:
         return set()
 
@@ -152,8 +153,13 @@ def service(api: str, version: str, needs=None):
     if not tok.exists():
         raise NotConnected("Google is not connected yet.")
 
-    with storefile.lock(tok):       # see granted_scopes
-        creds = Credentials.from_authorized_user_file(str(tok), SCOPES)
+    # Read without the lock, for the reason in granted_scopes: a caller on the
+    # event loop must not wait out another turn's refresh just to find the
+    # token is still good.
+    try:
+        creds = Credentials.from_authorized_user_info(storefile.read(tok, dict), SCOPES)
+    except storefile.Unreadable as e:
+        raise NotConnected("The Google sign-in couldn't be read just now: %s" % e) from e
 
     # Adding a capability adds a scope, and an old token predates it. Say so
     # plainly — the alternative is a 403 from deep inside the client library.

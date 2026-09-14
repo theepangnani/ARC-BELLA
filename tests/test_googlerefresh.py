@@ -23,12 +23,18 @@ import gauth   # noqa: E402
 
 c = Check()
 refreshes = []
+refreshing = threading.Event()
+scope_waits = []
 
 
 class Creds:
     def __init__(self, blob):
         self.blob = dict(blob)
         self.refresh_token = blob.get("refresh_token")
+
+    @classmethod
+    def from_authorized_user_info(cls, info, scopes):
+        return cls(info)
 
     @classmethod
     def from_authorized_user_file(cls, path, scopes):
@@ -44,6 +50,7 @@ class Creds:
         return not self.valid
 
     def refresh(self, request):
+        refreshing.set()
         time.sleep(0.2)                  # long enough for the others to pile up
         refreshes.append(threading.get_ident())
         self.blob["token"] = "fresh"
@@ -71,7 +78,6 @@ fake("googleapiclient.discovery", build=lambda api, ver, credentials=None, cache
 tok = DATA / "token-under-test.json"
 tok.write_text(json.dumps({"token": "stale", "refresh_token": "r", "scopes": gauth.SCOPES}), encoding="utf-8")
 gauth._tok = lambda: tok
-gauth.granted_scopes = lambda: set(gauth.SCOPES)
 
 got, errors = [], []
 gate = threading.Barrier(4)
@@ -92,7 +98,11 @@ def reader():
     gate.wait()
     end = time.time() + 0.6
     while time.time() < end:
-        if gauth.granted_scopes() != set(gauth.SCOPES):
+        t0 = time.monotonic()
+        got_scopes = gauth.granted_scopes()
+        if refreshing.is_set():
+            scope_waits.append(time.monotonic() - t0)
+        if got_scopes != set(gauth.SCOPES):
             errors.append("a read saw no scopes")
             break
 
@@ -106,6 +116,10 @@ c("  nothing failed", errors, [])
 c("  Google was asked to refresh exactly once", len(refreshes), 1)
 c("  every turn got the fresh token", got, ["fresh"] * 3)
 c("  the file holds the fresh token", json.loads(tok.read_text(encoding="utf-8"))["token"], "fresh")
+# granted_scopes runs on the event loop (health, all_tools), so it must not
+# queue behind a refresh holding the file's lock across its HTTP call.
+c.truthy("  asking for the scopes never waited out the refresh (longest %.3fs)"
+         % max(scope_waits or [0]), bool(scope_waits) and max(scope_waits) < 0.15)
 c("  no temporary file was left behind", [p.name for p in DATA.glob("token-under-test.json.*.tmp")], [])
 
 c.done()
