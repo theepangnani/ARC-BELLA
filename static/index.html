@@ -723,6 +723,11 @@
   .entry.you .body { color: #9fd0e6; border-left: 1px solid var(--cyan-dim); padding-left: 9px; }
   .entry.arc .body { color: var(--ice); border-left: 1px solid var(--accent); padding-left: 9px; }
   .entry.sys .body { color: var(--amber); font-size: 10.5px; letter-spacing: .05em; }
+  .remember-ask { display: flex; gap: 8px; margin-top: 6px; color: var(--amber); font-size: 10.5px; }
+  .remember-ask button { font: inherit; color: var(--ice); background: transparent;
+    border: 1px solid var(--cyan-dim); padding: 3px 10px; cursor: pointer; }
+  .remember-ask button:hover, .remember-ask button:focus-visible { border-color: var(--accent); color: var(--accent); }
+  .remember-ask button:disabled { opacity: .4; cursor: default; }
   .entry.err .body { color: var(--rose); font-size: 10.5px; }
 
   /* ---------- rendered markdown (chat mode replies) ----------
@@ -2565,12 +2570,46 @@ You are an upbeat, motivating coach in the user's corner.
     const f = (fact || "").trim().replace(/\s+/g, " ").slice(0, 240);
     if (f.length < 3) return;
     try {
-      await fetch("/api/chat/remember", {
+      const r = await fetch("/api/chat/remember", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fact: f }),
       });
-      await pullMemory();
+      const d = await r.json().catch(() => ({}));
+      if (d && d.held) askToRemember(String(d.fact || f));
+      else await pullMemory();
     } catch (_) {}
+  }
+
+  /* The server holds a memory back when this turn read something from outside
+     (mail, a web page, a linked account): the text asking to be remembered may
+     have come from there, not from the person. So the person decides, with a
+     click. `confirmed: true` is only ever sent from that click, never from a
+     reply, which is the whole point. */
+  function askToRemember(fact) {
+    const d = addEntry("sys", "SYSTEM", "Bella wants to remember: “" + fact +
+      "”. This came up while reading something from outside. Keep it?");
+    if (!d) return;
+    const row = document.createElement("div");
+    row.className = "remember-ask";
+    const keep = document.createElement("button");
+    keep.type = "button"; keep.textContent = "Keep";
+    const skip = document.createElement("button");
+    skip.type = "button"; skip.textContent = "Skip";
+    const done = said => { row.textContent = said; };
+    keep.addEventListener("click", async () => {
+      keep.disabled = skip.disabled = true;
+      try {
+        await fetch("/api/chat/remember", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fact, confirmed: true }),
+        });
+        await pullMemory();
+        done("Kept.");
+      } catch (_) { done("Couldn't save that. Try again later."); }
+    });
+    skip.addEventListener("click", () => done("Not kept."));
+    row.append(keep, skip);
+    d.appendChild(row);
   }
 
   /* ---------------- thread continuity ----------------
@@ -4249,6 +4288,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       el.spkLine.textContent = text;
       el.spkLine.setAttribute("dir", "auto");
     }
+    return d;
   }
 
   /* A card ARC SHOWS instead of speaking — code, a command, exact wording.
@@ -9610,7 +9650,9 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       pad("spent") + "$" + cost.toFixed(4),
       pad("cap") + (cap ? "$" + cap.toFixed(2) + "   " +
                           Math.round(cost / cap * 100) + "% used" : "none set"),
-      pad("saved") + "$" + Number(t.saved || 0).toFixed(4) + "   by caching",
+      // Net of the cache-write premium, so a day of mostly first-time prompts
+      // can come out below zero; "saved" is never shown as a loss.
+      pad("saved") + "$" + Math.max(0, Number(t.saved) || 0).toFixed(4) + "   by caching",
       pad("turns") + (t.turns || 0),
       pad("tokens") + (t.tok_in || 0) + " in / " + (t.tok_out || 0) + " out",
     ].join("\n"));
@@ -9720,7 +9762,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           "&timezone=auto&forecast_days=4";
         const d = await (await fetch(u)).json();
         const cur = d.current, dl = d.daily;
-        let html = '<div class="fc-loc">' + loc.label + '</div>' +
+        // The label comes back from a reverse-geocoding service: text, never markup.
+        const label = String(loc.label || "").replace(/[&<>"']/g,
+          c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+        let html = '<div class="fc-loc">' + label + '</div>' +
           '<div class="fc-now"><span class="fc-temp">' + Math.round(cur.temperature_2m) + "°</span>" +
           '<span class="fc-cond">' + (WMO[cur.weather_code] || "") + "</span></div>";
         for (let i = 1; i < (dl.time || []).length && i <= 3; i++) {
@@ -10127,7 +10172,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       const pct = (d.pct == null) ? "" : (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
       const cls = (d.pct == null) ? "" : (d.pct >= 0 ? "ch-up" : "ch-down");
       let html = head +
-        '<span>' + range + ' · ' + (d.currency || "") + '</span></div>' +
+        '<span>' + range + ' · ' + escHtml(d.currency || "") + '</span></div>' +
         '<div class="ch-line"><span class="ch-price">' + money(d.last) + '</span>' +
         '<span class="ch-move ' + cls + '">' + pct + '</span></div>' +
         '<canvas></canvas><div class="ch-ranges">';

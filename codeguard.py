@@ -80,6 +80,14 @@ _CODE_EXT = {
     ".ini", ".txt", ".svg", ".ico", ".webmanifest", ".example",
 }
 _CODE_NAMES = {"LICENSE", ".gitignore", ".gitattributes"}
+# Secrets ARC reads but never writes: changing one changes who ARC trusts or
+# lets in as surely as changing run.py does, so they are locked like code and
+# watched by the snapshot. Any *.env counts (arc.env beside a private Bella).
+_SECRET_NAMES = {".env", "credentials.json", "credentials_web.json"}
+# State ARC itself rewrites while it runs, so a snapshot would trip on ARC's
+# own work. Named in a command, though, it is refused like code: nothing a
+# person asks for needs a shell command that touches the sign-ins.
+_STATE_NAMES = {"sessions.json", "token.json", "google_sessions", "__pycache__"}
 _CODE_DIRS = {"static", "prompts", "tests", "docs", ".github"}
 # Never descended into: runtime state, caches, a browser profile, the git store
 # (which is locked as a whole by name, below, rather than listed file by file).
@@ -153,7 +161,8 @@ def code_files() -> list:
         whole = bool(rel.parts) and rel.parts[0] in _CODE_DIRS
         for name in filenames:
             p = Path(dirpath) / name
-            if whole or name in _CODE_NAMES or p.suffix.lower() in _CODE_EXT:
+            if (whole or name in _CODE_NAMES or p.suffix.lower() in _CODE_EXT
+                    or name.lower() in _SECRET_NAMES or name.lower().endswith(".env")):
                 out.append(p)
     return out
 
@@ -174,6 +183,7 @@ def _names() -> set:
     """The distinctive names a command or a window title would use for this
     code: every locked file's name, and this folder's own path and name."""
     names = {p.name.lower() for p in code_files()}
+    names |= _STATE_NAMES | _SECRET_NAMES
     names.discard("")
     return names
 
@@ -208,6 +218,16 @@ _INLINE = re.compile(
     r"(?i)(^|[\s;&|(\"'`\\/])" + _INTERP + r"(\.exe)?[\"']?"
     r"(\s+-(?!-?(c|e|p|r|eval|print|command)(\s|$))\S+(\s+(?!-)[^\s;&|\"']+)?)*"
     r"\s+(-c|-e|-p|-r|--eval|--print|--command|-command|-)(\s|$|[\"'])")
+# A path assembled out of pieces: 'C:\dev\ar'+'c\run.py', "-join", a format
+# string, cmd's delayed !variables!, a variable set and then expanded. Each
+# spells a path the checks below never see. And a link made to this folder is
+# a second name for it that no check here knows about.
+_BUILT = re.compile(
+    r"(?i)[\"']\s*\+\s*[\"'$(]|[)\"']\s*\+\s*\(|\s-join\b|\[string\]::|\[io\.path\]::combine"
+    r"|[\"']\s+-f\s|\bcmd(\.exe)?\s+(/[a-z]\s+)*/v\b|enabledelayedexpansion"
+    r"|(^|[\s;&|(])set\s+\"?[a-z_][a-z0-9_]*=.*%[a-z_][a-z0-9_]*(:[^%]*)?%"
+    r"|\bmklink\b|-itemtype\s+[\"']?(junction|symboliclink|hardlink)|\bfsutil\s+hardlink\b"
+    r"|(^|[\s;&|(])subst\s")
 _PIPED = re.compile(
     r"(?i)\|\s*&?\s*[\"']?" + _INTERP[:-1] + r"|powershell|pwsh|cmd|bash|sh|wsl)(\.exe)?[\"']?(\s|$)")
 # git rewrites the working tree (checkout, pull, reset, apply, stash) — and a
@@ -298,6 +318,9 @@ def check_command(command: str):
     if _HIDDEN.search(cmd):
         return (f"{LAW} — that command hides what it runs (encoded, eval'd or "
                 f"built at run time), so I cannot check it doesn't touch my code.")
+    if _BUILT.search(cmd):
+        return (f"{LAW} — that command builds a path out of pieces, or makes a "
+                f"link, so I cannot see where it ends up. Spell the full path.")
     if _INLINE.search(cmd) or _PIPED.search(cmd):
         return (f"{LAW} — that hands an interpreter its program as text, which "
                 f"can build any path without spelling it, so I cannot check it "

@@ -2116,7 +2116,7 @@ async function pollMkts(){
       const price=s.price>=1000?Math.round(s.price).toLocaleString():(Math.round(s.price*100)/100);
       const pct=(s.pct==null)?"":(s.pct>=0?"+":"")+s.pct.toFixed(1)+"%";
       const cls=(s.pct==null)?"":(s.pct>=0?"up":"down");
-      const sym=String(s.symbol).replace("-USD","");
+      const sym=String(s.symbol).replace("-USD","").replace(/[&<>"']/g,"");
       html+='<span class="m"><span class="sym">'+sym+'</span> <span class="pr">'+price+
         '</span> <span class="'+cls+'">'+pct+'</span></span>';
     });

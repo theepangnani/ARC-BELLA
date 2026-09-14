@@ -60,7 +60,8 @@ for f in ("run.py", "pc.py", "codeguard.py", "static/index.html", "prompts/main.
           "launch-arc.ps1", ".gitignore"):
     c.truthy("  %-26s is locked" % f, f in files)
 c("  but not a data file ARC is meant to write",
-  [f for f in files if f.endswith((".json",)) and "/" not in f], [])
+  [f for f in files if f.endswith((".json",)) and "/" not in f
+   and f not in codeguard._SECRET_NAMES], [])
 c("  and nothing inside .git or a cache is walked",
   [f for f in files if f.startswith((".git/", "__pycache__")) or "/__pycache__/" in f], [])
 
@@ -413,6 +414,45 @@ try:
         pc._within_roots = real_roots
 finally:
     pc._open_default = real_open
+
+print("\nThe secrets beside the code, and paths built out of pieces (14 Sep re-audit):")
+files = {str(p.relative_to(codeguard.ROOT)).replace("\\", "/") for p in codeguard.code_files()}
+for f in (".env", "credentials.json", "credentials_web.json"):
+    if (codeguard.ROOT / f).exists():
+        c.truthy("  %-26s is watched like code" % f, f in files)
+r = str(codeguard.ROOT)
+head, tail = r[:-2], r[-2:]
+for cmd in (
+        "type .env", "del sessions.json", "copy x token.json",
+        "echo x > google_sessions\\a.json", "copy evil.pyc __pycache__\\run.cpython-314.pyc",
+        "powershell -Command \"Set-Content ('%s'+'%s\\.env') 'x'\"" % (head, tail),
+        "powershell -Command \"Add-Content ('%s'+'%s\\ru'+'n.py') 'import os'\"" % (head, tail),
+        "powershell -Command \"Set-Content (('%s','%s\\x.py') -join '') 1\"" % (head, tail),
+        "powershell -Command \"Set-Content ('{0}{1}' -f 'C:\\de','v') 1\"",
+        "cmd /v:on /c \"set a=C:\\de& echo x > !a!v\\t.txt\"",
+        "set a=C:\\de&& echo x > %a%v\\thing.txt",
+        "powershell New-Item -ItemType Junction -Path C:\\Users\\me\\k -Target D:\\x",
+        "mklink /J C:\\Users\\me\\k D:\\x", "subst X: D:\\x",
+        "fsutil hardlink create a b"):
+    c.truthy("  %-60s refused" % cmd[:60], refused(codeguard.check_command, cmd))
+for cmd in ("dir C:\\Users\\me\\Documents", "echo hello + goodbye",
+            "powershell Get-Process | Sort-Object CPU", "ping 8.8.8.8",
+            "set /a 2+3", "type C:\\Users\\me\\Documents\\notes.env.txt"):
+    c("  %-60s allowed" % cmd, codeguard.check_command(cmd), None)
+
+print("\nAn export goes where exports go, never over code or a stranger's file:")
+import selfheal   # noqa: E402
+import tempfile   # noqa: E402
+c.truthy("  not onto run.py", "won't write an export inside" in selfheal.export_all(str(codeguard.ROOT / "run.py.json"))
+         or "isn't an ARC export" in selfheal.export_all(str(codeguard.ROOT / "run.py.json")))
+c.truthy("  not as run.py", "are .json files" in selfheal.export_all(str(codeguard.ROOT / "run.py")))
+c.truthy("  not as .env", "are .json files" in selfheal.export_all(str(codeguard.ROOT / ".env")))
+with tempfile.TemporaryDirectory() as d:
+    other = os.path.join(d, "settings.json")
+    open(other, "w").write("{}")
+    c.truthy("  not over somebody's existing .json", "isn't an ARC export" in selfheal.export_all(other))
+    c("  which is left as it was", open(other).read(), "{}")
+    c.truthy("  but into a folder of their own, fine", "Exported" in selfheal.export_all(d))
 
 print("\nThe law is written where the next person will read it:")
 src = open(ARC / "codeguard.py", encoding="utf-8").read()
