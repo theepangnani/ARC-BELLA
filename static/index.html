@@ -10430,8 +10430,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           baseScale = parseFloat(getComputedStyle(el).getPropertyValue("--cs")) || 1;
           baseW = r.width || 1;
           el.classList.add("sizing");
+          el.setPointerCapture(pid);
         }
-        el.setPointerCapture(pid);
+        // Not captured yet for a plain press. Capturing here sends the pointerup
+        // to the card, and the click then lands on the card rather than what
+        // was pressed: the chart's months, its arrows and its stock tabs all
+        // did nothing (14 Sep, found by the owner). Captured below, once the
+        // press has moved far enough to be a drag.
       });
 
       el.addEventListener("pointermove", e => {
@@ -10448,7 +10453,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           return;
         }
         if (!dragging && Math.hypot(dx, dy) < 5) return;   // still a click
-        if (!dragging) { dragging = true; el.classList.add("dragging"); }
+        if (!dragging) {
+          dragging = true;
+          el.classList.add("dragging");
+          try { el.setPointerCapture(pid); } catch (_) {}
+        }
         const w = el.offsetWidth, h = el.offsetHeight;
         const x = clamp(baseL + dx, 4, window.innerWidth - w - 4);
         const y = clamp(baseT + dy, 4, window.innerHeight - h - 4);
