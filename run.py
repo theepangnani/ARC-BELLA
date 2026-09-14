@@ -493,6 +493,13 @@ def dispatch_tool(name: str, args: dict, local: bool = True,
 # until someone has checked it is plain HTTP. Linked-account kits (LINK_KITS)
 # count too, looked up at call time because they are listed further down.
 OFF_LOOP_KITS = frozenset({gcal, gmail, gextra, maps, market, youtubeapi, connectors})
+# And single tools from a kit that is NOT plain HTTP throughout. extras also
+# keeps the to-do list and reminders, which the background loop writes too, so
+# the kit stays on the loop; these five are only web lookups (8–12 s timeouts,
+# retried), and they are guest tools. On the loop, a slow weather service froze
+# every other request, the owner's included, for as long as it took (Claude 4's
+# review). tests/test_offloop.py checks that none of them touches a store.
+OFF_LOOP_TOOLS = frozenset({"weather", "sun_times", "stock", "news", "convert_money"})
 
 
 async def dispatch_off_loop(name: str, args: dict, local: bool = True,
@@ -509,7 +516,7 @@ async def dispatch_off_loop(name: str, args: dict, local: bool = True,
     a token. Exception, not BaseException, so a cancelled turn still cancels."""
     kit = TOOL_OWNER.get(name)
     try:
-        if kit in OFF_LOOP_KITS or kit in LINK_KITS.values():
+        if kit in OFF_LOOP_KITS or kit in LINK_KITS.values() or name in OFF_LOOP_TOOLS:
             return await asyncio.to_thread(dispatch_tool, name, args, local=local, guest=guest)
         return dispatch_tool(name, args, local=local, guest=guest)
     except Exception as e:

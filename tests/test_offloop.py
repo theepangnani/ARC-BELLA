@@ -35,6 +35,26 @@ c("  a linked account (Slack) goes to a thread",
 for kit in (run.pc, run.automation):
     c("  %s stays on the loop" % kit.__name__, kit in run.OFF_LOOP_KITS or kit in run.LINK_KITS.values(), False)
 
+print("\nThe web lookups in extras leave the loop, and its stores do not:")
+# extras is not allowed off as a kit: its to-do list and reminders are written
+# by the background loop too. Only named tools go, and only ones that are pure
+# web lookups — checked by reading their source (and the helpers they call),
+# so a store added to one later puts it back in question here.
+import inspect   # noqa: E402
+import extras    # noqa: E402
+c("  the kit itself is not on the allowlist", run.extras in run.OFF_LOOP_KITS, False)
+c("  the five lookups are", set(run.OFF_LOOP_TOOLS), {"weather", "sun_times", "stock", "news", "convert_money"})
+c("  ...and each is really an extras tool", {run.TOOL_OWNER.get(t) for t in run.OFF_LOOP_TOOLS}, {run.extras})
+STORE_WORDS = ("storefile", "_read(", "_load(", "_save(", "_update(", "_holding", "whose",
+               "DATA_DIR", "TODO_FILE", "REMIND_FILE", "open(", "Path(")
+for fn in (extras.weather, extras.sun_times, extras.stock, extras.news, extras.convert_money,
+           extras.yahoo_quote, extras._money, extras._clock, extras._mins):
+    src = inspect.getsource(fn)
+    c("  %-14s touches no store" % fn.__name__, [w for w in STORE_WORDS if w in src], [])
+stores = {t["name"] for t in extras.TOOLS} - set(run.OFF_LOOP_TOOLS)
+c.truthy("  every other extras tool (to-dos, reminders) stays on the loop",
+         stores and not (stores & run.OFF_LOOP_TOOLS))
+
 
 class Blk:
     def __init__(self, t):
@@ -122,6 +142,13 @@ c("  ...still knowing who asked", s.get("who"), (OWNER, OWNER))
 c.truthy("  /api/health answered while the tool was still running",
          bool(s.get("health")) and s["health"][0] == 200 and s["health"][2] is False)
 c("  the turn itself still finished", s.get("chat"), 200)
+
+print("\nA guest's weather lookup that hangs:")
+s = asyncio.run(turn_with("weather", blocking=True))
+c("  ran on a worker thread", s.get("on_loop"), False)
+c.truthy("  /api/health answered meanwhile",
+         bool(s.get("health")) and s["health"][0] == 200 and s["health"][2] is False)
+c("  the turn finished", s.get("chat"), 200)
 
 print("\nA desktop tool:")
 s = asyncio.run(turn_with("screenshot", blocking=False))
