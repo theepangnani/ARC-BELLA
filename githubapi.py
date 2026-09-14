@@ -131,7 +131,7 @@ def my_repos(limit: int = 15) -> str:
 
 
 def search(query: str = "", kind: str = "repositories", limit: int = 5) -> str:
-    q = (query or "").strip()
+    q = str(query or "").strip()
     if not q:
         return "Search GitHub for what?"
     kind = kind if kind in ("repositories", "issues", "code") else "repositories"
@@ -263,3 +263,8 @@ def run_tool(name: str, args: dict) -> tuple:
         return "Wrong arguments for %s: %s" % (name, e), True
     except httpx.HTTPError as e:
         return "Couldn't reach GitHub: %s" % type(e).__name__, True
+    # Anything else — an argument of a shape nobody expected, an answer of a
+    # shape GitHub never documented — fails this one tool, never the turn.
+    # The type only: an exception's text can carry the request, token and all.
+    except Exception as e:
+        return "GitHub didn't work (%s)." % type(e).__name__, True

@@ -147,7 +147,7 @@ def _who(addr: dict) -> str:
 
 def search_mail(query: str = "", max_results: int = 10) -> str:
     n = _clamp(max_results, 10, 1, 25)
-    q = (query or "").strip()
+    q = str(query or "").strip()
     fields = "id,subject,from,receivedDateTime,bodyPreview,isRead"
     if q:
         # $search takes a quoted KQL phrase; a stray double quote inside it
@@ -208,7 +208,7 @@ def events(days_ahead: int = 1, query: str = "") -> str:
     if err:
         return err
     items = (d or {}).get("value") or []
-    q = (query or "").strip().lower()
+    q = str(query or "").strip().lower()
     if q:
         # Filtered here rather than with $filter: calendarView's support for
         # filtering on subject is patchy, and fifty events is nothing to scan.
@@ -237,7 +237,7 @@ def events(days_ahead: int = 1, query: str = "") -> str:
 # ---- OneDrive --------------------------------------------------------------
 
 def drive_search(query: str = "", limit: int = 10) -> str:
-    q = (query or "").strip()
+    q = str(query or "").strip()
     if not q:
         return "Search OneDrive for what?"
     n = _clamp(limit, 10, 1, 25)
@@ -353,3 +353,8 @@ def run_tool(name: str, args: dict) -> tuple:
         return "Wrong arguments for %s: %s" % (name, e), True
     except httpx.HTTPError as e:
         return "Couldn't reach Microsoft: %s" % type(e).__name__, True
+    # Anything else — an argument of a shape nobody expected, an answer of a
+    # shape Microsoft never documented — fails this one tool, never the turn.
+    # The type only: an exception's text can carry the request, token and all.
+    except Exception as e:
+        return "Microsoft didn't work (%s)." % type(e).__name__, True

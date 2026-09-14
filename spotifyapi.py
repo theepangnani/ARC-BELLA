@@ -101,7 +101,7 @@ def playlists() -> str:
 
 
 def search(query: str = "", kind: str = "track") -> str:
-    q = (query or "").strip()
+    q = str(query or "").strip()
     if not q:
         return "Search Spotify for what?"
     kind = kind if kind in ("track", "artist", "album", "playlist") else "track"
@@ -118,8 +118,8 @@ def search(query: str = "", kind: str = "track") -> str:
 
 def play(uri: str = "", query: str = "") -> str:
     body = None
-    uri = (uri or "").strip()
-    if not uri and (query or "").strip():
+    uri = str(uri or "").strip()
+    if not uri and str(query or "").strip():
         d, err = _call("GET", "/search", params={"q": query, "type": "track", "limit": 1})
         if err:
             return err
@@ -228,3 +228,8 @@ def run_tool(name: str, args: dict) -> tuple:
         return "Wrong arguments for %s: %s" % (name, e), True
     except httpx.HTTPError as e:
         return "Couldn't reach Spotify: %s" % type(e).__name__, True
+    # Anything else — an argument of a shape nobody expected, an answer of a
+    # shape Spotify never documented — fails this one tool, never the turn.
+    # The type only: an exception's text can carry the request, token and all.
+    except Exception as e:
+        return "Spotify didn't work (%s)." % type(e).__name__, True
