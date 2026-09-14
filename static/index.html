@@ -595,8 +595,20 @@
     display: grid; place-items: center;
     cursor: pointer; user-select: none;
     -webkit-tap-highlight-color: transparent;
+  }
+  /* The soft glow round the core, only while it is doing something. A blur
+     over bars that change shape every frame has to be redrawn every frame, and
+     measured on 13 Sep 2026 it was the single most expensive thing on the page
+     — a third of all the CPU the window used, spent making a resting ring glow.
+     Idle, the ring rests without it; the moment Bella listens, thinks, speaks or
+     is touched, "lively" is set and the glow and the breathing disc come back. */
+  .core-wrap.lively {
     filter: drop-shadow(0 0 20px rgba(95,217,255,calc(.10 + var(--amp) * .5)));
   }
+  @media (prefers-reduced-motion: no-preference) {
+    .core-wrap { transition: filter .8s ease; }    /* fades in and out, costs only while it fades */
+  }
+  .core-wrap:not(.lively) .glow-disc { animation-play-state: paused; }
   .core-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 
   /* while holding to speak (armed), a soft ring pulses outward from the core */
@@ -4470,7 +4482,45 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   const hearFill = document.getElementById("hearFill");
   function noteHeard(strength) { micActivity = Math.min(1, Math.max(micActivity, strength || 0)); }
 
-  function renderLoop() {
+  /* HOW OFTEN THE CORE IS DRAWN. It was every display frame, always — sixty
+     or more times a second of rewriting seventy-odd bars and a --amp value on
+     the root that a drop-shadow on the whole core, a blurred glow disc and
+     four shadowed corners all read. Left open on the desktop that was a third
+     of every core on the machine, measured on 13 Sep 2026, including the one
+     Bella's own server and speech recognition were trying to use. While
+     nothing is happening the core breathes slowly, and a slow breath does not
+     need sixty frames; the moment somebody is listening, speaking, touching
+     or turning it, it is drawn at the full rate again. */
+  const IDLE_FRAME_MS = 1000 / 20;
+  let lastDrawn = 0;
+  let ampWritten = "";
+  let hearWritten = "";
+
+  function coreIsBusy() {
+    return state.mode !== "standby" || state.holding || ptr.on || ptr.fade > 0 ||
+           !!drag || spinVel !== 0 || micActivity > 0.02 || lvlShown > 0.02;
+  }
+
+  // The glow stays for a moment after the core goes quiet, so it fades with the
+  // last word rather than snapping off between two sentences.
+  const LIVELY_HOLD_MS = 2500;
+  let livelyUntil = 0, livelyShown = null;
+
+  function renderLoop(now) {
+    requestAnimationFrame(renderLoop);
+    now = now || performance.now();
+    const busy = coreIsBusy();
+    if (busy) livelyUntil = now + LIVELY_HOLD_MS;
+    const lively = now < livelyUntil;
+    if (lively !== livelyShown && el.core) {      // a class change, not a style per frame
+      livelyShown = lively;
+      el.core.classList.toggle("lively", lively);
+    }
+    if (!busy && now - lastDrawn < IDLE_FRAME_MS) return;
+    // The idle breath was tuned per frame at sixty a second; scale it by the
+    // time that actually passed so a slower idle rate breathes at the same pace.
+    const step = lastDrawn ? Math.min(4, (now - lastDrawn) / (1000 / 60)) : 1;
+    lastDrawn = now;
     let amp = 0;
     const N = geo.length || BAR_COUNT;   // the sphere uses more bars than the ring
     const speaking = state.mode === "speaking";
@@ -4500,7 +4550,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       amp = Math.min(1, (sum / N) * 2.6);
     } else if (speaking) {
       // browser synthesis gives us no output tap, so approximate the cadence
-      synthPhase += 0.13;
+      synthPhase += 0.13 * step;
       let sum = 0;
       for (let i = 0; i < N; i++) {
         const v = Math.abs(Math.sin(synthPhase + i * 0.42)) * 0.55
@@ -4512,7 +4562,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     } else {
       // No analyser here (mobile hands the mic to the recogniser). Drive the
       // core from the recogniser's "I hear you" events so you can SEE it listen.
-      micActivity *= 0.9;                       // decay between events
+      micActivity *= Math.pow(0.9, step);       // decay between events, per 60th of a second
       for (let i = 0; i < N; i++) {
         const wobble = micActivity * (0.55 + 0.45 * Math.abs(Math.sin(idlePhase * 3 + i * 0.5)));
         setBar(i, Math.max(idleFloor(i), wobble));
@@ -4520,7 +4570,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       amp = Math.max(0.02 + 0.02 * (0.5 + 0.5 * Math.sin(idlePhase * 0.9)), micActivity);
     }
 
-    idlePhase += 0.028;
+    idlePhase += 0.028 * step;
 
     // Ease the touch bulge in and out so it swells and settles rather than
     // snapping on and off.
@@ -4531,13 +4581,21 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (depthMode === "3d") {
       // a flick keeps turning, then settles back to the idle drift.
       // spinMul (user control) scales the automatic turn; 0 stops it.
-      spin += (speaking ? 0.011 : 0.0042) * spinMul + spinVel;
+      spin += (speaking ? 0.011 : 0.0042) * spinMul * step + spinVel;
       spinVel *= 0.94;
       if (Math.abs(spinVel) < 0.00004) spinVel = 0;
       drawWire();
     }
     const shown = Math.min(1, amp * boost());
-    document.documentElement.style.setProperty("--amp", shown.toFixed(3));
+    // Only when it visibly moves. --amp sits on the root, and every write
+    // restyles everything that reads it — a drop-shadow over the whole core, a
+    // blurred disc and four shadowed corners — so writing the same glow sixty
+    // times a second repainted all of that sixty times a second for nothing.
+    const ampNow = shown.toFixed(2);
+    if (ampNow !== ampWritten) {
+      ampWritten = ampNow;
+      document.documentElement.style.setProperty("--amp", ampNow);
+    }
 
     // What ARC is HEARING. Note this is NOT `amp`: amp drives the visualiser,
     // and in three of its four branches it is not an input level at all — it
@@ -4555,7 +4613,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     if (lvlShown < 0.005) lvlShown = 0;      // settle at a clean zero
 
     if (hearFill) {
-      hearFill.style.setProperty("--hear", Math.round(Math.min(1, inLevel) * 100) + "%");
+      const hear = Math.round(Math.min(1, inLevel) * 100) + "%";
+      if (hear !== hearWritten) { hearWritten = hear; hearFill.style.setProperty("--hear", hear); }
     }
     if (state.booted) {
       const pct = Math.round(Math.min(1, lvlShown) * 100);
@@ -4564,7 +4623,6 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         el.rLvl.textContent = pct + "%";
       }
     }
-    requestAnimationFrame(renderLoop);
   }
 
   /* ---------------- 2D / 3D projection ----------------
