@@ -87,8 +87,7 @@ CASES = [
     ("set a timer for 5 minutes", FAST, "one call"),
     ("set an alarm for 7 am", FAST, "one call"),
     ("set an alarm for 6:30 tomorrow morning", FAST,
-     "one call; EASY's 'set a?' does not match 'set an', so a longer alarm falls"
-     " through to 'not clearly simple'", MISS),
+     "one call; 'set an' is a standing phrase as much as 'set a'"),
     ("remind me to call mum at 5", FAST, "one reminder"),
     ("remind me to take the bins out tonight", FAST, "one reminder, a few more words"),
     ("wake me up at 6 tomorrow", FAST, "an alarm in other words"),
@@ -131,9 +130,9 @@ CASES = [
     ("right click on the desktop", SMART, "a click"),
     ("move the mouse to the top left", SMART, "the mouse is the screen"),
     ("find the settings icon", SMART,
-     "looking for something on screen; 'icon' and 'find' are not HANDS words", MISS),
+     "looking for something on screen"),
     ("tick the checkbox", SMART,
-     "a click by another name; 'tick' and 'checkbox' are not HANDS words", MISS),
+     "a click by another name"),
 
     # ------------------------------------------------------------ corrections
     ("no, the other one", SMART, "the last try missed"),
@@ -146,9 +145,8 @@ CASES = [
     ("nope, wrong one", SMART, "the last try missed"),
     ("no I meant the calendar app", SMART, "a correction without a comma"),
     ("still not working", SMART,
-     "a correction; CORRECTION knows 'work' after didn't/doesn't but not 'still not"
-     " working'", MISS),
-    ("it's still broken", SMART, "a correction; 'broken' is in no list", MISS),
+     "a correction: the last try missed"),
+    ("it's still broken", SMART, "a correction: the last try missed"),
 
     # ------------------------------------------------------------- follow-ups
     (("click the blue button", "yes"), SMART, "yes to a click is the click"),
@@ -167,10 +165,9 @@ CASES = [
     (("explain how caching works", "okay thanks"), FAST, "an ending after a hard turn"),
     (("scroll down", "no, you're right"), FAST, "agreement, not a correction"),
     (("write me a python script that renames files", "make it recursive"), SMART,
-     "changing the code it just wrote; only FOLLOW words inherit, so this reads as"
-     " three easy words", MISS),
+     "changing the code it just wrote, in the person's own words"),
     (("plan my week around my three deadlines", "move the gym to thursday"), SMART,
-     "reworking a plan; the same gap, a follow-up in its own words", MISS),
+     "reworking a plan, in the person's own words"),
 
     # ----------------------------------------------------------------- traps
     # The same words as the hard lists, meaning something easy.
@@ -179,16 +176,16 @@ CASES = [
     ("I need a hard copy", FAST, "'hard copy' is a noun"),
     ("no, you're right", FAST, "agreement"),
     ("why is the sky blue", SMART, "an explanation; the bias allows it even when Haiku would cope"),
-    ("time to go to bed", FAST, "an announcement; 'go to' reads as navigating", MISS),
-    ("field hockey scores today", FAST, "a score; 'field' reads as a form field", MISS),
+    ("time to go to bed", FAST, "an announcement, not navigating"),
+    ("field hockey scores today", FAST, "a score, not a form field"),
     ("the window cleaner comes tomorrow", FAST,
-     "a note about the day; 'window' reads as a window on screen", MISS),
-    ("what's the area code for Toronto", FAST, "a lookup; 'code' reads as programming", MISS),
-    ("what's my plan for today", FAST, "reading the plan store; 'plan' reads as planning", MISS),
+     "a note about the day, not a window on screen"),
+    ("what's the area code for Toronto", FAST, "a lookup, not programming"),
+    ("what's my plan for today", FAST, "reading the plan store, not planning"),
     ("leafs vs habs score", FAST, "a score; 'vs' reads as a comparison", MISS),
     ("what's the weather and what time is it", FAST, "two lookups; 'and' is not a clause"),
     ("what time is it? what's the weather?", FAST,
-     "two lookups; the two-question rule does not look at what the questions are", MISS),
+     "two lookups, each a standing phrase"),
 
     # --------------------------------------------------------- hard questions
     ("why is my code failing", SMART, "debugging"),
@@ -206,10 +203,10 @@ CASES = [
     ("translate good morning into Tamil", SMART, "translation, which the bias keeps on Sonnet"),
     ("can you look at my calendar next week and tell me which day is least busy",
      SMART, "reading, then judging"),
-    ("fix this bug", SMART, "debugging; 'bug' is not in HARD, only 'debug'", MISS),
-    ("help me with my homework", SMART, "reasoning, however short", MISS),
-    ("how does a mortgage work", SMART, "an explanation; HARD has 'how come' but not 'how does'", MISS),
-    ("how do I reset my router", SMART, "troubleshooting steps; 'how do I' is in no list", MISS),
+    ("fix this bug", SMART, "debugging"),
+    ("help me with my homework", SMART, "reasoning, however short"),
+    ("how does a mortgage work", SMART, "an explanation"),
+    ("how do I reset my router", SMART, "troubleshooting steps"),
 
     # ------------------------------------------------------ shapes of message
     ({"messages": [{"role": "user", "content": [{"type": "text", "text": "what's the time"}]}]},

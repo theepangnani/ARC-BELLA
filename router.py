@@ -44,13 +44,21 @@ SHORT = 12
 # and trade-offs, arithmetic, anything about code, anything asking for a plan
 # or an explanation, and anything conditional ("if X then Y") — all of which
 # Haiku will answer confidently and less well.
+#
+# Added from the route corpus (tests/test_routecorpus.py): "how does a mortgage
+# work" and "how do I reset my router" are explanations and step-by-step help,
+# "fix this bug" is debugging, and "help me with my homework" is reasoning
+# however few words it takes. And taken back out, as nouns: "my plan for today"
+# is reading the plan store, and "the area code" is not programming.
 HARD = re.compile(r"""
-    \b(why|how\s+come|explain|compare|versus|vs|trade[- ]?off|
-       plan|design|strategy|decide|choose|recommend|
-       analyse|analyze|review|debug|refactor|optimi[sz]e|
+    \b(why|how\s+come|how\s+does|how\s+do\s+(i|you|we)|how\s+can\s+i|
+       explain|compare|versus|vs|trade[- ]?off|
+       (?<!my\s)plan|design|strategy|decide|choose|recommend|
+       analyse|analyze|review|debug|bug|refactor|optimi[sz]e|
        calculate|work\s+out|figure\s+out|estimate|forecast|
-       code|script|function|error|exception|stack\s*trace|regex|
-       summari[sz]e|draft|write\s+me|rewrite|translate|
+       (?<!area\s)(?<!zip\s)(?<!postal\s)(?<!post\s)code|
+       script|function|error|exception|stack\s*trace|regex|
+       summari[sz]e|draft|write\s+me|rewrite|translate|homework|help\s+me\s+with|
        pros?\s+and\s+cons?|should\s+i|worth\s+it|what\s+if)\b
 """, re.I | re.X)
 
@@ -69,12 +77,18 @@ HARD = re.compile(r"""
 #
 # Not "what type of dog", "a press release" or "a hard copy": those are the
 # same words as nouns, and a bug check found each going to Sonnet for nothing.
+#
+# From the route corpus as well: "find the settings icon" and "tick the
+# checkbox" are clicks by other names, while "time to go to bed", "field
+# hockey" and "the window cleaner" are nothing to do with a screen.
 HANDS = re.compile(r"""
     \b(click|double[- ]?click|right[- ]?click|tap\s+on|scroll|drag|
        type(?!\s+of\b)|press(?!\s+(release|conference)\b)|
-       select|highlight|fill\s+in|fill\s+out|log\s*in|sign\s*in|
-       go\s+to|navigate|download|upload|install|(?<!hard\s)copy|paste|
-       button|tab|field|menu|window|
+       select|highlight|fill\s+in|fill\s+out|log\s*in|sign\s*in|tick|untick|
+       go\s+to(?!\s+(bed|sleep|work|school|church|the\s+gym)\b)|
+       navigate|download|upload|install|(?<!hard\s)copy|paste|
+       find\s+the|icon|checkbox|check\s*box|
+       button|tab|field(?!\s+(hockey|trip)\b)|menu|window(?!\s+(cleaner|seat|sill)\b)|
        (on|at)\s+(my|the|this)\s+screen|this\s+page|that\s+page)\b
 """, re.I | re.X)
 
@@ -86,7 +100,8 @@ HANDS = re.compile(r"""
 CORRECTION = re.compile(r"""
     ^\s*no[,.!]?\s+(not|the\s+other|that'?s\s+(not|wrong)|i\s+(said|meant)|wrong|you\s+missed)\b
     |\b(that'?s|you'?re|you\s+got\s+it|still)\s+(wrong|not\s+(it|right|what))\b
-    |\b(didn'?t|doesn'?t|did\s+not|does\s+not|isn'?t)\s+work
+    |\b(didn'?t|doesn'?t|did\s+not|does\s+not|isn'?t|still\s+not)\s+work
+    |\b(it'?s|that'?s|it\s+is|still)\s+(still\s+)?broken\b
     |\b(try\s+again|not\s+that\s+one|wrong\s+(one|window|button|thing)|you\s+missed)\b
 """, re.I | re.X)
 
@@ -108,6 +123,17 @@ _FOLLOW_WORD = r"""
 """
 FOLLOW = re.compile(r"^\s*(?:" + _FOLLOW_WORD + r"\b[\s,.!]*){1,3}$", re.I | re.X)
 
+# A follow-up in the person's own words, reworking what the last turn made:
+# "make it recursive" after a script, "move the gym to thursday" after a plan.
+# Three or four ordinary words, so on their own they read as easy, and FOLLOW
+# only knows the stock phrases. They inherit from the request before, exactly
+# like FOLLOW does, so "make it 15" after a timer stays on the cheap brain.
+EDIT = re.compile(r"""
+    ^\s*(make|change|move|add|remove|drop|swap|switch|put|use|rename|
+        shorten|lengthen|simplify|instead|actually|but)\b
+""", re.I | re.X)
+
+
 # Multi-clause questions, which are almost never simple lookups.
 CLAUSES = re.compile(r"\b(and\s+then|after\s+that|also|as\s+well\s+as|but\s+if|"
                      r"instead\s+of|rather\s+than|unless|whereas)\b", re.I)
@@ -120,7 +146,7 @@ EASY = re.compile(r"""
     |^\s*what(?:'s|\s+is)\s+the\s+(time|date|day|weather|temperature)\b
     |^\s*(what\s+time|what\s+day|what'?s\s+today)\b
     |^\s*(play|pause|resume|skip|next|louder|quieter|volume|mute|unmute)\b
-    |^\s*(set\s+a?\s*(timer|alarm)|remind\s+me)\b
+    |^\s*(set\s+(an?\s+)?(timer|alarm)|remind\s+me)\b
     |^\s*(open|launch|close)\s+\w+\s*$
 """, re.I | re.X)
 
@@ -180,7 +206,15 @@ def why(messages, has_image: bool = False, tools_likely: bool = False) -> tuple:
     if CLAUSES.search(text):
         return "smart", "more than one clause"
     if text.count("?") > 1:
-        return "smart", "more than one question"
+        # Unless every one of them is a standing lookup: "what time is it?
+        # what's the weather?" is two easy questions, not one hard one.
+        parts = [p.strip() for p in text.split("?") if p.strip()]
+        if not all(EASY.match(p) for p in parts):
+            return "smart", "more than one question"
+    if words <= 6 and EDIT.match(text) and not EASY.match(text):
+        before = _before_last_user(messages)
+        if before and why(before)[0] == "smart":
+            return "smart", "changing what a harder request made"
     if words <= 6 and FOLLOW.match(text):
         before = _before_last_user(messages)
         if before:
