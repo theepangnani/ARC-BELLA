@@ -4007,7 +4007,22 @@ async def memory_remember(request: Request, _=Depends(require_auth)):
     """
     apply_session_memory(request)
     payload = await read_json(request)
-    return JSONResponse({"said": memory.remember(payload.get("fact") or ""),
+    fact = payload.get("fact")
+    fact = fact if isinstance(fact, str) else ""
+    # The directive is in the model's reply, and the model may have been
+    # quoting something it read. If this person's turns read outside text
+    # lately (see lessons.read_outside_within), the fact is HELD, not kept and
+    # not dropped: the page shows it and sends it again with confirmed: true
+    # only when the person says yes. confirmed comes from a click on the page,
+    # never from the reply, so nothing the model wrote can set it.
+    # One that would be refused anyway (a secret, an instruction) is refused
+    # now, rather than offered to the person as something to say yes to.
+    read = lessons.read_outside_within()
+    if (read and payload.get("confirmed") is not True and len(fact.strip()) >= 3
+            and not redact.looks_secret(fact) and not memory.looks_like_instruction(fact)):
+        return JSONResponse({"said": "Held until you confirm.", "held": True,
+                             "fact": fact, "read": read, "count": memory.count()})
+    return JSONResponse({"said": memory.remember(fact), "held": False,
                          "count": memory.count()})
 
 
