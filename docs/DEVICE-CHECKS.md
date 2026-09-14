@@ -34,17 +34,22 @@ Do this on the desktop, then again on your phone through the public address.
 
 **On a laptop through the public address:**
 1. Press Live screen.
-2. **You should see:** the browser asks which screen or window to share. Pick one,
-   then ask "what's on my screen?"
-3. **You should see:** Bella describes the laptop's screen, not the desktop's, and
-   says she can look but not click.
-4. Press the browser's own "Stop sharing". The button should turn off.
-5. Cancel the picker once. There should be no error message.
+2. **You should see:** the browser asks which screen or window to share. Pick one.
+   A SYSTEM note appears saying she will see it with every message and can look,
+   not click.
+3. Ask "what's on my screen?" **You should see:** Bella describes the laptop's
+   screen, not the desktop's.
+4. Press the browser's own "Stop sharing". **You should see:** the button goes back
+   to "Live screen: off", and a SYSTEM note says "Screen sharing stopped. I can't
+   see your screen now."
+5. Press Live screen again and cancel the picker. **You should see:** no message at
+   all, and the button stays off.
 
 **On a phone:**
-1. Press Live screen.
-2. **You should see:** most phone browsers can't share a screen. Bella should say so
-   and suggest the camera button, not show an error.
+1. **You should see:** the button already reads "Live screen: n/a", because most
+   phone browsers can't share a screen.
+2. Press it. **You should see:** a SYSTEM note saying this browser can't share its
+   screen, and suggesting a computer or the camera button.
 
 ## 3. The guest picture limit
 
