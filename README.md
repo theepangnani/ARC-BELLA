@@ -1044,6 +1044,7 @@ passphrase any more.
 | `ARC_SESSION_MAX_HOURS` | `0` | Optional hard stop, measured from sign-in, however busy the session is. `0` = off. Capped at 4 when on. |
 | `ARC_ALARM_KEEPS_SESSION` | `1` | While an alarm is set, its poll counts as use so the tab is still signed in when the alarm goes off. `0` = strict idle timeout, and alarms reach the phone only. |
 | `ARC_PUBLIC_URL` | *(empty)* | The origin Google redirects back to. Pin it on anything public. |
+| `ARC_ALLOWED_HOSTS` | *(empty)* | Extra host names this server answers to, comma-separated (the funnel's `…ts.net` name when `ARC_PUBLIC_URL` is left empty). Loopback at the listening port and `ARC_PUBLIC_URL`'s host are always allowed; any other Host is refused with 421. |
 | `ARC_SECRET` | *(random)* | Signs the short-lived sign-in cookie. Set it, or a restart mid-sign-in fails. |
 | `ARC_AUTH_MODE` | `google` | `open` disables sign-in entirely, and is refused unless the bind is loopback. |
 | `ARC_SECURITY_HEADERS` | `1` | CSP, nosniff, frame denial, referrer and permissions policy on every response; HSTS when the request came over HTTPS. `0` turns the lot off, which is the escape hatch if a policy ever breaks the page. |

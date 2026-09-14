@@ -209,12 +209,12 @@ time.sleep(0.1)
 with TestClient(run.app) as client:
     O = {run.COOKIE: session.create(OWNER, "browser")}
     G = {run.COOKIE: session.create(GUEST, "browser")}
-    g = client.get("/api/reminders/due", cookies=G)
+    g = client.post("/api/reminders/due", cookies=G)
     c("  the guest's poll is answered", g.status_code, 200)
     c("  with the guest's reminder only", [r["label"] for r in g.json()["due"]], ["guest's thing"])
-    o = client.get("/api/reminders/due", cookies=O).json()["due"]
+    o = client.post("/api/reminders/due", cookies=O).json()["due"]
     c("  and the owner's is still waiting for the owner", [r["label"] for r in o], ["owner's thing"])
-    c("  a stranger is still turned away", client.get("/api/reminders/due").status_code, 401)
+    c("  a stranger is still turned away", client.post("/api/reminders/due").status_code, 401)
     session.revoke_all()
 
 print("\nOld data stays the owner's, whoever touches it first:")

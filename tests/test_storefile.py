@@ -199,14 +199,14 @@ with TestClient(run.app) as client:
     key = session.key_for(gsid)
     session._sessions[key]["last_seen"] = time.time() - 600
     before = session._sessions[key]["last_seen"]
-    client.get("/api/alarms/due", cookies={run.COOKIE: gsid})
+    client.post("/api/alarms/due", cookies={run.COOKIE: gsid})
     c("  the guest's alarm poll does not refresh their idle clock",
       session._sessions[key]["last_seen"], before)
     osid = session.create(OWNER, "browser")
     okey = session.key_for(osid)
     session._sessions[okey]["last_seen"] = time.time() - 600
     before = session._sessions[okey]["last_seen"]
-    client.get("/api/alarms/due", cookies={run.COOKIE: osid})
+    client.post("/api/alarms/due", cookies={run.COOKIE: osid})
     c.truthy("  the owner's does, because it is the owner's alarm",
              session._sessions[okey]["last_seen"] > before)
 

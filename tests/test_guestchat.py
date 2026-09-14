@@ -160,7 +160,7 @@ with TestClient(run.app) as client:
     for path, want in [("/api/health", 200), ("/api/session", 200),
                        ("/api/alarms/due", 200), ("/api/reminders/due", 200),
                        ("/api/alerts/due", 200)]:
-        got = client.get(path, cookies=GUEST).status_code
+        got = (client.post if path.endswith("/due") else client.get)(path, cookies=GUEST).status_code
         check("  %-22s -> %d" % (path, want), got, want)
 
     h = client.get("/api/health", cookies=GUEST).json()

@@ -212,7 +212,7 @@ with TestClient(run.app) as client:
     for path in ("/watch", "/api/usage"):
         c("    %-22s guest" % path, client.get(path, cookies=GUEST).status_code, 403)
     for path in ("/watch", "/api/usage", "/api/triggers", "/api/triggers/due"):
-        c("    %-22s stranger" % path, client.get(path).status_code, 401)
+        c("    %-22s stranger" % path, (client.post if path.endswith("/due") else client.get)(path).status_code, 401)
     # Rules are per person since 12 Sep 2026: a guest is answered with THEIR
     # rules, which is an empty list here, never the owner's.
     r = client.get("/api/triggers", cookies=GUEST)

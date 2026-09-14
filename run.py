@@ -28,7 +28,11 @@ import secrets
 import hashlib
 import threading
 import subprocess
+import re
+import shutil
+import tempfile
 import webbrowser
+import urllib.parse
 from pathlib import Path
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -968,6 +972,63 @@ whose.set_owners(OWNER_EMAILS)
 # (https://…ts.net) when tunnelling.
 PUBLIC_URL = os.getenv("ARC_PUBLIC_URL", "").strip().rstrip("/")
 
+# The names this server answers to, and nothing else. A browser trusts a page's
+# own origin by its NAME, not its address: a site whose name is made to resolve
+# to 127.0.0.1 after the page has loaded is, as far as the browser is concerned,
+# still that site, and can then read and post to this port as if it were its
+# own. The Host header is the one thing that tells such a request apart, so a
+# request naming any other host is refused before anything else looks at it.
+#
+# Loopback names are allowed at the port actually listening. Anything reached
+# from off this machine must be named: ARC_PUBLIC_URL's host, or a
+# comma-separated ARC_ALLOWED_HOSTS (the funnel's …ts.net name, say, on an
+# instance that leaves ARC_PUBLIC_URL empty so desktop sign-in stays on
+# localhost). Unset means loopback only, which is what a desktop-only instance
+# is; a refused name is printed once so a missing entry is found in a minute.
+LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
+ALLOWED_HOSTS = {h.strip().lower().rstrip("/") for h in
+                 os.getenv("ARC_ALLOWED_HOSTS", "").split(",") if h.strip()}
+if PUBLIC_URL:
+    ALLOWED_HOSTS.add(urllib.parse.urlsplit(PUBLIC_URL).netloc.lower())
+
+# The funnel's name is also found for itself at startup, so the phone does not
+# depend on somebody remembering a line in .env before a restart: forgotten, it
+# is the owner who finds out, locked out of their own assistant by a 421.
+# Allowing it is safe in a way an arbitrary name is not. A page can only get a
+# browser to send a Host by owning that name's DNS, and a …ts.net name's DNS is
+# Tailscale's. Only this machine's OWN name is taken, and only a ts.net one.
+TAILSCALE_EXE = r"C:\Program Files\Tailscale\tailscale.exe"
+_TS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.ts\.net")
+
+
+def tailscale_name(run=subprocess.run) -> str:
+    """This machine's own Tailscale DNS name, or "" when there is none to be had:
+    no tailscale, not signed in, a slow or odd answer. Never raises."""
+    exe = shutil.which("tailscale") or (TAILSCALE_EXE if os.path.isfile(TAILSCALE_EXE) else "")
+    if not exe:
+        return ""
+    try:
+        out = run([exe, "status", "--json"], capture_output=True, text=True, timeout=5,
+                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if out.returncode != 0:
+            return ""
+        name = ((json.loads(out.stdout or "{}").get("Self") or {}).get("DNSName") or "")
+    except Exception:
+        return ""
+    name = str(name).strip().rstrip(".").lower()
+    return name if _TS_NAME.fullmatch(name) else ""
+
+
+def allow_tailscale_name(run=subprocess.run) -> str:
+    """Called once before serving. Adds the name, or says it could not."""
+    name = tailscale_name(run)
+    if name:
+        ALLOWED_HOSTS.add(name)
+    elif not ALLOWED_HOSTS:
+        print(f"{C_AMBER}  ! No Tailscale name found and ARC_ALLOWED_HOSTS is empty: this "
+              f"instance answers to localhost only.{C_OFF}")
+    return name
+
 # Signs the short-lived OAuth state cookie and the Google session id. Set
 # ARC_SECRET in production; otherwise we generate a throwaway one and the
 # sign-in round trip breaks across a restart.
@@ -1757,9 +1818,33 @@ def is_local_request(request: Request) -> bool:
     peer = request.client.host if request.client else ""
     if peer not in ("127.0.0.1", "::1"):
         return False
-    if request.headers.get("x-forwarded-for") or request.headers.get("cf-connecting-ip"):
+    # ANY sign of a proxy, not just the two headers cloudflared adds. Tailscale
+    # Funnel marks its requests with its own headers, and a proxy that only
+    # wrote Forwarded or X-Forwarded-Host would otherwise have read as the
+    # desktop, which is the one thing this function exists to rule out.
+    if any(proxied_header(k) for k in request.headers.keys()):
         return False
-    return True
+    # And the page has to have been opened by a loopback name. A request the
+    # gate let through under the public name came through the funnel, whatever
+    # its headers say.
+    port = (request.scope.get("server") or (None, PORT))[1]
+    return (request.headers.get("host") or "").lower() in loopback_hosts(port)
+
+
+def proxied_header(name: str) -> bool:
+    """A header only a proxy in the path would add."""
+    n = name.lower()
+    return (n.startswith("x-forwarded-") or n.startswith("tailscale-")
+            or n in ("forwarded", "x-real-ip", "cf-connecting-ip", "true-client-ip"))
+
+
+def loopback_hosts(port) -> set:
+    """The Host values a page opened on this machine sends: the loopback name
+    with the port, and with no port only when that port is 80."""
+    names = {"%s:%s" % (n, port) for n in LOOPBACK_NAMES}
+    if str(port) == "80":
+        names |= set(LOOPBACK_NAMES)
+    return names
 
 
 def check_rate(request: Request):
@@ -2603,6 +2688,11 @@ async def chat_stream(request: Request, _=Depends(require_auth)):
     """
     if not STREAMING:
         raise HTTPException(404, "Streaming is off.")
+    # Counted before the body is read, as /api/chat is: a client over its limit
+    # used to have the whole upload taken in before being told so. chat() sees
+    # the mark and does not count the same turn twice.
+    check_rate(request)
+    request.state.rate_checked = True
     # Read now, while this handler still owns the connection. Once the
     # streaming response starts it listens on the same channel for the client
     # going away, and a body chat() asked for after that is a body nobody
@@ -2656,7 +2746,8 @@ async def chat_stream(request: Request, _=Depends(require_auth)):
 @app.post("/api/chat")
 async def chat(request: Request, _=Depends(require_auth)):
     """Proxy to the Messages API. The key never reaches the browser."""
-    check_rate(request)
+    if not getattr(request.state, "rate_checked", False):
+        check_rate(request)
     if not ANTHROPIC_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY is not set. Add it to .env and restart.")
 
@@ -3767,7 +3858,11 @@ async def stock_search(request: Request, _=Depends(require_auth)):
     return JSONResponse({"symbol": sym})
 
 
-@app.get("/api/reminders/due")
+# The four */due polls are POST, not GET. Each one hands something over once
+# and marks it delivered, so reading it changes state, and a GET is what an
+# <img> or a link on any other site can make a signed-in browser send without
+# an Origin check ever applying. The page asks for them with POST and no body.
+@app.post("/api/reminders/due")
 async def reminders_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any reminder whose time has come is returned once
     (then marked delivered) so ARC can announce it — even after a reload."""
@@ -3783,7 +3878,7 @@ async def reminders_due(request: Request, _=Depends(require_auth)):
         return JSONResponse({"due": []})
 
 
-@app.get("/api/alerts/due")
+@app.post("/api/alerts/due")
 async def alerts_due(request: Request, _=Depends(require_auth)):
     """The client polls this; any price alert that has just crossed is returned
     once (then marked delivered) so ARC can speak it — even with no phone set up.
@@ -3798,7 +3893,7 @@ async def alerts_due(request: Request, _=Depends(require_auth)):
         return JSONResponse({"due": []})
 
 
-@app.get("/api/alarms/due")
+@app.post("/api/alarms/due")
 async def alarms_due(request: Request, _=Depends(require_auth)):
     """Whatever is ringing right now, so the page can make a noise about it.
 
@@ -4065,7 +4160,7 @@ async def triggers_list(request: Request, _=Depends(require_auth)):
         return JSONResponse({"rules": [], "text": "The rules file could not be read just now."})
 
 
-@app.get("/api/triggers/due")
+@app.post("/api/triggers/due")
 async def triggers_due(request: Request, _=Depends(require_auth)):
     """Rules that fired since the browser last asked, so it can speak them."""
     apply_session_memory(request)
@@ -4674,6 +4769,176 @@ async def google_disconnect(request: Request):
     return resp
 
 
+# --------------------------------------------------------------------------
+# request gate: host, origin, body
+# --------------------------------------------------------------------------
+# Runs outside every other layer, before sign-in, the static mount or a route
+# has seen the request. Four refusals, each for a request the rest of ARC would
+# otherwise have taken at its word:
+#
+#   a Host that is not one of ours (see ALLOWED_HOSTS)                     421
+#   a path with ".." or a backslash in it, which no page of ours ever asks
+#   for and which only exists to walk out of an allowlisted prefix          400
+#   a state-changing method whose Origin is not this page's own. A browser
+#   always sends Origin on POST, so another site's form or fetch is named
+#   here, and a request that carries neither Origin nor
+#   Sec-Fetch-Site: same-origin did not come from a page of ours             403
+#   a body that is not JSON (every route reads JSON; text/plain was how a
+#   plain cross-site form got a JSON body in without a preflight), or one
+#   larger than the route could ever need                              415 / 413
+#
+# The size is enforced on the bytes as they arrive, not only on
+# Content-Length: a chunked upload has no length to check.
+BODY_LIMIT = 256 * 1024
+BODY_LIMIT_LARGE = 12 * 1024 * 1024     # a camera or screen frame rides along
+LARGE_BODY_PATHS = ("/api/chat", "/api/summarize")
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+def body_limit(path: str) -> int:
+    for p in LARGE_BODY_PATHS:
+        if path == p or path.startswith(p + "/"):
+            return BODY_LIMIT_LARGE
+    return BODY_LIMIT
+
+
+def _sandbox_hosts() -> set:
+    """The made-up host names the test clients use ("testserver", "test"),
+    allowed only inside the test sandbox: a throwaway data directory under the
+    system temp folder, created by tests/_harness.py, which also sets the flag.
+    Neither alone is enough, so a stray environment variable on a real
+    instance opens nothing."""
+    if os.getenv("ARC_TEST_SANDBOX") != "1" or not DATA_DIR.name.startswith("arc-test-"):
+        return set()
+    try:
+        if Path(tempfile.gettempdir()).resolve() not in DATA_DIR.parents:
+            return set()
+    except OSError:
+        return set()
+    return {"testserver", "test"}
+
+
+SANDBOX_HOSTS = _sandbox_hosts()
+_refused_hosts: set = set()
+
+
+def host_allowed(host: str, port) -> bool:
+    host = (host or "").strip().lower()
+    return bool(host) and (host in loopback_hosts(port) or host in ALLOWED_HOSTS
+                           or host in SANDBOX_HOSTS)
+
+
+def origin_matches(headers: dict, host: str) -> bool:
+    """Whether a state-changing request came from a page served under this
+    same host. Origin carries scheme://host[:port], and a browser leaves the
+    port out exactly when the Host header does, so the two compare directly."""
+    origin = headers.get("origin")
+    if origin is not None:
+        try:
+            parts = urllib.parse.urlsplit(origin)
+        except ValueError:
+            return False
+        return parts.scheme in ("http", "https") and parts.netloc.lower() == host
+    return headers.get("sec-fetch-site") == "same-origin"
+
+
+class RequestGate:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                   for k, v in scope.get("headers") or ()}
+        path = scope.get("path") or ""
+        method = scope.get("method", "GET").upper()
+        host = headers.get("host", "").strip().lower()
+        port = (scope.get("server") or (None, PORT))[1]
+
+        async def refuse(status, detail):
+            await JSONResponse({"detail": detail}, status_code=status)(scope, receive, send)
+
+        if not host_allowed(host, port):
+            if host not in _refused_hosts and len(_refused_hosts) < 50:
+                _refused_hosts.add(host)
+                print(f"{C_AMBER}  ! refused a request for host {host[:80]!r}. If that "
+                      f"is this instance's own address, add it to ARC_ALLOWED_HOSTS.{C_OFF}")
+            return await refuse(421, "Unknown host.")
+        if ".." in path or "\\" in path:
+            return await refuse(400, "Bad path.")
+
+        if method not in SAFE_METHODS:
+            # The test clients send no Origin; only under their own made-up
+            # host, which exists nowhere outside the sandbox (see above).
+            if not (host in SANDBOX_HOSTS and "origin" not in headers
+                    and "sec-fetch-site" not in headers) \
+                    and not origin_matches(headers, host):
+                return await refuse(403, "Requests must come from ARC's own page.")
+            length = headers.get("content-length", "").strip()
+            has_body = (length not in ("", "0")) or "transfer-encoding" in headers
+            ctype = headers.get("content-type", "").split(";")[0].strip().lower()
+            if has_body and ctype != "application/json":
+                return await refuse(415, "Expected a JSON body.")
+
+        limit = body_limit(path)
+        length = headers.get("content-length", "").strip()
+        if length:
+            try:
+                if int(length) > limit:
+                    return await refuse(413, "That request is too large.")
+            except ValueError:
+                return await refuse(400, "Bad Content-Length.")
+
+        # Counted as it arrives. Past the limit the app is handed an ended body
+        # rather than an error it could catch and turn into something else, and
+        # whatever it then tries to answer is replaced with the 413.
+        seen = 0
+        over = False
+        started = False
+
+        async def counted_receive():
+            nonlocal seen, over
+            if over:
+                # The ended body was already handed over. Anyone still
+                # listening is waiting for the client to go, so the rest of the
+                # upload is drained and dropped until it does.
+                while True:
+                    msg = await receive()
+                    if msg["type"] != "http.request":
+                        return msg
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body") or b"")
+                if seen > limit:
+                    over = True
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return msg
+
+        async def guarded_send(msg):
+            nonlocal started
+            if over:
+                if msg["type"] == "http.response.start" and not started:
+                    started = True
+                    body = json.dumps({"detail": "That request is too large."}).encode()
+                    await send({"type": "http.response.start", "status": 413,
+                                "headers": [(b"content-type", b"application/json"),
+                                            (b"content-length", str(len(body)).encode())]})
+                    await send({"type": "http.response.body", "body": body})
+                return
+            if msg["type"] == "http.response.start":
+                started = True
+            await send(msg)
+
+        await self.app(scope, counted_receive, guarded_send)
+
+
+PUBLIC_STATIC = frozenset("/static/" + n for n in (
+    "icon-192.png", "icon-512.png", "icon-maskable.png",
+    "icon-blue-192.png", "icon-blue-512.png", "icon-blue-maskable.png",
+    "arc-logo.svg", "arc.ico"))
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     """Central auth gate.
@@ -4704,8 +4969,10 @@ async def require_login(request: Request, call_next):
             # signing in — Google's OAuth verification crawler fetches them and
             # they are the public face of the app.
             or path in ("/home", "/privacy", "/terms")
-            or path.startswith("/static/icon")
-            or path in ("/static/arc-logo.svg", "/static/arc.ico")
+            # Exact names. A prefix let "/static/icon-x/../index.html" through
+            # as an icon, and the mount then served the whole app unsigned.
+            # The gate refuses ".." outright as well; this is the second lock.
+            or path in PUBLIC_STATIC
         )
         if not public:
             if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
@@ -4780,6 +5047,11 @@ async def security_headers(request: Request, call_next):
     if cookie_secure(request):
         h.setdefault("Strict-Transport-Security", "max-age=31536000")
     return resp
+
+
+# Added last, so it is the outermost layer: nothing inside, sign-in included,
+# sees a request the gate refused.
+app.add_middleware(RequestGate)
 
 
 @app.get("/sw.js")
@@ -5072,6 +5344,7 @@ def serve_cloud():
     if CLOUD and not TRUST_PROXY:
         print("  ! ARC_TRUST_PROXY is not set. If a proxy/load balancer sits in front,"
               " set it so per-IP limits use the real client address.")
+    allow_tailscale_name()
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning", **_UVICORN_PROXY)
 
 
@@ -5101,6 +5374,7 @@ def main():
 
     threading.Timer(1.2, lambda: open_window(PORT)).start()
 
+    allow_tailscale_name()
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning", **_UVICORN_PROXY)
 
 

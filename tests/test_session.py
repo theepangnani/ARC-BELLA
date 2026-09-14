@@ -67,7 +67,7 @@ for path in ["/api/health", "/api/session", "/api/reminders/due", "/api/alerts/d
              "/api/calendar/upcoming", "/api/stocks?symbols=AAPL", "/api/push/status",
              "/api/display"]:
     before = session._sessions[session.key_for(sid)]["last_seen"]
-    client.get(path, cookies=COOKIES)
+    (client.post if path.endswith("/due") else client.get)(path, cookies=COOKIES)
     after = session._sessions[session.key_for(sid)]["last_seen"]
     check("%-32s left the idle clock alone" % path, after == before, True)
 

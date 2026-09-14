@@ -58,7 +58,7 @@ check("/api/push/test         owner",
 
 print("\nSigned out is still 401, not 403 — the gate order is unchanged:")
 for path in OWNER_ONLY + ["/api/reminders/due", "/api/alerts/due"]:
-    check("%-22s anon" % path, client.get(path).status_code, 401)
+    check("%-22s anon" % path, (client.post if path.endswith("/due") else client.get)(path).status_code, 401)
 
 print("\nShared routes stay open to both (public data only):")
 for path in ["/api/stocks?symbols=AAPL", "/api/stock-search?q=apple", "/api/push/status"]:

@@ -2760,7 +2760,7 @@ You are an upbeat, motivating coach in the user's corner.
     if (state.mode === "thinking" || state.mode === "speaking" || state.holding) return;
     let due = [];
     try {
-      const d = await (await fetch("/api/reminders/due")).json();
+      const d = await (await fetch("/api/reminders/due", { method: "POST" })).json();
       due = (d && d.due) || [];
     } catch (_) { return; }
     if (due.length) {
@@ -2778,7 +2778,7 @@ You are an upbeat, motivating coach in the user's corner.
     if (state.mode === "thinking" || state.mode === "speaking" || state.holding) return;
     let due = [];
     try {
-      const d = await (await fetch("/api/alerts/due")).json();
+      const d = await (await fetch("/api/alerts/due", { method: "POST" })).json();
       due = (d && d.due) || [];
     } catch (_) { return; }
     if (due.length) {
@@ -2798,7 +2798,7 @@ You are an upbeat, motivating coach in the user's corner.
     if (state.mode === "thinking" || state.mode === "speaking" || state.holding) return;
     let due = [];
     try {
-      const d = await (await fetch("/api/triggers/due")).json();
+      const d = await (await fetch("/api/triggers/due", { method: "POST" })).json();
       due = (d && d.due) || [];
     } catch (_) { return; }
     if (due.length) {
@@ -2975,7 +2975,7 @@ You are an upbeat, motivating coach in the user's corner.
   async function pollAlarms() {
     let ringing = [], next = null;
     try {
-      const r = await fetch("/api/alarms/due");
+      const r = await fetch("/api/alarms/due", { method: "POST" });
       if (!r.ok) { stopAlarmRing(); return; }
       const d = await r.json();
       ringing = (d && d.ringing) || [];

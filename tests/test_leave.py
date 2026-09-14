@@ -79,7 +79,7 @@ sid = session.create("owner@example.com", "browser")
 C = {run.COOKIE: sid}
 client.post("/api/leave", cookies=C)
 for path in ["/api/health", "/api/session", "/api/reminders/due", "/api/display"]:
-    client.get(path, cookies=C)
+    (client.post if path.endswith("/due") else client.get)(path, cookies=C)
     check("%-22s left the departure standing" % path, "left_at" in rec(sid), True)
 rewind_departure(sid, 61)
 check("so it still expires on schedule", session.validate(sid, touch=False), None)

@@ -102,7 +102,7 @@ truthy("and offered in a guest's tool list",
 print("\nOver HTTP, signed in as the owner:")
 alarm._save([])
 sid, C = owner()
-r = client.get("/api/alarms/due", cookies=C)
+r = client.post("/api/alarms/due", cookies=C)
 # The fields this is about, rather than the whole body: the poll also carries
 # missed alarms and the keep-awake state now (see test_keepawake.py), and a
 # check pinned to the exact dict fails every time the route learns something.
@@ -112,7 +112,7 @@ check("poll works when nothing is set",
 check("  and nothing was missed", (d.get("missed"), d.get("missed_said")), ([], ""))
 
 ring_now()
-r = client.get("/api/alarms/due", cookies=C)
+r = client.post("/api/alarms/due", cookies=C)
 body = r.json()
 check("a ringing alarm is reported", len(body["ringing"]), 1)
 truthy("with words to say", "wake up" in body["ringing"][0]["message"])
@@ -121,17 +121,17 @@ truthy("and the time on it", body["ringing"][0]["time"] == "7am")
 print("\n  ...and polling it does NOT switch it off:")
 for i in range(4):
     check("  poll %d still ringing" % (i + 1),
-          len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+          len(client.post("/api/alarms/due", cookies=C).json()["ringing"]), 1)
 check("a reload is not a dismissal",
-      len(client.get("/api/alarms/due", cookies={run.COOKIE: sid}).json()["ringing"]), 1)
+      len(client.post("/api/alarms/due", cookies={run.COOKIE: sid}).json()["ringing"]), 1)
 
 print("\n  ...and the same poll tells the HUD what is set, so an armed alarm is"
       "\n     visible without asking (it was invisible until it fired):")
 alarm._save([])
 check("nothing set -> nothing to show",
-      client.get("/api/alarms/due", cookies=C).json()["next"], None)
+      client.post("/api/alarms/due", cookies=C).json()["next"], None)
 alarm.set_alarm("6:30am", "weekdays", "gym")
-nxt = client.get("/api/alarms/due", cookies=C).json()["next"]
+nxt = client.post("/api/alarms/due", cookies=C).json()["next"]
 check("time", nxt["time"], "6:30am")
 check("repeat", nxt["repeat"], "on weekdays")
 check("label", nxt["label"], "gym")
@@ -141,7 +141,7 @@ ring_now()
 print("\nThe Stop button:")
 r = client.post("/api/alarms/dismiss", cookies=C)
 check("reports what it stopped", (r.status_code, r.json()["stopped"]), (200, 1))
-check("silence", client.get("/api/alarms/due", cookies=C).json()["ringing"], [])
+check("silence", client.post("/api/alarms/due", cookies=C).json()["ringing"], [])
 check("pressing it again stops nothing", client.post("/api/alarms/dismiss", cookies=C).json()["stopped"], 0)
 check("but tomorrow's alarm is still set", alarm._load()[0]["enabled"], True)
 
@@ -149,13 +149,13 @@ print("\nThe Snooze button:")
 ring_now()
 r = client.post("/api/alarms/snooze", cookies=C, json={"minutes": 9})
 check("reports what it stopped", r.json()["stopped"], 1)
-check("silent for now", client.get("/api/alarms/due", cookies=C).json()["ringing"], [])
+check("silent for now", client.post("/api/alarms/due", cookies=C).json()["ringing"], [])
 a = alarm._load()[0]
 truthy("due back in ~9 min", 8 * 60 < a["snooze_at"] - time.time() <= 9 * 60)
 a["snooze_at"] = time.time() - 1
 alarm._save([a])
 alarm.evaluate()
-check("and it comes back", len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+check("and it comes back", len(client.post("/api/alarms/due", cookies=C).json()["ringing"]), 1)
 client.post("/api/alarms/dismiss", cookies=C)
 
 print("\n  a snooze with no number, and a silly one:")
@@ -175,7 +175,7 @@ client.post("/api/alarms/dismiss", cookies=C)
 print("\nA guest has their own alarm clock, and cannot see or touch the owner's:")
 ring_now()
 _, G = guest()
-r = client.get("/api/alarms/due", cookies=G)
+r = client.post("/api/alarms/due", cookies=G)
 check("a guest's poll is answered", r.status_code, 200)
 check("  with nothing of the owner's ringing in it", r.json()["ringing"], [])
 check("  or the owner's next alarm", r.json()["next"], None)
@@ -184,31 +184,31 @@ check("snoozing stops nothing of the owner's",
 check("nor does dismissing",
       client.post("/api/alarms/dismiss", cookies=G).json()["stopped"], 0)
 check("and it is still ringing for the owner",
-      len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+      len(client.post("/api/alarms/due", cookies=C).json()["ringing"]), 1)
 with whose.acting_as("guest@example.com"):
     alarm.set_alarm("6am", "daily", "guest's run")
     items = alarm._load()
     items[0]["next_at"] = time.time() - 5
     alarm._save(items)
 alarm.evaluate()
-g = client.get("/api/alarms/due", cookies=G).json()["ringing"]
+g = client.post("/api/alarms/due", cookies=G).json()["ringing"]
 check("the guest's own alarm rings in the guest's tab", [a["label"] for a in g], ["guest's run"])
-o = client.get("/api/alarms/due", cookies=C).json()["ringing"]
+o = client.post("/api/alarms/due", cookies=C).json()["ringing"]
 check("and not in the owner's", [a["label"] for a in o], ["wake up"])
 check("the guest's Stop stops the guest's",
       client.post("/api/alarms/dismiss", cookies=G).json()["stopped"], 1)
 check("  and the owner's is untouched",
-      len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+      len(client.post("/api/alarms/due", cookies=C).json()["ringing"]), 1)
 with whose.acting_as("guest@example.com"):
     alarm._save([])
 
 print("\nNor can a stranger:")
-check("no cookie -> 401", client.get("/api/alarms/due").status_code, 401)
+check("no cookie -> 401", client.post("/api/alarms/due").status_code, 401)
 check("junk cookie -> 401",
-      client.get("/api/alarms/due", cookies={run.COOKIE: "nope"}).status_code, 401)
+      client.post("/api/alarms/due", cookies={run.COOKIE: "nope"}).status_code, 401)
 check("cannot dismiss without one",
       client.post("/api/alarms/dismiss", cookies={run.COOKIE: "nope"}).status_code, 401)
-check("still ringing", len(client.get("/api/alarms/due", cookies=C).json()["ringing"]), 1)
+check("still ringing", len(client.post("/api/alarms/due", cookies=C).json()["ringing"]), 1)
 client.post("/api/alarms/dismiss", cookies=C)
 
 # --------------------------------------------------------------------------
@@ -230,7 +230,7 @@ def age(s):
 
 age(sid)
 before = last_seen(sid)
-client.get("/api/alarms/due", cookies=C)
+client.post("/api/alarms/due", cookies=C)
 check("with NO alarm set, polling does not hold the session open",
       last_seen(sid), before)
 
@@ -238,14 +238,14 @@ alarm.set_alarm("7am", "daily")
 check("now something is armed", alarm.armed(), True)
 age(sid)
 before = last_seen(sid)
-client.get("/api/alarms/due", cookies=C)
+client.post("/api/alarms/due", cookies=C)
 truthy("with one set, polling does hold it open", last_seen(sid) > before)
 
 print("\n  ...and only that one poll — the rest still let it time out:")
 for path in ["/api/health", "/api/session", "/api/reminders/due", "/api/alerts/due"]:
     age(sid)
     before = last_seen(sid)
-    client.get(path, cookies=C)
+    (client.post if path.endswith("/due") else client.get)(path, cookies=C)
     check("  %-22s still background" % path, last_seen(sid), before)
 
 print("\n  ...and the hold ends when the alarm does:")
@@ -253,7 +253,7 @@ alarm.cancel_alarm("all")
 check("nothing armed now", alarm.armed(), False)
 age(sid)
 before = last_seen(sid)
-client.get("/api/alarms/due", cookies=C)
+client.post("/api/alarms/due", cookies=C)
 check("session goes back to timing out", last_seen(sid), before)
 
 print("\n  a snoozed alarm still counts as armed (it is about to go off):")

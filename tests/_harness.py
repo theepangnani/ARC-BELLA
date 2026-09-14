@@ -63,6 +63,10 @@ def sandbox() -> Path:
 
     _tmp = Path(tempfile.mkdtemp(prefix="arc-test-"))
     os.environ["ARC_DATA_DIR"] = str(_tmp)
+    # Lets the test clients' made-up host names ("testserver", "test") past
+    # run.py's host gate. Only honoured together with a data directory like
+    # this one, so it opens nothing on a real instance (run._sandbox_hosts).
+    os.environ["ARC_TEST_SANDBOX"] = "1"
     # A key must exist for the Anthropic client to be constructed at all; no
     # test ever reaches the network with it.
     os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-a-real-one")
