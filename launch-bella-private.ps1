@@ -1,4 +1,6 @@
-﻿# Bella (PRIVATE) launcher — a second Bella that is yours alone.
+﻿# ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
+# Bella (PRIVATE) launcher — a second Bella that is yours alone.
 #
 # It runs the SAME code as the shared Bella, but on its own port (8421), with
 # its own Google sign-in and its own completely separate data (reminders, notes,

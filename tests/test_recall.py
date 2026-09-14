@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Memory is kept, and not quietly lost, when the file is busy.
 
 memory.py was the one personal store never moved onto storefile.py. Its _load()

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """
 Zero-setup media: open YouTube and Spotify to what you asked for, by driving
 the browser and the Spotify desktop app. No accounts, no API keys.

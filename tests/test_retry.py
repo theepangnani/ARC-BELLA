@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Trying again, and knowing when not to.
 
 A tool that failed handed the model an error and left it to decide. The model

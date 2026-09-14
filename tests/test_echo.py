@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """looksLikeEcho — ARC's own voice coming back through the speakers.
 
 Two failures matter here and they pull in opposite directions. Miss an echo and

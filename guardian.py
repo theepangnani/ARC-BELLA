@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The guardian — something that watches ARC when nobody is home.
 
 selfheal.py is ARC repairing ARC: it restarts a stalled background loop, puts a

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Arc Watch draws usage as graphs, not just as numbers on cards.
 
 Asked for as: "visualize daily spend, message count, and other metrics over

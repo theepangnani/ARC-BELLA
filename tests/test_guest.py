@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The guest tier, checked against the real run.py rather than a copy of it.
 
 Two things matter and they are different questions:

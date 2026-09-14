@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """GitHub, through a linked account, and only ever looking.
 
 githubapi.py reads notifications, repositories, issues and READMEs for the

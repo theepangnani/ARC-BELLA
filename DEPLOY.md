@@ -1,3 +1,5 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
 # Deploying ARC
 
 "Deployed" here does not mean a server. ARC runs on **your Windows desktop** —

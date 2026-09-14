@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The sign-in round trip, including the exact header that broke it.
 
 Max-Age=0 is not "no expiry" — it is "delete this cookie now". The server was

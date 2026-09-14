@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Which brain to use, decided per question rather than per person.
 
 The Smart/Fast switch made you the router. It works, and nobody uses it well:

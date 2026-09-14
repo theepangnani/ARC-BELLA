@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """An alarm the computer is awake for, and one it was not.
 
 Windows' own power log showed this PC idle-sleeping several times a day, and

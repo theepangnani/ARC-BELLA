@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Airtable, through the owner's personal access token (links.py, flow "token").
 
 The owner keeps small databases in Airtable. Airtable's OAuth needs a client

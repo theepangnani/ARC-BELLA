@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Slack, through the owner's user token (links.py, flow "token").
 
 The owner asked for the work tools people keep their lives in, and Slack is

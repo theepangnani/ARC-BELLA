@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """A guest asking a question, through the real /api/chat, with Claude stubbed.
 
 The point is to separate "ARC is broken for guests" from "the model said

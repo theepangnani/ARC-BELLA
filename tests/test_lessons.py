@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """ARC keeps what she is taught about how to work with someone.
 
 The owner corrected the same habits over and over — "shorter", "stop calling

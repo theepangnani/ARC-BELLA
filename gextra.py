@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """
 Google Contacts + Drive, read-only. Shares the same sign-in as calendar and
 mail (gauth). Both are look-up-and-report only — no writing, no deleting.

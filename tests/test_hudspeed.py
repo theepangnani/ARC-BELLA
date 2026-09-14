@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The HUD does not spend the machine's CPU on a ring nobody is talking to.
 
 Measured on 13 Sep 2026: the ARC desktop window, left open, used a third of all

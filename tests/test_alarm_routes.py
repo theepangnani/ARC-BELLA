@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The alarm as the browser actually meets it: over HTTP, with a session.
 
 Two things here are worth more than the rest. First, polling must NOT consume a

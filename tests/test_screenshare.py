@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Live screen for everybody: off the desktop, it shares your own device's screen.
 
 The desktop's Live screen is the server screenshotting THIS machine, which is

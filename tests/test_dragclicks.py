@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """A draggable card still lets a click reach what was clicked inside it.
 
 Found by the owner on 14 Sep 2026: the stock chart's months (1m 3m 6m 1y), its

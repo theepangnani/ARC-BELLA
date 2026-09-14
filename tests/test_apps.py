@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Opening apps, switching windows, and messaging apps ARC cannot send to.
 
 Two things are being protected here. One is that `open_app` stops guessing:

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """End-to-end through the real FastAPI app, with real sessions.
 
 The unit test proved the functions. This proves the WIRING — that a guest's

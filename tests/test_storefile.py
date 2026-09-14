@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """What the 13 Sep 2026 bug check found on the server, held so it stays found.
 
 The worst of it first. Every personal store keeps everybody's items in one

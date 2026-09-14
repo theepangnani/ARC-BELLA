@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """tailIsStop: the interim stream is ARC's own voice with, maybe, the user's
 word on the end. Only the tail may be a dismissal."""
 import re

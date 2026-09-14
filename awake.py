@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Keeping the computer awake while an alarm is waiting to go off.
 
 An alarm is a promise to make a noise at seven tomorrow, and ARC runs on the

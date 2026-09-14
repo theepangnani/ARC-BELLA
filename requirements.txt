@@ -1,3 +1,5 @@
+# ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 # Pinned exactly, on purpose.
 #
 # Every line here used to be `>=`, which meant a fresh install today and a

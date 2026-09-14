@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """What gets heard, what gets consent, and how long the voice may go quiet.
 
 THE GATE. isNoise() exists to drop coughs and doors, and it dropped answers.

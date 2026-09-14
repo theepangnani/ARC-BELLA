@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """How many pictures a guest may send in a day — and that the owner decides.
 
 Screen sharing for everybody means a guest can send a picture with every

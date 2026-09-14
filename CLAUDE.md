@@ -1,3 +1,5 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
 # Working on ARC / Bella
 
 Read this first. It is the standing context that does not fit in a commit

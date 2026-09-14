@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The INPUT LVL readout, simulated frame by frame.
 
 The old readout was driven by the visualiser's `amp`, which is only an input

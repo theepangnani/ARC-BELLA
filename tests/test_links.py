@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Linked accounts: Spotify, Microsoft, GitHub, Notion — and the ones that can't be.
 
 Sign-in code on an internet-exposed instance whose repository is public, so

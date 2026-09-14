@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Whose request this is, and therefore whose data.
 
 Every store in ARC — notes, alarms, reminders, to-dos, price alerts, standing

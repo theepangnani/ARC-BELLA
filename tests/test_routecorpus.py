@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """A hundred-odd real things people say, and the brain each one should get.
 
 test_brain.py pins the router's RULES one at a time: this word is hard, that

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Getting places — how long, how far, and put it on the screen.
 
 NO API KEY, deliberately. Google's Directions API needs a billing account and a

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The voice has limits: nobody can make this machine, or the owner's bill, speak all day.
 
 /api/tts had no rate or concurrency limit, and with ARC_PREFER_ELEVEN on every

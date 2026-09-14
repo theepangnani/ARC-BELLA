@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Auto-clicker, held keys and macros — mostly: can you always switch it off.
 
 A program that drives your mouse is only acceptable if stopping it is trivial,

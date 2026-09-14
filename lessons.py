@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """How this person wants to be spoken to — learned from being corrected.
 
 memory.py keeps FACTS about someone: their sister is Maya, they are learning

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """What caching saved, counted net of what it cost to write the cache.
 
 Until 14 Sep 2026 "saved" counted only the reads, at nine tenths of the input

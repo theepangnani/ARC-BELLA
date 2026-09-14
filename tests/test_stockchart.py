@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """One stock, drawn — and the line's honesty about what it is.
 
 The markets panel answers "what is it at". A price on its own cannot answer

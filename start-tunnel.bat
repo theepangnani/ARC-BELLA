@@ -1,4 +1,6 @@
 @echo off
+REM ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+REM All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 title ARC tunnel - keep this window OPEN
 chcp 65001 >nul
 echo.

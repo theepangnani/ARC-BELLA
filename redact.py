@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Passwords, keys and card numbers: noticed, and kept out of plain text.
 
 Two places were writing them down without anybody deciding they should:

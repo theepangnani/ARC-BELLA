@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """
 Telegram hands for ARC, via Telethon — the official client API, logged in as
 you. This reads and sends your real conversations, not a separate bot's.

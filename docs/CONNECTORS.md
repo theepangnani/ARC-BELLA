@@ -1,3 +1,5 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
 # Connectors: setting up the linked accounts
 
 Written for the owner, doing this once on the desktop that runs ARC.

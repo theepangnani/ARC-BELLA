@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The guardian restarts ARC without making things worse.
 
 On 13 Sep 2026 both Bellas were restarted for a settings change and did not

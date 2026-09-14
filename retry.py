@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """When a tool fails: try again, or stop, or say why — and never twice by accident.
 
 A tool that fails hands the model an error and leaves it to decide. The model

@@ -1,3 +1,5 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
 # Checks on a real phone and laptop
 
 Tests cover the code. They can't hold a phone. These are the checks that need

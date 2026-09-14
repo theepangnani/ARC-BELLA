@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Dropbox, through the account the person linked (links.py, flow "redirect").
 
 Each person links their own Dropbox with PKCE — no client secret on this

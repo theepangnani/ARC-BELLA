@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Phone compatibility: Samsung, iPhone, Pixel, Oppo, OnePlus.
 
 Every one of these regresses silently on a desktop, which is where the HUD is

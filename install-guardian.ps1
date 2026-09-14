@@ -1,3 +1,5 @@
+# ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 # Installs (or removes) the guardian as a Windows scheduled task.
 #
 # The guardian keeps ARC answering. This keeps the GUARDIAN running -- because a

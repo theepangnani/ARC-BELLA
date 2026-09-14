@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Requests must come from ARC's own page, under ARC's own name.
 
 run.RequestGate sits outside everything else. It refuses a Host that is not

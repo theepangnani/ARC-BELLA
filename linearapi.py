@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Linear, through the owner's personal API key (links.py, flow "token").
 
 The owner tracks work issues in Linear. Linear's OAuth needs a client secret,

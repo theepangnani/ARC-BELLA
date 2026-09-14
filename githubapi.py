@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """GitHub, through the account the person linked (links.py).
 
 The link asks for read:user and notifications and nothing else — GitHub has no

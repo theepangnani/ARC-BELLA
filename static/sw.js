@@ -1,3 +1,5 @@
+/* ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+   All rights reserved. Proprietary; see LICENSE. Visibility is not permission. */
 /* ARC service worker — the minimum that makes the app installable.
    Deliberately does NOT cache the app shell: ARC is served from your own
    machine and changes often, so caching would hand back stale pages. It only

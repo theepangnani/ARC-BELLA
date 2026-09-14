@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The floating cards: weather, markets, and the two new ones.
 
 TODAY is the rest of your day beside the markets. It is not upcoming_events with

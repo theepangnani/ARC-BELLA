@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Two turns needing Google at once refresh the token once, and never tear it.
 
 Tools are moving off the event loop, so two requests can reach gauth.service()

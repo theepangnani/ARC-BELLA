@@ -1,3 +1,5 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
 # Manual suites
 
 These need hardware the test runner does not have, so they print measurements

@@ -1,3 +1,5 @@
+' ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+' All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 ' Runs the launcher with no console window flashing up.
 ' The path is taken from this script's own folder rather than hardcoded, so a
 ' clone works wherever it lands on a second machine.

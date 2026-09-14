@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The system-prompt ceiling, and the two speaker-mode wiring bugs.
 
 The ceiling used to have to clear ARC's own 44,282-character prompt, because

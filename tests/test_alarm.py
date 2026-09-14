@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """An alarm that fails is worse than no alarm, so the schedule maths is tested
 before anything else. The cases that matter are the ones you only discover on
 the morning they go wrong: the weekly wrap, the alarm set for a time that has

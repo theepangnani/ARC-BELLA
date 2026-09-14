@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """monday.com, through the owner's personal API token (links.py, flow "token").
 
 Asked for as "monday and stuff": the owner keeps work boards there. Like Notion

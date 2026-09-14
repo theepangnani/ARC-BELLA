@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Signing in by emailed link — the door for people Google cannot let in.
 
 Google sign-in was doing two jobs at once: proving who somebody is, and

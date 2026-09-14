@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The plan: what ARC is part-way through, and what that fixes.
 
 A hard job is several steps and there are only so many tool rounds in a turn.

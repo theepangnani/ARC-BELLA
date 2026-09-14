@@ -1,3 +1,5 @@
+' ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+' All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 ' Launch ARC / Bella as an app, with no console window.
 '  - If the core isn't running, start it hidden (it opens its own window).
 '  - If it's already running, just open a fresh app window pointed at it.

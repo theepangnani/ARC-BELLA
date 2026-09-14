@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The voice cache: the same short sentence is rendered once, and only once.
 
 Bella says "Okay." and "Done." all day, and every one was a fresh ~0.7 s trip

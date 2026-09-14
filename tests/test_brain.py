@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Memory that follows you, a brain chosen per question, and a copy that can leave.
 
 Three changes, one theme: things that were quietly per-device, per-person or

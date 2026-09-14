@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Outlook mail, the Outlook calendar and OneDrive, through a linked account.
 
 microsoft.py talks to Microsoft Graph with a token links.py keeps per person.

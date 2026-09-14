@@ -1,3 +1,5 @@
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 import sys, time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),

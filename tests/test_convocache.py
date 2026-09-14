@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """A job at the screen pays for each round once, not once per round after it.
 
 Only the system prompt was cached. Every tool round re-sent every earlier round

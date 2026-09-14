@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Connectors: switches that can only take away, and a search that can only read.
 
 The owner asked for Perplexity's connectors in Arc: one place listing what she

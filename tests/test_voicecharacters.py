@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Characters: a voice, a way of speaking, and a name people would use.
 
 The owner asked for "a British male, for the Jarvis concept". Two British men

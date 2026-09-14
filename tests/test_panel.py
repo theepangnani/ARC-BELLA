@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The control panel's layout, and the character ARC is asked to have.
 
 Fifteen identical full-width buttons stacked in one column is a wall: nothing

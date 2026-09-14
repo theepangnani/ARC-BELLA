@@ -1,3 +1,5 @@
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
 # ARC — Product Requirements Document
 
 **Product:** ARC (Ambient Response Core), in-product persona **Bella**

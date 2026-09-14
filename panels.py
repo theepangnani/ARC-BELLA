@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Panels the user invents, built by ARC.
 
 "Make me a panel for the Tokyo trip." "Put a countdown to my exam on screen."

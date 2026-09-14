@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """If this, then that — standing rules ARC checks in the background.
 
 "Tell me if Tesla drops below 200." "Shout at me if I've spent more than five

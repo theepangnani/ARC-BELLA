@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Lesson mode and the whiteboard, and the markdown strip that broke them.
 
 The interesting one is last. Replies used to have markdown stripped the moment

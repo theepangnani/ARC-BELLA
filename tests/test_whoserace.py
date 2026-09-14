@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Two people talking to ARC at once each keep their own data.
 
 whose.py and memory.py decide whose notes, plan, panels and remembered facts a

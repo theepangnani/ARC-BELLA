@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ARC - Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 set -e
 cd "$(dirname "$0")"
 [ -d .venv ] || python3 -m venv .venv

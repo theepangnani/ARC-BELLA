@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """No argument the model can send ends the turn, in any linked-account kit.
 
 The tool schemas aren't strict, so a model — or text it read and was steered by

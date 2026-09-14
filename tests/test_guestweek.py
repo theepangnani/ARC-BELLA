@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """The guests' extra tools are a LOAN, and this is the clock on it.
 
 The owner opened the guest tier up to "all except my pc" and then, the next

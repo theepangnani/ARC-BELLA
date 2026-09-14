@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """YouTube, through the same Google sign-in as calendar and mail. Read-only.
 
 media.py already opens YouTube to a search with no account at all. What it

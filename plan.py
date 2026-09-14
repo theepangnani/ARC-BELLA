@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """ARC's working plan for the job in front of her.
 
 THE PROBLEM THIS EXISTS FOR. A hard request is several steps, and ARC gets a

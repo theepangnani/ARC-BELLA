@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Shared plumbing for the suites in this directory.
 
 Two jobs. The first is finding ARC without anyone hard-coding a path, so the

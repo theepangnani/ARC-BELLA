@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Everybody's alarms, reminders, lists, alerts and rules are their own.
 
 On 11 Sep 2026 guests were lent the alarm clock, the reminders, the to-do list,

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Slash commands: the things you do TO ARC rather than ask ARC to do.
 
 /check and /repair existed twice over before this — as REST routes and as tools

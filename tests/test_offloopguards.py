@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Off the loop, a tool still serves the right person, and a crash is still a reply.
 
 test_offloop shows an OWNER's web tool leaving the event loop. Two things it

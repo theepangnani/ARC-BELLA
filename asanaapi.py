@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """Asana, through the owner's personal access token (links.py, flow "token").
 
 Asked for with "monday and stuff". The owner creates a personal access token

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
 """What ARC actually did, day by day — the record behind Arc Watch.
 
 There was no record. The spend meter was a dictionary in memory that reset
