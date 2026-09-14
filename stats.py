@@ -241,9 +241,12 @@ def summary(days: int = 7) -> str:
                 "off or nobody said anything." % days)
     span = "today" if days == 1 else "over the last %d days" % days
     saved = ""
-    if t.get("saved"):
+    if t.get("saved", 0.0) >= 0.005:
         # Worked out per turn at the answering model's own rate, not
         # reconstructed here at one flat price. The point of caching, in money.
+        # It is net of the write premium, so a quiet stretch that only wrote
+        # cache can sum below zero. The stored total keeps that; the sentence
+        # just leaves the saving out rather than claim a negative one.
         saved = " Caching saved about $%.2f of that." % t["saved"]
     top = list(t["tools"].items())[:3]
     tools = ("  Most used: "

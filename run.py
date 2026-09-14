@@ -1652,6 +1652,10 @@ _day = {"stamp": time.strftime("%Y-%m-%d"), "count": 0, "tok_in": 0, "tok_out": 
 # added to tok_in. Counted at full rate, a cached turn would report about five
 # times what it cost, and DAILY_COST_CAP would cut ARC off long before the
 # money was actually spent.
+#
+# 1.25 is the price of a 5-minute write, the default for {"type": "ephemeral"}.
+# A 1-hour write ("ttl": "1h") costs 2x, so adding a ttl to any cache_control
+# means changing this rate too; test_cachesaved fails until that happens.
 CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
 
@@ -1672,6 +1676,20 @@ def turn_cost(model, tok_in=0, tok_out=0, cache_read=0, cache_write=0,
             + cache_write / 1e6 * p_in * CACHE_WRITE_RATE
             + tok_out / 1e6 * p_out
             + searches * SEARCH_COST)
+
+
+def cache_saved(model, cache_read=0, cache_write=0) -> float:
+    """What caching kept, net of what it cost to set up, at the model's rate.
+
+    A read saves nine tenths of the input price, but a write costs a quarter
+    more than an uncached token would have. Counting only the reads overstated
+    the saving on every turn that wrote cache. The result can be negative: a
+    turn that only wrote the cache paid for the next one. It is stored as it
+    is, and only the spoken figure is kept at zero or above.
+    """
+    p_in = prices_for(model)[0]
+    return (cache_read * (1 - CACHE_READ_RATE)
+            - cache_write * (CACHE_WRITE_RATE - 1)) / 1e6 * p_in
 
 
 def _day_cost() -> float:
@@ -3166,8 +3184,8 @@ async def chat(request: Request, _=Depends(require_auth)):
                     model, tokens_in - at_step[0], tokens_out - at_step[1],
                     cache_read - at_step[2], cache_write - at_step[3],
                     searches - at_step[4])
-                early_saved += ((cache_read - at_step[2]) / 1e6
-                                * prices_for(model)[0] * (1 - CACHE_READ_RATE))
+                early_saved += cache_saved(model, cache_read - at_step[2],
+                                           cache_write - at_step[3])
                 at_step = (tokens_in, tokens_out, cache_read, cache_write, searches)
                 early_model = model
                 brain, brain_why = "smart", brain_why + "; " + up
@@ -3228,10 +3246,9 @@ async def chat(request: Request, _=Depends(require_auth)):
                       cache_read - at_step[2], cache_write - at_step[3],
                       searches - at_step[4]) + early_spent
     _day["cost"] += spent
-    # What the cache kept: the difference between what those tokens cost as
-    # reads and what they would have cost at the full input rate.
-    saved = ((cache_read - at_step[2]) / 1e6 * prices_for(model)[0]
-             * (1 - CACHE_READ_RATE)) + early_saved
+    # What the cache kept, less the write premium it cost; see cache_saved.
+    saved = cache_saved(model, cache_read - at_step[2],
+                        cache_write - at_step[3]) + early_saved
 
     # And to disk, for Arc Watch. _day is memory only and resets on restart, so
     # until this existed the honest answer to "what did I spend on Tuesday?"

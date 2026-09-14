@@ -584,9 +584,15 @@
       // right once more than one model is in play. The old estimate is kept for
       // days recorded before that existed — they have the token counts but not
       // the figure, and dropping them would make the past look free.
-      const saved = t.saved > 0
-        ? t.saved
-        : (t.tok_cache_read || 0) / 1e6 * d.prices.in * 0.9;
+      // Since 14 Sep 2026 the figure is net of the cache-write premium, so a
+      // stretch that mostly wrote cache can be below zero. That is shown as
+      // nothing saved, NOT handed to the old estimate: the estimate counts only
+      // reads, and is the overstatement the net figure replaced. The estimate
+      // takes off the writes too, and never shows less than zero.
+      const saved = t.saved > 0 ? t.saved
+        : t.saved < 0 ? 0
+        : Math.max(0, ((t.tok_cache_read || 0) * (d.prices.in - d.prices.cache_read)
+                       - (t.tok_cache_write || 0) * (d.prices.cache_write - d.prices.in)) / 1e6);
 
       $("span").textContent = t.active_days + " active day" +
         (t.active_days === 1 ? "" : "s") + " of " + days;
