@@ -158,7 +158,7 @@ try:
     # In batches, not every round: fading rewrites earlier rounds, and the
     # conversation is cached now. See FADE_CHECKS_OVER in run.py.
     c.truthy("  run.py fades them before adding a round, once enough have piled up",
-             "convo = (pc.fade_old_checks(convo) if pc.count_checks(convo) >= FADE_CHECKS_OVER"
+             "convo = (pc.fade_old_checks(convo) if pc.count_check_rounds(convo) >= FADE_CHECKS_OVER"
              in io.open(ARC / "run.py", encoding="utf-8").read())
     c("  it counts the check's picture and not the others", pc.count_checks(convo), 1)
     c("  and nothing once it has faded", pc.count_checks(faded), 0)

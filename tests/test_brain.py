@@ -422,6 +422,8 @@ c("  ...under it, with room for the reply",
   run.fit_thinking(_h, 2200), {"type": "enabled", "budget_tokens": 1944})
 c("  and with no room at all it does not think", run.fit_thinking(_h, 1200), {"type": "disabled"})
 c("  adaptive is left alone", run.fit_thinking({"type": "adaptive"}, 1200), {"type": "adaptive"})
+c.truthy("  and the reply's thought flag reads the fitted block, not the asked-for one",
+         '"thought": thought(fit_thinking(thinking, MAX_TOKENS_CHAT if chat_view else MAX_TOKENS)),' in _run)
 c.truthy("  the tool loop fits it to its own ceiling",
          "thinking=fit_thinking(thinking, MAX_TOKENS_CHAT if chat_view else MAX_TOKENS)" in _run)
 _run_src = io.open(ARC / "run.py", encoding="utf-8").read()

@@ -35,12 +35,15 @@ def marks(msgs) -> int:
                for b in m["content"] if isinstance(b, dict) and "cache_control" in b)
 
 
-print("The newest block is marked, on a copy:")
+print("A round of results is marked, on a copy:")
 convo = [{"role": "user", "content": "open notepad and type hello"}]
-sent = run.cache_mark(convo)
-c("  a plain string becomes one marked text block", sent[-1]["content"],
-  [{"type": "text", "text": "open notepad and type hello", "cache_control": MARK}])
-c("  the conversation kept is untouched", convo[-1]["content"], "open notepad and type hello")
+# NOT the person's own message. Most turns are one round, and the next turn does
+# not share the prefix (the clock, alarms and plan are in the second system
+# block), so a mark there was a 1.25x write nothing ever read.
+c.truthy("  the person's own message is not marked", run.cache_mark(convo) is convo)
+c.truthy("  nor as a block list",
+         run.cache_mark([{"role": "user", "content": [{"type": "text", "text": "hi"}]}])[-1]
+         ["content"][-1].get("cache_control") is None)
 
 results = [{"type": "tool_result", "tool_use_id": "a", "content": "Opened Notepad."},
            {"type": "tool_result", "tool_use_id": "b", "content": "Typed."}]
@@ -76,6 +79,11 @@ def check_result(i):
             "content": [{"type": "text", "text": "Typed. CHECK YOUR WORK %d" % i}, dict(IMG)]}
 
 
+def parallel_round(i):
+    """A click, a keypress and a typing call in one round: three pictures."""
+    return [check_result(i * 10 + k) for k in range(3)]
+
+
 def plain(msgs):
     """What the API compares: the content, without the marks."""
     out = json.loads(json.dumps(msgs, default=str))
@@ -104,14 +112,18 @@ for i in range(1, 17):
             missed += 1
     previous = copy.deepcopy(sent)
     # The same step run.py takes after each round.
-    convo = (pc.fade_old_checks(convo) if pc.count_checks(convo) >= run.FADE_CHECKS_OVER
+    convo = (pc.fade_old_checks(convo) if pc.count_check_rounds(convo) >= run.FADE_CHECKS_OVER
              else convo) + [
         {"role": "assistant", "content": [{"type": "text", "text": "step %d" % i}]},
-        {"role": "user", "content": [check_result(i)]},
+        {"role": "user", "content": parallel_round(i)},
     ]
+# Three pictures a round. Counted by picture, the batch filled every other round.
 c.truthy("  most rounds read the whole of the last one back", held >= 12)
 c.truthy("  a miss only on the rounds a batch faded", missed <= 16 // run.FADE_CHECKS_OVER)
-c.truthy("  and the pictures carried stay bounded", pc.count_checks(convo) <= run.FADE_CHECKS_OVER)
+c.truthy("  and the rounds carrying pictures stay bounded",
+         pc.count_check_rounds(convo) <= run.FADE_CHECKS_OVER)
+c("  a round of three pictures is one round", pc.count_check_rounds(
+    [{"role": "user", "content": parallel_round(1)}]), 1)
 
 # The old way, for the record: fading every round.
 convo = [{"role": "user", "content": "fill in the form"}]

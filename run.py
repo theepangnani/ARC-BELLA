@@ -609,8 +609,9 @@ def fit_thinking(thinking: dict, max_tokens: int) -> dict:
     return {"type": "enabled", "budget_tokens": budget}
 
 
-# How many check-your-work pictures a turn carries before they are all faded
-# together. See the fading in chat()'s tool loop.
+# How many ROUNDS carrying check-your-work pictures a turn keeps before they are
+# all faded together. Rounds, not pictures: a round that acts in parallel brings
+# several. See the fading in chat()'s tool loop.
 FADE_CHECKS_OVER = 6
 
 
@@ -622,18 +623,14 @@ def cache_mark(convo: list) -> list:
     results, the screenshots it asked for. A ten-round job at the screen paid for
     round one ten times. On 11 September 2026 that was 7.5 million uncached input
     tokens, about $7.50 of a $10.62 day. With the newest block marked, the next
-    round reads everything before it at a tenth of the price, and the next turn
-    does too while the cache is warm.
+    round reads everything before it at a tenth of the price.
 
     A COPY, marked on the copy. convo is kept and appended to round after round,
     and a mark left behind on an old block would pile up past the API's limit of
     four breakpoints. The system prompt uses one; this is the second.
 
-    Only a user message's last block, and only one that is a plain dict or
-    string. That is what ends the conversation on every normal round (the user's
-    words, or a round of tool results). After a pause_turn the last message is
-    the model's own blocks, SDK objects rather than dicts, and that round simply
-    goes unmarked.
+    After a pause_turn the last message is the model's own blocks, SDK objects
+    rather than dicts, and that round simply goes unmarked.
 
     pc.fade_old_checks swaps old check pictures for a line of text, which changes
     the prefix from that point. That is why the tool loop fades them in batches
@@ -645,14 +642,19 @@ def cache_mark(convo: list) -> list:
     if not isinstance(last, dict) or last.get("role") != "user":
         return convo
     content = last.get("content")
-    if isinstance(content, str):
-        if not content.strip():
-            return convo
-        blocks = [{"type": "text", "text": content}]
-    elif isinstance(content, list) and content and isinstance(content[-1], dict):
-        blocks = list(content)
-    else:
+    # ONLY A ROUND OF TOOL RESULTS, never the person's own message. A mark there
+    # is a cache write at 1.25 times the input rate, and nothing reads it back:
+    # most turns are one round and done, and the NEXT turn does not share the
+    # prefix, because the second system block carries the clock to the minute,
+    # the alarms and the plan, and the newest message may carry a picture of
+    # the screen. Marked on every turn, every short spoken answer paid a quarter
+    # more for its history than before. A review from the laptop caught it.
+    # Once a round of results exists, a further round is already being paid
+    # for, and that is the one that reads it.
+    if not (isinstance(content, list) and content and isinstance(content[-1], dict)
+            and content[-1].get("type") == "tool_result"):
         return convo
+    blocks = list(content)
     blocks[-1] = dict(blocks[-1], cache_control={"type": "ephemeral"})
     return convo[:-1] + [dict(last, content=blocks)]
 
@@ -2839,10 +2841,10 @@ async def chat(request: Request, _=Depends(require_auth)):
         # from that point on. Faded every round, nothing after the first check
         # picture would ever be read back: each round would pay to write the
         # cache again, which costs more than not caching. A picture that is kept
-        # is read at a tenth of the price. So they are kept until there are
-        # FADE_CHECKS_OVER of them, then all faded at once. The prefix changes
-        # once in that many rounds, and the pile is still bounded.
-        convo = (pc.fade_old_checks(convo) if pc.count_checks(convo) >= FADE_CHECKS_OVER
+        # is read at a tenth of the price. So they are kept until
+        # FADE_CHECKS_OVER rounds carry them, then all faded at once. The prefix
+        # changes once in that many rounds, and the pile is still bounded.
+        convo = (pc.fade_old_checks(convo) if pc.count_check_rounds(convo) >= FADE_CHECKS_OVER
                  else convo) + [
             {"role": "assistant", "content": resp.content},
             {"role": "user", "content": results},
@@ -2949,7 +2951,8 @@ async def chat(request: Request, _=Depends(require_auth)):
     return JSONResponse({
         "reply": reply,
         "searched": searched,
-        "thought": thought(thinking),
+        # As sent: fit_thinking can turn a Haiku budget off under a low ceiling.
+        "thought": thought(fit_thinking(thinking, MAX_TOKENS_CHAT if chat_view else MAX_TOKENS)),
         "brain": brain,
         "auto": auto_used,
         "why": brain_why,

@@ -1927,6 +1927,18 @@ def count_checks(convo: list) -> int:
                for b in m["content"] if _is_check(b))
 
 
+def count_check_rounds(convo: list) -> int:
+    """How many ROUNDS still carry a check picture, however many each holds.
+
+    What run.py batches its fading on. Counting pictures, a round that clicked
+    and typed in parallel brought two or three at once, the batch filled every
+    couple of rounds, and each fade is a rewrite the cache has to pay for again.
+    """
+    return sum(1 for m in convo or []
+               if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), list)
+               and any(_is_check(b) for b in m["content"]))
+
+
 def fade_old_checks(convo: list) -> list:
     """The conversation with every check-your-work picture already in it
     replaced by one line of text. Called before a round's results are added, so
