@@ -137,8 +137,12 @@ print("\nEvery route that talks to Claude goes through it:")
 src = open(ARC / "run.py", encoding="utf-8").read()
 c("  no site still forwards the raw message",
   len(re.findall(r"str\(e\.message\)\[:\d+\]", src)), 0)
+# chat()'s handler books what the turn had already spent before raising (Claude
+# 4's cost audit, tests/test_costbooking.py), so one book(error=True) line may
+# sit between the except and the raise. Still the mapper, still both sites.
 c("  both APIStatusError handlers use the mapper",
-  len(re.findall(r"except anthropic\.APIStatusError as e:\s*\n\s*raise _claude_error\(e\)", src)), 2)
+  len(re.findall(r"except anthropic\.APIStatusError as e:\s*\n(?:\s*book\(error=True\)\s*\n)?"
+                 r"\s*raise _claude_error\(e\)", src)), 2)
 c.truthy("  and the detail is still logged in full for whoever is debugging",
          'print(f"{C_RED}  ! anthropic {status}' in src)
 

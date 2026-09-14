@@ -1,0 +1,143 @@
+# -*- coding: utf-8 -*-
+# ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+# All rights reserved. Proprietary; see LICENSE. Visibility is not permission.
+"""Every model call that was paid for is on the meter, once.
+
+Claude 4's cost audit, guarded here:
+
+  · a turn that fails part-way (the API overloaded on round two, a rate limit)
+    used to book nothing — the rounds before it were paid for and never
+    reached DAILY_COST_CAP or Arc Watch. It books what it spent, then raises
+    the same error it always did;
+  · a turn books exactly once, whichever way it ends;
+  · a turn that fails before any round comes back books nothing at all.
+"""
+import asyncio
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _harness import sandbox, Check   # noqa: E402
+sandbox()
+
+import anthropic   # noqa: E402
+import httpx       # noqa: E402
+import run         # noqa: E402
+import session     # noqa: E402
+
+c = Check()
+OWNER = "owner@example.com"
+
+
+class Blk:
+    def __init__(self, t):
+        self.type, self.text = "text", t
+
+
+class ToolBlk:
+    type = "tool_use"
+
+    def __init__(self, name):
+        self.name, self.input, self.id = name, {"location": "Toronto"}, "cb-" + name
+
+
+class Usage:
+    def __init__(self, i, o, cr=0, cw=0):
+        self.input_tokens, self.output_tokens = i, o
+        self.cache_read_input_tokens, self.cache_creation_input_tokens = cr, cw
+        self.server_tool_use = None
+
+
+class Resp:
+    def __init__(self, content, usage, stop="end_turn"):
+        self.content, self.stop_reason, self.usage = content, stop, usage
+
+
+def overloaded():
+    r = httpx.Response(529, json={"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}},
+                       request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+    return anthropic.APIStatusError("Overloaded", response=r, body=None)
+
+
+def turn(script):
+    """One owner turn whose model calls follow `script`: each item is a Resp to
+    return or an exception to raise. Returns (status, records, day cost added)."""
+    calls = list(script)
+    records = []
+
+    class Fake:
+        class messages:
+            @staticmethod
+            async def create(**kw):
+                step = calls.pop(0)
+                if isinstance(step, BaseException):
+                    raise step
+                return step
+
+        async def close(self):
+            pass
+
+    real_record, real_dispatch = run.stats.record, run.dispatch_tool
+    run.stats.record = lambda **kw: records.append(kw)
+    run.dispatch_tool = lambda name, args, **kw: ("12 degrees and clear", False)
+    run.app.state.claude = Fake()
+    before = run._day["cost"]
+    try:
+        async def go():
+            sid = session.create(OWNER, "desk")
+            transport = httpx.ASGITransport(app=run.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as cl:
+                return await cl.post("/api/chat", cookies={run.COOKIE: sid}, json={
+                    "messages": [{"role": "user", "content": "weather in Toronto"}],
+                    "allow_actions": True, "brain": "smart"})
+        r = asyncio.run(go())
+    finally:
+        run.stats.record, run.dispatch_tool = real_record, real_dispatch
+        session.revoke_all()
+    return r.status_code, records, run._day["cost"] - before
+
+
+print("A turn that ends normally:")
+status, recs, added = turn([Resp([ToolBlk("weather")], Usage(1000, 50), stop="tool_use"),
+                            Resp([Blk("It's twelve degrees.")], Usage(1200, 20))])
+c("  answered", status, 200)
+c("  booked once", len(recs), 1)
+c.truthy("  with both rounds' tokens", recs and recs[0]["tok_in"] == 2200 and recs[0]["tok_out"] == 70)
+c("  not marked as an error", bool(recs and recs[0].get("error")), False)
+c("  and counted as a turn", recs[0].get("turn") if recs else None, True)
+model = recs[0]["model"] if recs else ""
+c.truthy("  and the day's meter moved by what it cost",
+         abs(added - run.turn_cost(model, 2200, 70)) < 1e-9)
+
+print("\nA turn that fails on its second round:")
+status, recs, added = turn([Resp([ToolBlk("weather")], Usage(1000, 50, cr=4000), stop="tool_use"),
+                            overloaded()])
+c.truthy("  the error still reaches the page, not a reply", status >= 400)
+c("  booked once", len(recs), 1)
+c.truthy("  with the round that came back", recs and recs[0]["tok_in"] == 1000
+         and recs[0]["tok_out"] == 50 and recs[0]["cache_read"] == 4000)
+c("  marked as an error", bool(recs and recs[0].get("error")), True)
+c("  ...and not counted as a turn answered", recs[0].get("turn") if recs else None, False)
+c.truthy("  and it counts towards the daily cap",
+         recs and abs(added - run.turn_cost(recs[0]["model"], 1000, 50, 4000)) < 1e-9 and added > 0)
+
+print("\nA turn that fails before anything comes back:")
+status, recs, added = turn([overloaded()])
+c.truthy("  an error status", status >= 400)
+c("  books nothing", (len(recs), added), (0, 0.0))
+
+print("\nA connection that drops, and a rate limit, book the same way:")
+req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+limited = anthropic.RateLimitError("slow down", response=httpx.Response(429, request=req), body=None)
+for label, exc in (("a dropped connection", anthropic.APIConnectionError(request=req)),
+                   ("a rate limit", limited)):
+    status, recs, added = turn([Resp([ToolBlk("weather")], Usage(500, 10), stop="tool_use"), exc])
+    c("  %-21s books its first round, once" % label, (len(recs), recs[0]["tok_in"] if recs else 0), (1, 500))
+
+print("\nThe booking can only happen once:")
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "run.py"), encoding="utf-8").read()
+chat_src = src.split("async def chat(")[1].split("\n@app.")[0]
+c("  stats.record for the turn is written in one place only", chat_src.count("tok_in=tokens_in, tok_out=tokens_out"), 1)
+c.truthy("  guarded by a once-only flag", "if booked:" in chat_src and "booked.append(True)" in chat_src)
+
+c.done()

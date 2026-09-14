@@ -3090,6 +3090,57 @@ async def chat(request: Request, _=Depends(require_auth)):
     early_spent = early_saved = 0.0
     at_step = (0, 0, 0, 0, 0)
     early_model = ""
+    booked = []
+
+    def book(error: bool = False) -> None:
+        """Put what this turn spent on the day's meter and on disk. Once.
+
+        Called at the end of a turn, AND before a model error is raised out of
+        the loop. It used to run only at the end, so a turn that failed on its
+        third round (the API overloaded, a rate limit) had paid for two rounds
+        that never reached DAILY_COST_CAP or Arc Watch — the meter under-read
+        on exactly the bad days the cap is for (Claude 4's cost audit). The
+        round that raised returned no usage, so there is nothing of it to add.
+        It reads the turn's running totals when called, and `booked` makes a
+        second call a no-op, so no path can put one turn on the bill twice."""
+        if booked:
+            return
+        booked.append(True)
+        if error and not (tokens_in or tokens_out or cache_read or cache_write or searches):
+            return      # failed before any round came back: nothing was spent
+        _day["tok_in"] += tokens_in
+        _day["tok_out"] += tokens_out
+        _day["tok_cache_read"] += cache_read
+        _day["tok_cache_write"] += cache_write
+        # Priced at whatever answered, not at whatever the default is.
+        # A stepped-up turn adds what its Haiku rounds cost; see early_spent.
+        spent = turn_cost(model, tokens_in - at_step[0], tokens_out - at_step[1],
+                          cache_read - at_step[2], cache_write - at_step[3],
+                          searches - at_step[4]) + early_spent
+        _day["cost"] += spent
+        # What the cache kept, less the write premium it cost; see cache_saved.
+        saved = cache_saved(model, cache_read - at_step[2],
+                            cache_write - at_step[3]) + early_saved
+
+        # And to disk, for Arc Watch. _day is memory only and resets on restart,
+        # so until this existed the honest answer to "what did I spend on
+        # Tuesday?" was that nobody knew, including ARC. Counts and costs only —
+        # no prompts, no replies, nothing anybody said. See stats.py.
+        #
+        # A stepped-up turn books its Haiku rounds to Haiku. The per-model spend
+        # is the evidence router.py argues from, and putting all of it on Sonnet
+        # would hide exactly the cost the step-up exists to measure. turn=False,
+        # so it is still one turn, answered by the model that finished it.
+        if early_model:
+            stats.record(cost=early_spent, saved=early_saved, model=early_model, turn=False)
+        stats.record(
+            tok_in=tokens_in, tok_out=tokens_out,
+            cache_read=cache_read, cache_write=cache_write,
+            cost=spent - early_spent, saved=saved - early_saved,
+            tools=used, model=model, searched=searched, error=error,
+            # A turn that failed is counted in "errors", not as a turn answered.
+            turn=not error, refusal=(reply == "I can't help with that one, sir."))
+
     for _ in range(rounds):
         used_rounds += 1
         kwargs = dict(
@@ -3124,10 +3175,13 @@ async def chat(request: Request, _=Depends(require_auth)):
         try:
             resp = await _claude_round(claude, kwargs)
         except anthropic.APIConnectionError as e:
+            book(error=True)
             raise HTTPException(502, f"Could not reach the Anthropic API: {e}")
         except anthropic.RateLimitError:
+            book(error=True)
             raise HTTPException(429, "Rate limited by the Anthropic API. Try again shortly.")
         except anthropic.APIStatusError as e:
+            book(error=True)
             raise _claude_error(e)
 
         u = resp.usage
@@ -3334,37 +3388,7 @@ async def chat(request: Request, _=Depends(require_auth)):
         f"{('  [' + ', '.join(used) + ']') if used else ''}{C_OFF}"
     )
 
-    _day["tok_in"] += tokens_in
-    _day["tok_out"] += tokens_out
-    _day["tok_cache_read"] += cache_read
-    _day["tok_cache_write"] += cache_write
-    # Priced at whatever answered, not at whatever the default is.
-    # A stepped-up turn adds what its Haiku rounds cost; see early_spent.
-    spent = turn_cost(model, tokens_in - at_step[0], tokens_out - at_step[1],
-                      cache_read - at_step[2], cache_write - at_step[3],
-                      searches - at_step[4]) + early_spent
-    _day["cost"] += spent
-    # What the cache kept, less the write premium it cost; see cache_saved.
-    saved = cache_saved(model, cache_read - at_step[2],
-                        cache_write - at_step[3]) + early_saved
-
-    # And to disk, for Arc Watch. _day is memory only and resets on restart, so
-    # until this existed the honest answer to "what did I spend on Tuesday?"
-    # was that nobody knew, including ARC. Counts and costs only — no prompts,
-    # no replies, nothing anybody said. See stats.py.
-    #
-    # A stepped-up turn books its Haiku rounds to Haiku. The per-model spend is
-    # the evidence router.py argues from, and putting all of it on Sonnet would
-    # hide exactly the cost the step-up exists to measure. turn=False, so it is
-    # still one turn, answered by the model that finished it.
-    if early_model:
-        stats.record(cost=early_spent, saved=early_saved, model=early_model, turn=False)
-    stats.record(
-        tok_in=tokens_in, tok_out=tokens_out,
-        cache_read=cache_read, cache_write=cache_write,
-        cost=spent - early_spent, saved=saved - early_saved,
-        tools=used, model=model, searched=searched,
-        refusal=(reply == "I can't help with that one, sir."))
+    book()
 
     return JSONResponse({
         "reply": reply,
