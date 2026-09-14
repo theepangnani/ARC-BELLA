@@ -10,7 +10,10 @@ a single consent screen, rather than one per capability.
 
 import os
 import contextvars
+import json
 from pathlib import Path
+
+import storefile
 
 # Google often returns the granted scopes in a different order / as a superset
 # (especially with include_granted_scopes), which makes oauthlib raise a
@@ -92,9 +95,13 @@ def granted_scopes() -> set[str]:
     from_authorized_user_file overwrites creds.scopes with what we *asked*
     for, so checking that compares a list against itself and always passes.
     """
-    import json
+    tok = _tok()
     try:
-        return set(json.loads(_tok().read_text(encoding="utf-8")).get("scopes") or [])
+        # Under the file's lock: on Windows a read that lands on the instant a
+        # refresh swaps the file in is refused, and an empty set here says
+        # "not granted" about an account that is.
+        with storefile.lock(tok):
+            return set(json.loads(tok.read_text(encoding="utf-8")).get("scopes") or [])
     except Exception:
         return set()
 
@@ -145,7 +152,8 @@ def service(api: str, version: str, needs=None):
     if not tok.exists():
         raise NotConnected("Google is not connected yet.")
 
-    creds = Credentials.from_authorized_user_file(str(tok), SCOPES)
+    with storefile.lock(tok):       # see granted_scopes
+        creds = Credentials.from_authorized_user_file(str(tok), SCOPES)
 
     # Adding a capability adds a scope, and an old token predates it. Say so
     # plainly — the alternative is a 403 from deep inside the client library.
@@ -160,8 +168,18 @@ def service(api: str, version: str, needs=None):
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            tok.write_text(creds.to_json(), encoding="utf-8")   # persist the fresh access token
+            # One refresh at a time per token file, and the file read again once
+            # it is ours: a turn that waited here usually finds the one before
+            # it has already refreshed. Written atomically, because a tool run
+            # off the event loop can be reading this file at the same instant,
+            # and a half-written token reads as "the sign-in has lapsed".
+            with storefile.lock(tok):
+                fresh = Credentials.from_authorized_user_file(str(tok), SCOPES)
+                if fresh.valid:
+                    creds = fresh
+                else:
+                    creds.refresh(Request())
+                    storefile.write(tok, json.loads(creds.to_json()))   # persist the fresh access token
         else:
             raise NotConnected("The Google sign-in has lapsed. Please reconnect Google.")
 
