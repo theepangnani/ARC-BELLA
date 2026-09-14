@@ -11392,7 +11392,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
         const b = node("button", "conn-switch", "Unlink");
         b.addEventListener("click", async () => {
           b.disabled = true;
-          try { await post("/api/links/" + encodeURIComponent(s.id) + "/unlink"); }
+          try {
+            await post("/api/links/" + encodeURIComponent(s.id) + "/unlink");
+            // Only Dropbox can be told to cancel the token from here; for the
+            // rest, deleting Bella's copy is all this button can do, so it
+            // says where the person finishes the job (links.py unlink_note).
+            if (s.unlink_note) addEntry("sys", "SYSTEM", s.name + " unlinked. " + s.unlink_note);
+          }
           catch (e) { addEntry("err", "SYSTEM", "Couldn't unlink " + s.name + ": " + e.message); }
           refresh();
         });

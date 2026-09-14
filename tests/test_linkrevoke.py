@@ -178,4 +178,22 @@ c("  and revokes nothing", calls, [])
 whose.use(OWNER)
 c("  the owner is still linked", links._path("dropbox").exists(), True)
 
+# Where Disconnect cannot reach the service, it says where to finish the job,
+# so "unlinked" never reads as "Bella's access is gone" when it is not.
+print("\nEvery signed-in service either revokes or says where to:")
+for sid, s in links.SERVICES.items():
+    if s["flow"] == "token":
+        continue
+    c("  %-10s exactly one of revoke_url / unlink_note" % sid,
+      bool(s.get("revoke_url")) != bool(s.get("unlink_note")), True)
+c.truthy("  the page is sent the note",
+         all("unlink_note" in e for e in links.catalogue()))
+_page = io.open(os.path.join(str(ARC), "static", "index.html"), encoding="utf-8").read()
+_run = io.open(os.path.join(str(ARC), "run.py"), encoding="utf-8").read()
+c.truthy("  (and no request URL, which can carry a key, is ever logged by httpx)",
+         'for _noisy in ("httpx", "httpcore"):' in _run
+         and "logging.getLogger(_noisy).setLevel(logging.WARNING)" in _run)
+c.truthy("  and shows it after an Unlink",
+         'if (s.unlink_note) addEntry("sys", "SYSTEM", s.name + " unlinked. " + s.unlink_note);' in _page)
+
 c.done()

@@ -63,6 +63,9 @@ SERVICES = {
                    # The one write: pressing play, pause and skip on their own
                    # player. Gated by consent like every other action.
                    "user-modify-playback-state"],
+        # No revoke endpoint (see _revoke), so Unlink says where to finish it.
+        "unlink_note": ("Spotify can't be told from here. To take Bella's access away "
+                        "there too, remove this app at spotify.com/account/apps."),
         "setup": ("Create an app at developer.spotify.com, add this instance's "
                   "/oauth/link/spotify/callback as a redirect URI, and put its "
                   "client id in .env as SPOTIFY_CLIENT_ID."),
@@ -72,7 +75,10 @@ SERVICES = {
         "device_url": "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",
         "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
         "scopes": ["offline_access", "User.Read", "Mail.Read", "Calendars.Read", "Files.Read"],
-        "setup": ("Register an app in the Azure portal (App registrations), allow "
+        "unlink_note": ("Microsoft can't be told from here. To take Bella's access away "
+                        "there too, remove this app at account.live.com/consent/Manage "
+                        "(a work or school account: myapps.microsoft.com)."),
+        "setup":("Register an app in the Azure portal (App registrations), allow "
                   "public client flows, and put its application id in .env as MS_CLIENT_ID."),
     },
     "github": {
@@ -83,7 +89,9 @@ SERVICES = {
         # repositories ('repo' can push), so private code stays out until the
         # owner decides otherwise.
         "scopes": ["read:user", "notifications"],
-        "setup": ("Create an OAuth app under GitHub Settings, Developer settings, tick "
+        "unlink_note": ("GitHub can't be told from here. To take Bella's access away "
+                        "there too, revoke this app at github.com/settings/applications."),
+        "setup":("Create an OAuth app under GitHub Settings, Developer settings, tick "
                   "'Enable Device Flow', and put its client id in .env as GITHUB_CLIENT_ID."),
     },
     "notion": {
@@ -505,5 +513,6 @@ def catalogue() -> list:
         out.append({"id": sid, "name": s["name"], "flow": s["flow"],
                     "configured": configured(sid) and not owner_only,
                     "linked": linked(sid), "account": account(sid),
-                    "setup": "" if configured(sid) else s["setup"]})
+                    "setup": "" if configured(sid) else s["setup"],
+                    "unlink_note": s.get("unlink_note", "")})
     return out
