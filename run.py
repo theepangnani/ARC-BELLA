@@ -552,6 +552,54 @@ def fit_thinking(thinking: dict, max_tokens: int) -> dict:
     return {"type": "enabled", "budget_tokens": budget}
 
 
+# How many check-your-work pictures a turn carries before they are all faded
+# together. See the fading in chat()'s tool loop.
+FADE_CHECKS_OVER = 6
+
+
+def cache_mark(convo: list) -> list:
+    """The conversation as sent, with a cache breakpoint on its newest block.
+
+    Only the system prompt was ever marked cacheable, so every tool round re-sent
+    every earlier round at the full input rate: the assistant's calls, their
+    results, the screenshots it asked for. A ten-round job at the screen paid for
+    round one ten times. On 11 September 2026 that was 7.5 million uncached input
+    tokens, about $7.50 of a $10.62 day. With the newest block marked, the next
+    round reads everything before it at a tenth of the price, and the next turn
+    does too while the cache is warm.
+
+    A COPY, marked on the copy. convo is kept and appended to round after round,
+    and a mark left behind on an old block would pile up past the API's limit of
+    four breakpoints. The system prompt uses one; this is the second.
+
+    Only a user message's last block, and only one that is a plain dict or
+    string. That is what ends the conversation on every normal round (the user's
+    words, or a round of tool results). After a pause_turn the last message is
+    the model's own blocks, SDK objects rather than dicts, and that round simply
+    goes unmarked.
+
+    pc.fade_old_checks swaps old check pictures for a line of text, which changes
+    the prefix from that point. That is why the tool loop fades them in batches
+    and not every round: see FADE_CHECKS_OVER.
+    """
+    if not convo:
+        return convo
+    last = convo[-1]
+    if not isinstance(last, dict) or last.get("role") != "user":
+        return convo
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content.strip():
+            return convo
+        blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        blocks = list(content)
+    else:
+        return convo
+    blocks[-1] = dict(blocks[-1], cache_control={"type": "ephemeral"})
+    return convo[:-1] + [dict(last, content=blocks)]
+
+
 def thought(thinking: dict) -> bool:
     """Whether a thinking block actually lets the model think, in either form."""
     return (thinking or {}).get("type") in ("adaptive", "enabled")
@@ -2439,7 +2487,7 @@ async def chat(request: Request, _=Depends(require_auth)):
             model=model,
             max_tokens=MAX_TOKENS_CHAT if chat_view else MAX_TOKENS,
             system=system,
-            messages=convo,
+            messages=cache_mark(convo),
             thinking=fit_thinking(thinking, MAX_TOKENS_CHAT if chat_view else MAX_TOKENS),
         )
         # The effort control is a Sonnet/Opus feature; Haiku rejects it. Only
@@ -2597,7 +2645,17 @@ async def chat(request: Request, _=Depends(require_auth)):
         # Earlier check-your-work pictures become a line of text before this
         # round's are added: each is re-sent on every round, and a ten-step task
         # was carrying dozens of screenshots it had already looked at.
-        convo = pc.fade_old_checks(convo) + [
+        #
+        # IN BATCHES, now that the conversation is cached (see cache_mark).
+        # Fading rewrites earlier rounds, and a rewritten prefix is a cache miss
+        # from that point on. Faded every round, nothing after the first check
+        # picture would ever be read back: each round would pay to write the
+        # cache again, which costs more than not caching. A picture that is kept
+        # is read at a tenth of the price. So they are kept until there are
+        # FADE_CHECKS_OVER of them, then all faded at once. The prefix changes
+        # once in that many rounds, and the pile is still bounded.
+        convo = (pc.fade_old_checks(convo) if pc.count_checks(convo) >= FADE_CHECKS_OVER
+                 else convo) + [
             {"role": "assistant", "content": resp.content},
             {"role": "user", "content": results},
         ]

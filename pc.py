@@ -1910,6 +1910,23 @@ def _needs_look(name: str, args: dict, said: str = "") -> bool:
 _FADED = "[A picture of the screen from an earlier step was here; you already checked it.]"
 
 
+def _is_check(b) -> bool:
+    """A check-your-work result that still carries its picture."""
+    if not (isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list)):
+        return False
+    inner = b["content"]
+    return (any(isinstance(x, dict) and x.get("type") == "text"
+                and "CHECK YOUR WORK" in (x.get("text") or "") for x in inner)
+            and any(isinstance(x, dict) and x.get("type") == "image" for x in inner))
+
+
+def count_checks(convo: list) -> int:
+    """How many check pictures the conversation is still carrying."""
+    return sum(1 for m in convo or []
+               if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), list)
+               for b in m["content"] if _is_check(b))
+
+
 def fade_old_checks(convo: list) -> list:
     """The conversation with every check-your-work picture already in it
     replaced by one line of text. Called before a round's results are added, so
