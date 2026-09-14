@@ -342,8 +342,8 @@ TOOLS = [
     {"name": "search_connectors",
      "description": (
          "Search EVERYTHING the user has connected at once — mail, Drive, contacts, "
-         "calendar, files on this computer, Outlook, OneDrive, Notion and what you "
-         "remember — and get the "
+         "calendar, files on this computer, Outlook, OneDrive, Notion, Dropbox, Slack "
+         "and what you remember — and get the "
          "results back labelled by source. Use it when they ask to find something "
          "without saying where ('find everything about the Lisbon trip', 'where did "
          "I put the lease', 'what do I have on the Hendricks project'). When they "
