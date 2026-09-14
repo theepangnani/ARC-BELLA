@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _harness import sandbox, Check   # noqa: E402
@@ -256,8 +257,12 @@ fresh()
 memory.remember("The owner is allergic to peanuts and shellfish")
 memory.remember("The owner is allergic to peanuts")
 c.truthy("  so does the shellfish allergy", any("shellfish" in t for t in texts()))
-c("  the reverse is fine: a richer fact may replace the thing it covers",
-  memory._supersedes("Her sister Maya lives in Leeds", "Her sister is Maya"), True)
+# Moved (second recall commit): a richer fact no longer replaces the one it
+# covers either. With plurals and -ing folded together, "likes dog food" covered
+# "likes dogs" and "the owner's wife drives a red Tesla" covered "drives a red
+# Tesla" — different facts, one of them gone. Only a restatement replaces now.
+c("  a richer fact does not replace the one it covers, either",
+  memory._supersedes("Her sister Maya lives in Leeds", "Her sister is Maya"), False)
 c("  a real rewording still replaces",
   memory._supersedes("His sister is Maya", "His sister is called Maya"), True)
 c("  ...and so does its mirror",
@@ -268,7 +273,13 @@ for new, old in (("Theepan works in Toronto", "Theepan lives in Toronto"),
                  ("Theepan finished the Python course", "Theepan is learning Python"),
                  ("The owner has a cat", "The owner has a dog"),
                  ("His brother lives in Leeds", "His sister lives in Leeds"),
-                 ("The owner dislikes coffee", "The owner likes coffee")):
+                 ("The owner dislikes coffee", "The owner likes coffee"),
+                 ("The owner likes dog food", "The owner likes dogs"),
+                 ("The owner's wife drives a red Tesla", "The owner drives a red Tesla"),
+                 ("The owner's daughter is learning Python", "The owner is learning Python"),
+                 ("The owner likes hiking in Wales", "The owner likes hiking"),
+                 ("The owner lives in York", "The owner lived in Leeds"),
+                 ("The owner's son plays chess", "The owner plays chess")):
     c("  still two facts: %r / %r" % (new, old), memory._supersedes(new, old), False)
 
 print("\nThe cap (pinned, not settled):")
@@ -284,5 +295,90 @@ for i in range(memory.MAX_FACTS):
 c("  the cap is still %d" % 200, memory.MAX_FACTS, 200)
 c("  KNOWN: the oldest is dropped silently at the cap",
   any("Sam" in t for t in texts()), False)
+
+
+print("\nOne fact however it is worded:")
+fresh()
+memory.remember("I take my coffee black")
+c("  a trailing full stop is already known, not a replacement",
+  memory.remember("I take my coffee black."), "I already knew that.")
+fresh()
+c("  an import keeps one of copies that differ only in punctuation",
+  memory.import_facts(["Likes green tea", "likes green tea.", "Likes  green tea!"]), 1)
+fresh()
+memory.remember("The owner likes hiking")
+memory.remember("The owner likes to hike")
+c("  'likes hiking' and 'likes to hike' are one fact", texts(), ["The owner likes to hike"])
+fresh()
+memory.remember("The owner is learning Python")
+memory.remember("The user is learning Python")
+c("  'the owner' and 'the user' are the same person", texts(), ["The user is learning Python"])
+fresh()
+memory.remember("The owner's name is Sam")
+memory.remember("Sam is learning Python")
+memory.remember("The owner is learning Python")
+c("  and so is their name, once a fact says what it is",
+  texts(), ["The owner's name is Sam", "The owner is learning Python"])
+fresh()
+memory.remember("Sam is learning Python")
+memory.remember("The owner is learning Python")
+# No fact says the owner is Sam, so Sam may be anybody: keep both.
+c("  but a name nobody said is theirs is left alone", memory.count(), 2)
+fresh()
+memory.remember("His sister's name is Maya")
+memory.remember("Maya is learning Python")
+memory.remember("The owner is learning Python")
+c("  a sister's name is not taken for theirs", memory.count(), 3)
+
+print("\nA name is per person, like everything else here:")
+fresh()
+memory.use(OWNER)
+memory.remember("The owner's name is Sam")
+memory.remember("Sam plays the cello")
+memory.use(GUEST)
+memory.remember("The user plays the cello")
+c("  the guest's 'user' does not borrow the owner's name", memory.count(), 1)
+memory.use(OWNER)
+c("  and the owner's facts are untouched", texts(),
+  ["The owner's name is Sam", "Sam plays the cello"])
+
+print("\nSearch finds what was asked for:")
+fresh()
+memory.use(OWNER)
+memory.remember("The owner has a dog called Biscuit")
+memory.remember("The owner lives in Markham")
+c.truthy("  'dogs' finds the dog", "Biscuit" in memory.list_memory("dogs"))
+memory.remember("The owner is training to run a marathon")
+c.truthy("  'running' finds 'run a marathon'", "marathon" in memory.list_memory("running"))
+c.truthy("  'about me' is everything", memory.list_memory("me").startswith("3 things"))
+c.truthy("  as is 'everything'", memory.list_memory("everything").startswith("3 things"))
+memory.use(GUEST)
+memory.remember("The guest likes green tea")
+c("  and everything is still only whoever is asking",
+  memory.list_memory("me"), "1 thing I know about me: The guest likes green tea (just now)")
+memory.use(OWNER)
+fresh()
+memory.remember("The owner uses Google Drive for work")
+memory.remember("The owner is learning Go")
+c("  'Go' is the word Go, not the start of Google",
+  [m["text"] for m in memory.search("Go")], ["The owner is learning Go"])
+fresh()
+_t = [1700000000.0]
+memory.time.time = lambda: _t[0]
+try:
+    memory.remember("The owner lives in York")
+    _t[0] += 86400
+    memory.remember("The owner lives in Leeds, after moving")
+finally:
+    memory.time.time = _real_time
+c("  on a tie the newer fact comes first",
+  [m["text"] for m in memory.search("lives")][0], "The owner lives in Leeds, after moving")
+
+print("\nDates read as a person would say them:")
+_now = time.time()
+for days, want in ((0.01, "just now"), (0.5, "today"), (1, "1 day ago"), (20, "2 weeks ago"),
+                   (100, "3 months ago"), (364, "12 months ago"), (400, "1 year ago"),
+                   (800, "2 years ago")):
+    c("  %s days" % days, memory._ago(_now - days * 86400), want)
 
 c.done()

@@ -219,11 +219,16 @@ def _keys(text: str) -> set:
 # was the hole: anything wholly inside an older fact counted as restating it.
 # "Her sister is Maya" deleted "Her sister Maya lives in Leeds", and "allergic
 # to peanuts" deleted "allergic to peanuts and shellfish" — the short one was
-# kept and the detail was gone. So the new fact must now carry EVERY word that
-# carried the old one's meaning: a richer fact may replace what it covers, a
-# poorer one never replaces anything. And an old fact of a single word
-# ("Vegetarian") is folded only into the same word, since one word inside a
-# longer fact is too thin to say the longer fact is about the same thing.
+# kept and the detail was gone. The next rule let a richer fact replace any
+# fact it covered, and that lasted until words were folded to their stems
+# (below): "likes dog food" covered "likes dogs", "the owner's wife drives a
+# red Tesla" covered "drives a red Tesla" — different facts, one of them gone.
+#
+# So now only a RESTATEMENT replaces: the same meaning-carrying words, once
+# plurals and -ing are folded ("likes hiking" / "likes to hike"), the way it is
+# phrased is set aside ("is called Maya" / "is Maya"), and whoever it is about
+# is set aside too ("the owner" / "the user" / their name). Anything richer or
+# poorer is kept beside it. A duplicate is cheap; a lost fact is not.
 #
 # So staleness is not handled here at all. Every fact carries its date into the
 # prompt, and the model weighs "5 months ago" against "today" itself — which is
@@ -232,16 +237,72 @@ def _keys(text: str) -> set:
 # Words that change how a fact is phrased but not what it says, ignored only
 # when deciding whether one fact restates another — "his sister is called
 # Maya" and "his sister is Maya" are the same fact.
-_PHRASING = {"called", "named", "known"}
+_PHRASING = {"called", "named", "known", "name"}
+
+# Ways a fact names the person it is about. The model writes "the owner", "the
+# user", "I" and their name more or less at random from one day to the next,
+# and each wording was kept as a separate fact ("wording drift"). Generic words
+# only: the repo is public and no one's name belongs in it. A NAME joins these
+# per person, and only from a fact that says outright it is theirs — see
+# _subjects.
+_SELF = {"owner", "user", "guest", "person", "me", "myself", "mine", "you",
+         "your", "yours", "them", "him", "herself", "himself", "themselves"}
+
+_THEIR_NAME = re.compile(
+    r"^\s*(?:my|(?:the\s+)?(?:owner|user)'?s)\s+name\s+is\s+([^\W\d_]+)"
+    r"|^\s*(?:the\s+)?(?:owner|user)\s+is\s+(?:called|named)\s+([^\W\d_]+)"
+    r"|^\s*i\s+am\s+(?:called|named)\s+([^\W\d_]+)", re.I | re.UNICODE)
 
 
-def _supersedes(new: str, old: str) -> bool:
-    a, b = _keys(new) - _PHRASING, _keys(old) - _PHRASING
-    if not a or not b:
-        return False
-    if len(b) < 2:
-        return a == b
-    return b <= a
+def _subjects(mine: list) -> set:
+    """_SELF, plus this account's own name if one of ITS facts gives it.
+
+    Only this slice: a guest's facts say who the guest is, never who the owner
+    is, and a guest's "the user" must not fold into the owner's name. Only a
+    fact that names THEM — "His sister's name is Maya" does not make Maya a
+    word for the owner.
+    """
+    out = set(_SELF)
+    for m in mine:
+        hit = _THEIR_NAME.match(m.get("text") or "")
+        if hit:
+            out.add(_stem(next(g for g in hit.groups() if g).lower()))
+    return out
+
+
+def _stem(w: str) -> str:
+    """Folded crudely: dogs/dog, running/run, hiking/hike, lives/lived/live.
+
+    Not a stemmer and not trying to be. Wrong folds only ever make two words
+    look alike, and that matters only where looking alike decides something —
+    so it is used for search and for spotting a restatement, where the rule is
+    whole-set equality, and never for forget, which deletes.
+    """
+    if len(w) > 5 and w.endswith("ing"):
+        w = w[:-3]
+    elif len(w) > 4 and w.endswith("ies"):
+        w = w[:-3] + "y"
+    elif len(w) > 4 and w.endswith(("ches", "shes", "sses", "xes", "zes")):
+        w = w[:-2]
+    elif len(w) > 4 and w.endswith("ed"):
+        w = w[:-2]
+    elif len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        w = w[:-1]
+    if len(w) > 3 and w[-1] == w[-2] and w[-1] not in "aeiouls":
+        w = w[:-1]                      # runn -> run, stopp -> stop
+    if len(w) > 3 and w.endswith("e"):
+        w = w[:-1]                      # hike/hik(ing), live/liv(ed)
+    return w
+
+
+def _stems(text: str) -> set:
+    return {_stem(w) for w in _keys(text)}
+
+
+def _supersedes(new: str, old: str, subjects=frozenset(_SELF)) -> bool:
+    drop = {_stem(w) for w in _PHRASING | set(subjects)}
+    a, b = _stems(new) - drop, _stems(old) - drop
+    return bool(a) and a == b
 
 
 def _new_id(mine: list) -> str:
@@ -279,16 +340,19 @@ def remember(fact: str = "", supersede: bool = True) -> str:
         except storefile.Unreadable as e:
             return _refusal(e)
         mine = list(_mine(all_of_it))
-        low = f.lower()
-        if any((m.get("text") or "").lower() == low for m in mine):
+        # Compared as words, so "coffee black." is the fact already held rather
+        # than a new one — which, on an import, was kept a second time.
+        flat = _flat(f)
+        if any(_flat(m.get("text")) == flat for m in mine):
             return "I already knew that."
         replaced = ""
         if supersede:
+            subjects = _subjects(mine + [{"text": f}])
+            # Every older copy, not just the first: drift leaves several.
             for m in list(mine):
-                if _supersedes(f, m.get("text") or ""):
-                    replaced = m.get("text") or ""
+                if _supersedes(f, m.get("text") or "", subjects):
+                    replaced = replaced or (m.get("text") or "")
                     mine.remove(m)
-                    break
         mine.append({"id": _new_id(mine), "text": f, "at": time.time()})
         del mine[:-MAX_FACTS]
         all_of_it[current()] = mine
@@ -419,19 +483,37 @@ def import_facts(items, only_if_empty: bool = False) -> int:
 
 # --- reading ----------------------------------------------------------------
 
+# "What do you know about me?" is a request for all of it. "me" was too short
+# to be a word to search for, so the search fell back to hunting the text for
+# the letters m-e — "name", "home" — and usually answered that nothing matched.
+_EVERYTHING = {"me", "myself", "about me", "all", "everything", "anything",
+               "all of it", "everything about me", "you know", "what you know"}
+
+# Asked about a subject rather than naming one.
+_ASKING = {"know", "tell", "does", "remember", "anything", "something"}
+
+
 def search(query: str = "") -> list:
+    """Best match first, and on a tie the newer fact first.
+
+    Newer first because that is the one that is probably still true: asked
+    where they live, "lives in Leeds" from this week belongs above "lives in
+    York" from last year. It listed them oldest first.
+    """
     q = (query or "").strip().lower()
-    if not q:
+    if not q or _flat(q) in _EVERYTHING:
         return facts()
-    want = _keys(q) or {q}
+    # Folded, so "dogs" finds "dog" and "running" finds "run".
+    want = _stems(q) - {_stem(w) for w in _VAGUE | _ASKING}
+    phrase = _flat(q)
     hits = []
-    for m in facts():
+    for i, m in enumerate(facts()):
         text = (m.get("text") or "")
-        low = text.lower()
-        score = (2 if q in low else 0) + len(want & _keys(text))
+        # The whole query as whole words: "Go" is not the start of "Google".
+        score = (2 if phrase and _names(text, [phrase]) else 0) + len(want & _stems(text))
         if score:
-            hits.append((score, m))
-    return [m for _, m in sorted(hits, key=lambda p: -p[0])]
+            hits.append((score, i, m))
+    return [m for _, _, m in sorted(hits, key=lambda p: (-p[0], -p[1]))]
 
 
 def block() -> str:
@@ -462,7 +544,12 @@ def _ago(at) -> str:
         return "%d day%s ago" % (days, "" if days == 1 else "s")
     if days < 60:
         return "%d weeks ago" % (days // 7)
-    return "%d months ago" % max(1, days // 30)
+    # Years past a year. "26 months ago" is a sum the model and the person
+    # listening both had to do, and "13 months" sounds more recent than it is.
+    if days < 365:
+        return "%d months ago" % max(1, days // 30)
+    years = days // 365
+    return "%d year%s ago" % (years, "" if years == 1 else "s")
 
 
 def list_memory(about: str = "") -> str:
