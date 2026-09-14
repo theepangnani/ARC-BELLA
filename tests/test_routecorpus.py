@@ -186,21 +186,19 @@ CASES = [
     ("make a note to buy milk", FAST, "an edit word with nothing before it is judged as itself"),
     ("change the voice to the butler", FAST, "one setting"),
     (("explain how caching works", "add milk to my shopping list"), FAST,
-     "a new, easy request that happens to start with 'add'; EDIT cannot tell it from"
-     " an edit, and inherits the hard turn", MISS),
+     "a new, easy request that happens to start with 'add', aimed at one of their lists"),
     (("plan my week around my three deadlines", "put on some music"), FAST,
-     "'put on' is play, not 'put the gym on thursday'", MISS),
+     "'put on' is play, not 'put the gym on thursday'"),
     (("write me a python script that renames files", "make it recursive", "and add logging"), SMART,
-     "an edit that starts with 'and'; EDIT is anchored to the first word", MISS),
+     "an edit that starts with 'and' is still an edit"),
 
     # ------------------------------------------- the words added on 14 Sep 2026
     ("zip code for Toronto", FAST, "a postcode is not programming"),
-    ("what's the dress code", FAST, "a lookup; only area/zip/postal/post are excused from 'code'", MISS),
-    ("find the nearest gas station", FAST, "a maps lookup; 'find the' was added to HANDS", MISS),
+    ("what's the dress code", FAST, "a lookup, not programming"),
+    ("find the nearest gas station", FAST, "a maps lookup, not finding a thing on screen"),
     ("what's the time? and why is it dark?", SMART, "one of the two questions is hard"),
     ("is it raining? is it cold?", FAST,
-     "two easy questions; the fix only excuses questions EASY knows, and it knows"
-     " 'what's the weather', not 'is it raining'", MISS),
+     "two easy questions, each a standing lookup"),
 
     # ----------------------------------------------------------------- traps
     # The same words as the hard lists, meaning something easy.

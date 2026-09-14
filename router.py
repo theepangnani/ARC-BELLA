@@ -56,7 +56,7 @@ HARD = re.compile(r"""
        (?<!my\s)plan|design|strategy|decide|choose|recommend|
        analyse|analyze|review|debug|bug|refactor|optimi[sz]e|
        calculate|work\s+out|figure\s+out|estimate|forecast|
-       (?<!area\s)(?<!zip\s)(?<!postal\s)(?<!post\s)code|
+       (?<!area\s)(?<!zip\s)(?<!postal\s)(?<!post\s)(?<!dress\s)code|
        script|function|error|exception|stack\s*trace|regex|
        summari[sz]e|draft|write\s+me|rewrite|translate|homework|help\s+me\s+with|
        pros?\s+and\s+cons?|should\s+i|worth\s+it|what\s+if)\b
@@ -87,7 +87,8 @@ HANDS = re.compile(r"""
        select|highlight|fill\s+in|fill\s+out|log\s*in|sign\s*in|tick|untick|
        go\s+to(?!\s+(bed|sleep|work|school|church|the\s+gym)\b)|
        navigate|download|upload|install|(?<!hard\s)copy|paste|
-       find\s+the|icon|checkbox|check\s*box|
+       find\s+the(?!\s+(nearest|closest|best|cheapest|time|lyrics|address|number)\b)|
+       icon|checkbox|check\s*box|
        button|tab|field(?!\s+(hockey|trip)\b)|menu|window(?!\s+(cleaner|seat|sill)\b)|
        (on|at)\s+(my|the|this)\s+screen|this\s+page|that\s+page)\b
 """, re.I | re.X)
@@ -128,10 +129,18 @@ FOLLOW = re.compile(r"^\s*(?:" + _FOLLOW_WORD + r"\b[\s,.!]*){1,3}$", re.I | re.
 # Three or four ordinary words, so on their own they read as easy, and FOLLOW
 # only knows the stock phrases. They inherit from the request before, exactly
 # like FOLLOW does, so "make it 15" after a timer stays on the cheap brain.
+#
+# A leading "and", "then" or "ok" is still an edit ("and add logging"). "put on"
+# is play, not an edit. And an edit aimed at one of the person's own lists is a
+# new easy request that happens to start with the same verb: "add milk to my
+# shopping list" after a hard question is a to-do, not a change to the answer.
 EDIT = re.compile(r"""
-    ^\s*(make|change|move|add|remove|drop|swap|switch|put|use|rename|
-        shorten|lengthen|simplify|instead|actually|but)\b
+    ^\s*((and|then|also|ok(ay)?|so)[\s,]+)?
+    (make|change|move|add|remove|drop|swap|switch|put(?!\s+on\b)|use|rename|
+     shorten|lengthen|simplify|instead|actually|but)\b
 """, re.I | re.X)
+OWN_LISTS = re.compile(r"\b(my\s+(shopping\s+|grocery\s+|to-?do\s+)?list|to-?do|my\s+notes?|"
+                       r"my\s+calendar|a\s+reminder|shopping\s+list)\b", re.I)
 
 
 # Multi-clause questions, which are almost never simple lookups.
@@ -145,6 +154,7 @@ EASY = re.compile(r"""
         yes|no|yep|nope|sure|goodnight|good\s+morning|good\s+evening)\b
     |^\s*what(?:'s|\s+is)\s+the\s+(time|date|day|weather|temperature)\b
     |^\s*(what\s+time|what\s+day|what'?s\s+today)\b
+    |^\s*(is|will)\s+it\s+(going\s+to\s+(be\s+)?)?(rain(ing)?|snow(ing)?|cold|hot|warm|sunny|windy)\b
     |^\s*(play|pause|resume|skip|next|louder|quieter|volume|mute|unmute)\b
     |^\s*(set\s+(an?\s+)?(timer|alarm)|remind\s+me)\b
     |^\s*(open|launch|close)\s+\w+\s*$
@@ -211,7 +221,7 @@ def why(messages, has_image: bool = False, tools_likely: bool = False) -> tuple:
         parts = [p.strip() for p in text.split("?") if p.strip()]
         if not all(EASY.match(p) for p in parts):
             return "smart", "more than one question"
-    if words <= 6 and EDIT.match(text) and not EASY.match(text):
+    if words <= 6 and EDIT.match(text) and not EASY.match(text) and not OWN_LISTS.search(text):
         before = _before_last_user(messages)
         if before and why(before)[0] == "smart":
             return "smart", "changing what a harder request made"
