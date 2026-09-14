@@ -133,6 +133,22 @@ def _tidy(items) -> list:
     return out
 
 
+def _new_id() -> str:
+    """An id no panel in the file already has.
+
+    It was the millisecond, and two widgets added inside one millisecond — a
+    fast laptop running the gallery's test did it on most runs — got the same
+    id: the second looked like it had never been made, and a ✕ on either card
+    would have taken down both. The millisecond is still the start, so ids
+    still sort by age; it is simply stepped past any that are taken.
+    """
+    taken = {p.get("id") for p in whose.flatten(_raw())}
+    n = int(time.time() * 1000)
+    while "p%d" % n in taken:
+        n += 1
+    return "p%d" % n
+
+
 def make_panel(title: str = "", items=None) -> str:
     """Create or replace a panel on the user's screen."""
     t = _clean(title, MAX_TITLE)
@@ -150,7 +166,7 @@ def make_panel(title: str = "", items=None) -> str:
     if not replaced and len(kept) >= MAX_PANELS:
         return (f"There are already {MAX_PANELS} panels, which is as many as fit. "
                 "Remove one first — tell me which.")
-    kept.append({"id": "p%d" % int(time.time() * 1000), "title": t,
+    kept.append({"id": _new_id(), "title": t,
                  "items": rows, "made": time.time()})
     _save(kept)
     what = "Updated" if replaced else "Put"

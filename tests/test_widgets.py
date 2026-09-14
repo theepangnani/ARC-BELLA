@@ -64,6 +64,28 @@ with whose.acting_as(OWNER):
              all(len(r["value"]) <= panels.MAX_VALUE and not r["value"].startswith(" ") for r in note_rows))
     c("  ...and stops at the row limit", len(note_rows) <= panels.MAX_ITEMS, True)
 
+print("\nTwo widgets in the same millisecond still get their own ids:")
+# The laptop's test runs failed on a different check each time: the id was the
+# millisecond, and a fast machine added two widgets inside one. Frozen clock
+# here, so the collision happens every run rather than on a fast day.
+import time as _time   # noqa: E402
+_real_time = panels.time.time
+panels.time.time = lambda: 1790000000.123
+try:
+    with whose.acting_as(OWNER):
+        a = panels.add_widget("clock", title="Same ms A")
+        b = panels.add_widget("clock", title="Same ms B")
+    c("  both were made", (a["ok"], b["ok"]), (True, True))
+    c("  with different ids", a["id"] != b["id"], True)
+    with whose.acting_as(OWNER):
+        panels.remove_panel_id(a["id"])
+        left = [p["title"] for p in panels.panels_for_screen() if p["title"].startswith("Same ms")]
+    c("  removing one leaves the other", left, ["Same ms B"])
+    with whose.acting_as(OWNER):
+        panels.remove_panel_id(b["id"])
+finally:
+    panels.time.time = _real_time
+
 print("\nBad input is refused in words:")
 with whose.acting_as(OWNER):
     for kind, kw, want in (("rocket", {}, "don't have a widget"),
