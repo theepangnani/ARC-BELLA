@@ -5920,6 +5920,93 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   speechSynthesis.onvoiceschanged = loadVoices;
 
   /* --- ElevenLabs path: real audio, real waveform on the rings --- */
+  // ---------- a head start on the voice, from a streamed reply ----------
+  // The reply's text arrives as it is written (/api/chat/stream). Nothing is
+  // SPOKEN early — the reply that counts is the finished one, which can still
+  // turn out to be [[silent]], a refusal, or a preamble to a tool — but the
+  // audio for its opening sentences starts rendering the moment they are
+  // complete, so when the reply is done the first sentence is usually ready
+  // to play. A rendered sentence the finished reply doesn't contain is simply
+  // thrown away.
+  let streamOff = false;             // the server has no stream route; stop asking
+  const ttsPrefetch = new Map();     // "voice|lang|text" -> Promise<object URL | null>
+
+  function prefetchKey(t) { return (selectedVoice || "") + "|" + speechLang() + "|" + t; }
+
+  function clearPrefetch() {
+    for (const p of ttsPrefetch.values()) {
+      p.then(u => { if (u) { try { URL.revokeObjectURL(u); } catch (_) {} } }, () => {});
+    }
+    ttsPrefetch.clear();
+  }
+
+  // What would be spoken of the text so far, WITHOUT extractDirectives, which
+  // acts (it files memories and starts timers) and must run once, on the
+  // finished reply. Everything from the first [[ is left out: a directive may
+  // still be half-written, and a directive-free prefix is what is known.
+  function speechPreview(text) {
+    const i = text.indexOf("[[");
+    return (i >= 0 ? text.slice(0, i) : text).replace(/[*_#`]/g, "").trim();
+  }
+
+  function prefetchSpeech(text) {
+    if (state.engine !== "elevenlabs" || Date.now() < neuralDownUntil) return;
+    let chunks = [];
+    try { chunks = splitForSpeech(text, 160); } catch (_) { return; }
+    // Only chunks the rest of the reply can no longer change: splitForSpeech
+    // closes a chunk when the next sentence would overflow it, so every chunk
+    // but the last is final. At most two — a head start, not a second copy.
+    for (const ch of chunks.slice(0, Math.min(2, chunks.length - 1))) {
+      const k = prefetchKey(ch);
+      if (ttsPrefetch.has(k)) continue;
+      ttsPrefetch.set(k, fetch("/api/tts", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: ch, voice: selectedVoice, lang: speechLang() }),
+      }).then(r => (r.ok ? r.blob() : null))
+        .then(b => (b && b.size ? URL.createObjectURL(b) : null))
+        .catch(() => null));
+    }
+  }
+
+  // Reads /api/chat/stream to its end and returns what /api/chat would have.
+  async function readChatStream(res, speakAhead) {
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", said = "", result = null;
+    const handle = (kind, data) => {
+      if (kind === "round") said = "";            // a new model call: earlier text was a preamble
+      else if (kind === "delta") {
+        said += data.t || "";
+        if (speakAhead) prefetchSpeech(speechPreview(said));
+      } else if (kind === "done") result = data;
+      else if (kind === "error") {
+        const err = new Error(data.detail || ("HTTP " + data.status));
+        err.fromServer = !!data.detail;
+        err.status = data.status;
+        throw err;
+      }
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buf += dec.decode(value, { stream: true });
+      let cut;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        let kind = "message", payload = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) kind = line.slice(6).trim();
+          else if (line.startsWith("data:")) payload += line.slice(5).trim();
+        }
+        if (!payload) continue;                    // a keepalive
+        handle(kind, JSON.parse(payload));
+        if (result) return result;
+      }
+      if (done) break;
+    }
+    throw new Error("the reply stopped halfway");
+  }
+
   async function speakRemote(text, onDone) {
     state.speakingLock = true;
     speakingText = (text || "").toLowerCase().replace(/[.,!?;:'’]/g, "");
@@ -6007,6 +6094,13 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     const TTS_ATTEMPT_MS = 8000;     // about three times the slowest normal render
     const TTS_BUDGET_MS = 14000;     // the most silence one sentence may cost
     async function fetchChunk(t) {
+      // Already rendering, or rendered, while the reply was still being written.
+      const early = ttsPrefetch.get(prefetchKey(t));
+      if (early) {
+        ttsPrefetch.delete(prefetchKey(t));
+        const url = await early;
+        if (url) return url;
+      }
       const deadline = Date.now() + TTS_BUDGET_MS;
       let lastErr = new Error("tts: no attempt made");
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -6580,12 +6674,10 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // easily need a minute. This is the "something has genuinely hung" limit,
     // not an expectation of how long a reply should take.
     const bail = setTimeout(() => ctrl.abort(), 90000);
-    let res;
+    let res, data = null;
+    clearPrefetch();   // audio rendered for the last reply is for nobody now
     try {
-      res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const reqBody = JSON.stringify({
           messages: pending,
           prompt: "main",
           room: roomMode(),
@@ -6613,10 +6705,21 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           // A camera frame captured on THIS device (phone/webcam), attached to
           // this one message so ARC can see the real world. Cleared right after.
           image: pendingCameraImage
-        }),
-        signal: ctrl.signal
-      });
+        });
+      const init = { method: "POST", headers: { "Content-Type": "application/json" },
+                     body: reqBody, signal: ctrl.signal };
+      // Streamed when the server offers it (ARC_STREAM): the same turn, with
+      // its words arriving as they are written, so the first sentence's audio
+      // can be rendering while the rest is still being written. A server
+      // without the route answers 404 once, and this page stops asking.
+      if (!streamOff) {
+        res = await fetch("/api/chat/stream", init);
+        if (res.status === 404 || res.status === 405) { streamOff = true; res = null; }
+        else if (res.ok) data = await readChatStream(res, !chatMode);
+      }
+      if (!res) res = await fetch("/api/chat", init);
     } catch (e) {
+      if (e && e.fromServer) throw e;
       throw new Error(e && e.name === "AbortError" ? "no reply in time" : (e.message || "network"));
     } finally {
       clearTimeout(bail);
@@ -6635,7 +6738,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       throw err;
     }
 
-    const data = await res.json();
+    if (!data) data = await res.json();
     // Directives come out FIRST, markdown second. The board carries code, and
     // code is made of exactly the characters the markdown strip removes.
     const raw = (data.reply || "").trim();

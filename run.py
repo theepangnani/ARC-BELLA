@@ -18,7 +18,9 @@ import sys
 import time
 import hmac
 import asyncio
+import contextvars
 import html
+import json
 import socket
 import secrets
 import hashlib
@@ -35,7 +37,8 @@ import anthropic
 import edge_tts
 from dotenv import load_dotenv, dotenv_values
 from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import Response, FileResponse, JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import (Response, FileResponse, JSONResponse, HTMLResponse,
+                               RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
 # --------------------------------------------------------------------------
@@ -2342,6 +2345,102 @@ def _claude_error(e) -> HTTPException:
     return HTTPException(status, f"Anthropic refused that request: {first[:200]}")
 
 
+# --- streaming ---------------------------------------------------------------
+# Off unless ARC_STREAM is on. When it is, /api/chat/stream runs the very same
+# chat() below and forwards the model's words as they are written, so the page
+# can start rendering the first sentence's audio while the rest is still being
+# written. Measured on this machine: a sentence renders in about 0.7 s, so the
+# saving is roughly the time the model spends on everything after its first
+# sentence — the one real win in the voice path; the rest are fractions.
+STREAMING = (os.getenv("ARC_STREAM", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+# Where a round's text goes while it is being written: an asyncio.Queue set by
+# chat_stream for the length of one request, None everywhere else. A ContextVar
+# for the reason whose.py is one — every request shares the event loop's thread.
+_stream_sink = contextvars.ContextVar("arc_stream_sink", default=None)
+
+
+async def _claude_round(claude, kwargs: dict):
+    """One call to the model, streamed to the page when a stream is listening.
+
+    The kwargs go through untouched (cache_mark, fit_thinking and the rest are
+    built by chat() and pinned by tests), and the message handed back is the
+    SDK's own final message, not one reassembled from deltas: the loop reads its
+    usage (cache reads and writes are priced apart), its stop_reason (pause_turn)
+    and sends its content back verbatim, thinking blocks and signatures
+    included. The client is passed in and nothing about the model is kept
+    between calls, because the step-up changes the model between rounds.
+    (Claude 3's three conditions.)
+    """
+    sink = _stream_sink.get()
+    if sink is None:
+        return await claude.messages.create(**kwargs)
+    # A new round: the page drops any unspoken text from the one before, which
+    # was a preamble to tools, or Haiku's before a step-up to Sonnet.
+    sink.put_nowait(("round", {}))
+    async with claude.messages.stream(**kwargs) as s:
+        async for ev in s:
+            if ev.type == "content_block_delta" and getattr(ev.delta, "type", "") == "text_delta":
+                sink.put_nowait(("delta", {"t": ev.delta.text}))
+            elif ev.type == "content_block_start" and getattr(ev.content_block, "type", "") in (
+                    "tool_use", "server_tool_use"):
+                sink.put_nowait(("tool", {"name": getattr(ev.content_block, "name", "")}))
+        return await s.get_final_message()
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: Request, _=Depends(require_auth)):
+    """chat(), with its words forwarded as server-sent events.
+
+    Events: round (a new model call began), delta {t} (text as written), tool
+    {name} (a tool is about to run), then exactly one of done {the /api/chat
+    JSON, unchanged} or error {status, detail}. The reply in `done` is the one
+    that counts; the deltas are only ever a head start on it.
+
+    The turn is not cancelled if the page goes away mid-reply: /api/chat is not
+    either, and a turn stopped between two tool calls is a job half done.
+    """
+    if not STREAMING:
+        raise HTTPException(404, "Streaming is off.")
+    # Read now, while this handler still owns the connection. Once the
+    # streaming response starts it listens on the same channel for the client
+    # going away, and a body chat() asked for after that is a body nobody
+    # delivers: the turn waited for ever. Starlette keeps what was read here.
+    await request.body()
+    q: asyncio.Queue = asyncio.Queue()
+
+    async def run():
+        _stream_sink.set(q)
+        try:
+            r = await chat(request)
+            q.put_nowait(("done", json.loads(r.body)))
+        except HTTPException as e:
+            q.put_nowait(("error", {"status": e.status_code, "detail": e.detail}))
+        except Exception as e:
+            print(f"{C_RED}  ! stream: {type(e).__name__}: {str(e)[:200]}{C_OFF}")
+            q.put_nowait(("error", {"status": 500, "detail": "Something went wrong mid-reply. Try again."}))
+
+    # The task gets its own copy of this request's context, so setting the sink
+    # inside it can never leak into another request.
+    asyncio.create_task(run())
+
+    async def events():
+        while True:
+            try:
+                kind, data = await asyncio.wait_for(q.get(), timeout=15)
+            except asyncio.TimeoutError:
+                # A tool round can be silent for a while; the tunnel drops a
+                # connection that says nothing, so it is kept talking.
+                yield ": keepalive\n\n"
+                continue
+            yield "event: %s\ndata: %s\n\n" % (kind, json.dumps(data, ensure_ascii=False))
+            if kind in ("done", "error"):
+                return
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post("/api/chat")
 async def chat(request: Request, _=Depends(require_auth)):
     """Proxy to the Messages API. The key never reaches the browser."""
@@ -2703,7 +2802,7 @@ async def chat(request: Request, _=Depends(require_auth)):
             kwargs["tools"] = tools
 
         try:
-            resp = await claude.messages.create(**kwargs)
+            resp = await _claude_round(claude, kwargs)
         except anthropic.APIConnectionError as e:
             raise HTTPException(502, f"Could not reach the Anthropic API: {e}")
         except anthropic.RateLimitError:
@@ -3122,12 +3221,103 @@ async def _edge_tts(text: str, voice: str = "", lang: str = ""):
     # Microsoft stopped every other request — alarm polls included — until it
     # came back.
     v, rate, pitch = await asyncio.to_thread(_pick_voice, voice, lang)
+    return await _edge_render(text, v, rate, pitch)
+
+
+async def _edge_render(text: str, v: str, rate: str, pitch: str) -> bytes:
+    """Synthesise with a voice already resolved. A new Communicate every time:
+    reusing one connection across utterances fails with "Session is closed"
+    (measured by Claude 1), so there is no connection to keep warm."""
     comm = edge_tts.Communicate(text, v, rate=rate, pitch=pitch)
     audio = bytearray()
     async for chunk in comm.stream():
         if chunk.get("type") == "audio" and chunk.get("data"):
             audio += chunk["data"]
     return bytes(audio)
+
+
+# --- the voice cache -----------------------------------------------------------
+# Bella says the same short things over and over — "Okay.", "Done.", "Good
+# morning." — and each one was rendered afresh: about 0.7 s of Edge for a clip
+# that was byte-for-byte the one before. Measured edge-tts: first chunk ~0.41 s,
+# the whole clip ~0.71 s. A hit is served in well under a millisecond.
+#
+# The limits are what keep it from becoming a record of what she said:
+#   - in memory only, NEVER on disk. The audio is her words, and a file of them
+#     would be exactly the log run.py refuses to write (see "voice render
+#     failed" below: the sentence itself is never logged).
+#   - only text of TTS_CACHE_MAX_CHARS or fewer. Personal sentences are long;
+#     the phrases worth caching are short. Most of anything private misses.
+#   - bounded by count AND by bytes, oldest-used out first.
+#   - per person. The same words in the same voice are the same audio, so
+#     sharing across accounts would be correct, but it would also be a timing
+#     oracle: on the instance the internet can reach, a guest could time
+#     "Your dentist is at three." and learn from a fast answer that the owner
+#     had just been told it. Hits across people are rare anyway; keying on the
+#     account costs almost nothing and closes that.
+#   - filled only by a render that finished and produced audio. A failure, or
+#     an empty clip, is never remembered, so it cannot be served back.
+TTS_CACHE_MAX_CHARS = 80
+TTS_CACHE_MAX_ITEMS = 64
+TTS_CACHE_MAX_BYTES = 4 * 1024 * 1024
+# A plain dict is insertion-ordered, which is all an LRU needs: a hit is taken
+# out and put back at the end, and the oldest is whatever iterates first.
+_tts_cache: dict = {}
+_tts_cache_bytes = 0
+TTS_CACHE_STATS = {"hits": 0, "misses": 0, "stored": 0, "evicted": 0}
+
+
+def _tts_cache_get(key):
+    """The clip for this key, freshened as most recently used, or None.
+
+    No lock: every caller is on the event loop's one thread and nothing here
+    awaits, so a get or a put runs whole before any other request does.
+    """
+    if key is None:
+        return None
+    audio = _tts_cache.get(key)
+    if audio is None:
+        TTS_CACHE_STATS["misses"] += 1
+        return None
+    _tts_cache[key] = _tts_cache.pop(key)
+    TTS_CACHE_STATS["hits"] += 1
+    return audio
+
+
+def _tts_cache_put(key, audio: bytes) -> None:
+    global _tts_cache_bytes
+    # A clip bigger than the whole budget would evict everything and still not
+    # fit; it is simply not kept.
+    if key is None or not audio or len(audio) > TTS_CACHE_MAX_BYTES:
+        return
+    old = _tts_cache.pop(key, None)
+    if old is not None:
+        _tts_cache_bytes -= len(old)
+    _tts_cache[key] = audio
+    _tts_cache_bytes += len(audio)
+    TTS_CACHE_STATS["stored"] += 1
+    while _tts_cache and (len(_tts_cache) > TTS_CACHE_MAX_ITEMS
+                          or _tts_cache_bytes > TTS_CACHE_MAX_BYTES):
+        gone = _tts_cache.pop(next(iter(_tts_cache)))
+        _tts_cache_bytes -= len(gone)
+        TTS_CACHE_STATS["evicted"] += 1
+
+
+def _tts_key(request: Request, text: str, engine: str, *voice) -> tuple:
+    """The cache key, or None when this text must not be cached at all.
+
+    `voice` is the RESOLVED voice — what was actually rendered, after personas
+    and language — never the raw string the page sent. "persona:butler" and
+    "en-GB-RyanNeural;butler's rate" are the same clip only if they resolve the
+    same, and two spellings of one voice should share a clip.
+    """
+    if len(text) > TTS_CACHE_MAX_CHARS:
+        return None
+    who = "owner"
+    if AUTH_MODE != "open":
+        # touch=False: require_auth has already counted this request as use.
+        who = ((current_session(request, touch=False) or {}).get("email") or "").strip().lower() or "owner"
+    return (who, engine, *voice, text)
 
 
 @app.post("/api/tts")
@@ -3150,10 +3340,26 @@ async def tts(request: Request, _=Depends(require_auth)):
     # has credit; otherwise go straight to Edge (honouring the picked voice).
     audio = None
     if PREFER_ELEVEN:
+        # ElevenLabs has one voice and speaks in the language it is given, so
+        # that is its key. Kept apart from Edge's: a cached Edge clip must never
+        # answer for the voice somebody chose to pay for.
+        key = _tts_key(request, text, "eleven", ELEVEN_VOICE, (lang or "").split("-")[0].lower())
+        audio = _tts_cache_get(key)
+        if audio is not None:
+            return Response(content=audio, media_type="audio/mpeg")
         audio = await _eleven_tts(request.app.state.http, text, lang)
+        if audio:
+            _tts_cache_put(key, audio)
     if audio is None:
         try:
-            audio = await _edge_tts(text, voice, lang)
+            v, rate, pitch = await asyncio.to_thread(_pick_voice, voice, lang)
+            key = _tts_key(request, text, "edge", v, rate, pitch)
+            audio = _tts_cache_get(key)
+            if audio is not None:
+                return Response(content=audio, media_type="audio/mpeg")
+            audio = await _edge_render(text, v, rate, pitch)
+            if audio:
+                _tts_cache_put(key, audio)
         except Exception as e:
             # Written down, because the page falls back to the browser voice
             # and until now nothing on this side recorded why. The sentence
