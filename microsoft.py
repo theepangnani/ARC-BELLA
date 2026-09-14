@@ -53,7 +53,12 @@ def _id(value) -> str:
     # Message and drive item ids are opaque strings that can carry "=", "+" or
     # "/". Unquoted, a "/" turns one id into two path segments and Graph
     # answers about something else entirely (or a confusing 400).
-    return quote(str(value or "").strip(), safe="")
+    # An id of only dots survives quoting and httpx resolves it as a path
+    # step: ".." turned /me/messages/.. into /me. Refused, as airtableapi does.
+    v = str(value or "").strip()
+    if v and set(v) <= {"."}:
+        raise ValueError("not an id")
+    return quote(v, safe="")
 
 
 def _call(method: str, path: str, params=None, headers=None, raw=False, request=None):
@@ -342,7 +347,9 @@ def run_tool(name: str, args: dict) -> tuple:
         return str(fn(**(args or {}))), False
     except links.NotLinked as e:
         return str(e), True
-    except TypeError as e:
+    # ValueError too: int("loud") from the model, or a non-JSON 200 from the
+    # service, escaped dispatch_tool and ended the whole turn (Claude 4's review).
+    except (TypeError, ValueError) as e:
         return "Wrong arguments for %s: %s" % (name, e), True
     except httpx.HTTPError as e:
         return "Couldn't reach Microsoft: %s" % type(e).__name__, True

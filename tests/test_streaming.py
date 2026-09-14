@@ -211,5 +211,83 @@ c.truthy("  never runs extractDirectives on half a reply", "extractDirectives" n
 c.truthy("  never SPEAKS early — only renders audio ahead", "speak(" not in reader)
 c.truthy("  renders nothing ahead in chat mode", "readChatStream(res, !chatMode)" in hud)
 c.truthy("  speakRemote uses a head start when it has one", "ttsPrefetch.get(prefetchKey(t))" in hud)
+c.truthy("  and cuts replies the same way the head start does",
+         "chunks = speechChunks(text)" in hud.split("async function speakRemote(")[1][:6000])
+
+# The promise that matters, run for real: nothing rendered ahead is ever a chunk
+# the finished reply would cut differently. Every prefix of each reply is fed
+# in as the stream would deliver it, and every chunk the page would render
+# early must be a leading chunk of the finished reply. Same engines and the same
+# no-pass-without-an-engine stance as test_speech_gate.py.
+print("\nThe head start, run in a real engine:")
+import re           # noqa: E402
+import shutil       # noqa: E402
+import subprocess   # noqa: E402
+import tempfile     # noqa: E402
+
+script_src = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", hud, re.S)[0]
+
+
+def cut(start, end):
+    i = script_src.index(start)
+    return script_src[i:script_src.index(end, i)]
+
+
+FNS = cut("  function splitForSpeech(", "\n  }\n") + "\n  }\n" + \
+    cut("  function speechChunks(", "\n  }\n") + "\n  }\n"
+REPLIES = [
+    "Fourteen degrees and cloudy. An umbrella for later, sir.",
+    "Right.",
+    "It's half past four. You have the dentist at five, and the drive is twenty minutes. "
+    "Leave by twenty to, and you'll be early enough to find parking without hurrying.",
+    "No plan survives contact with a Tuesday! Still, the first step is booking the flight, "
+    "which I can't do, but I can find you the cheapest dates if you like.",
+]
+JS = FNS + """
+const __replies = %s;
+const __out = __replies.map(r => {
+  const final = speechChunks(r);
+  let bad = 0, early = 0;
+  for (let n = 1; n <= r.length; n++) {
+    const ch = speechChunks(r.slice(0, n));
+    const ahead = ch.slice(0, Math.min(2, ch.length - 1));
+    ahead.forEach((c, i) => { early++; if (final[i] !== c) bad++; });
+  }
+  return [final.length, final[0], early, bad];
+});
+""" % json.dumps(REPLIES)
+
+roots = [os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+exe = next((p for p in [os.path.join(r, *parts) for r in roots if r for parts in (
+    ("Google", "Chrome", "Application", "chrome.exe"),
+    ("Microsoft", "Edge", "Application", "msedge.exe"))] if os.path.isfile(p)), None) \
+    or shutil.which("google-chrome") or shutil.which("chromium")
+if not exe:
+    print("  NOTE  no Chrome or Edge here. NOT CONFIRMED - a gap, not a pass.")
+else:
+    work = tempfile.mkdtemp(prefix="arcstream")
+    try:
+        page = os.path.join(work, "s.html")
+        io.open(page, "w", encoding="utf-8").write(
+            '<!doctype html><meta charset="utf-8"><body><script>\ntry {\n' + JS +
+            '\ndocument.body.textContent = "RESULT:" + JSON.stringify(__out);\n'
+            '} catch (e) { document.body.textContent = "ERROR:" + e; }\n</script></body>')
+        dom = subprocess.run(
+            [exe, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+             "--user-data-dir=" + os.path.join(work, "p"), "--dump-dom",
+             "file:///" + page.replace("\\", "/")],
+            capture_output=True, timeout=90, encoding="utf-8", errors="replace").stdout
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    m = re.search(r"(RESULT|ERROR):(.*?)(?:</body>|$)", dom, re.S)
+    c.truthy("  it ran (%s)" % os.path.basename(exe), m and m.group(1) == "RESULT")
+    res = json.loads(m.group(2).strip()) if m and m.group(1) == "RESULT" else []
+    if res:
+        c("  a two-sentence reply is two chunks, the first sentence alone",
+          res[0][:2], [2, "Fourteen degrees and cloudy."])
+        c("  a one-word reply is one chunk, rendered only when finished", res[1][:3], [1, "Right.", 0])
+        c.truthy("  a long reply gets a head start", res[2][2] > 0 and res[3][2] > 0)
+        c("  and not one chunk rendered ahead differs from the finished reply",
+          [r[3] for r in res], [0, 0, 0, 0])
 
 c.done()

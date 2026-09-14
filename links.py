@@ -301,7 +301,10 @@ def finish_redirect(sid: str, state: str, code: str, post=None, bind: str = "") 
     browser — stores nothing, and is spent either way."""
     with _pending_lock:
         p = _pending.pop(state or "", None)
-    if not p or p["service"] != sid or time.time() - p["at"] > PENDING_SECONDS:
+    # "verifier": a device-flow handle passed as a state is not a redirect
+    # sign-in, and used to reach a KeyError below.
+    if (not p or p["service"] != sid or "verifier" not in p
+            or time.time() - p["at"] > PENDING_SECONDS):
         return "That sign-in link has expired or was already used. Start again."
     if p["who"] != whose.current() or p.get("bind", "") != bind:
         return "That sign-in was started somewhere else. Start again from this screen."

@@ -257,7 +257,9 @@ def run_tool(name: str, args: dict) -> tuple:
         return str(fn(**(args or {}))), False
     except links.NotLinked as e:
         return str(e), True
-    except TypeError as e:
+    # ValueError too: int("loud") from the model, or a non-JSON 200 from the
+    # service, escaped dispatch_tool and ended the whole turn (Claude 4's review).
+    except (TypeError, ValueError) as e:
         return "Wrong arguments for %s: %s" % (name, e), True
     except httpx.HTTPError as e:
         return "Couldn't reach GitHub: %s" % type(e).__name__, True

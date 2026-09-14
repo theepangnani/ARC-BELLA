@@ -5949,13 +5949,28 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     return (i >= 0 ? text.slice(0, i) : text).replace(/[*_#`]/g, "").trim();
   }
 
+  // How a reply is cut for the neural voice: the FIRST sentence on its own,
+  // then the rest in chunks of up to 160 characters. Most spoken replies are
+  // two or three sentences, which splitForSpeech alone makes into ONE chunk —
+  // so the voice waited for the whole reply to be written and rendered, and a
+  // streamed reply had nothing it could start on early. Claude 1 measured the
+  // first sentence finishing about a second before the reply does; this is
+  // what lets that second reach the speaker. A short first sentence also
+  // renders sooner than a paragraph, streamed or not.
+  function speechChunks(text) {
+    const m = (text || "").match(/^\s*[^.!?…]+[.!?…]+\s+(?=\S)/);
+    if (!m || m[0].trim().length > 160) return splitForSpeech(text, 160);
+    return [m[0].trim()].concat(splitForSpeech(text.slice(m[0].length), 160));
+  }
+
   function prefetchSpeech(text) {
     if (state.engine !== "elevenlabs" || Date.now() < neuralDownUntil) return;
     let chunks = [];
-    try { chunks = splitForSpeech(text, 160); } catch (_) { return; }
-    // Only chunks the rest of the reply can no longer change: splitForSpeech
-    // closes a chunk when the next sentence would overflow it, so every chunk
-    // but the last is final. At most two — a head start, not a second copy.
+    try { chunks = speechChunks(text); } catch (_) { return; }
+    // Only chunks the rest of the reply can no longer change. The first
+    // sentence is final once anything follows it, and splitForSpeech closes a
+    // chunk when the next sentence would overflow it — so every chunk but the
+    // last is final. At most two: a head start, not a second copy.
     for (const ch of chunks.slice(0, Math.min(2, chunks.length - 1))) {
       const k = prefetchKey(ch);
       if (ttsPrefetch.has(k)) continue;
@@ -6043,7 +6058,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // while the previous one is still playing (a one-deep pipeline), so there's
     // no gap between sentences.
     let chunks = [];
-    try { chunks = splitForSpeech(text, 160); } catch (_) { chunks = [text]; }
+    try { chunks = speechChunks(text); } catch (_) { chunks = [text]; }
     if (!chunks.length) chunks = [text];
 
     const cleanupTap = () => {
