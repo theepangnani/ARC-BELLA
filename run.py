@@ -3253,6 +3253,30 @@ async def panels_route(request: Request, _=Depends(require_auth)):
     return JSONResponse({"panels": panels.panels_for_screen()})
 
 
+@app.post("/api/widgets/add")
+async def widgets_add(request: Request, _=Depends(require_auth)):
+    """A widget from the gallery: a clock, a countdown, a note or a stock.
+
+    Built as a panel (panels.add_widget), so it lands in the SAME per-person
+    store and passes the SAME checks as one Bella makes — a guest adds to their
+    own screen, and nothing the page sends becomes markup or an unlisted `live`.
+    """
+    apply_session_memory(request)
+    body = await read_json(request)
+    return JSONResponse(panels.add_widget(
+        kind=str(body.get("kind") or ""), title=str(body.get("title") or ""),
+        date=str(body.get("date") or ""), text=str(body.get("text") or ""),
+        symbol=str(body.get("symbol") or "")))
+
+
+@app.post("/api/widgets/remove")
+async def widgets_remove(request: Request, _=Depends(require_auth)):
+    """The ✕ on a card: take down one of this person's panels by id."""
+    apply_session_memory(request)
+    body = await read_json(request)
+    return JSONResponse({"said": panels.remove_panel_id(str(body.get("id") or ""))})
+
+
 @app.get("/api/plan")
 async def plan_route(request: Request, _=Depends(require_auth)):
     """The plan ARC is part-way through, for the HUD to draw.

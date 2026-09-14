@@ -1626,6 +1626,85 @@
   .conn-state.dim { color: var(--cyan-dim); }
   .conn-switch { padding: 5px 9px; font-size: 9.5px; min-width: 52px; }
   .conn-note { color: var(--cyan-dim); font-size: 11.5px; margin: 12px 0 0; line-height: 1.45; }
+
+  /* ---------------- widgets ----------------
+     The screen as the person arranges it, the way a phone's home screen is:
+     cards shown or put away, new ones added from a gallery, and an arrange mode
+     where every card shows a ✕ and its resize grip. Hiding is a class of its
+     own rather than the `hidden` attribute, which the cards' own modules set
+     and clear as their content comes and goes. */
+  .widget-off { display: none !important; }
+  html.widget-edit .forecast, html.widget-edit .stocks, html.widget-edit .agenda,
+  html.widget-edit .nowplaying, html.widget-edit .plan, html.widget-edit .chart,
+  html.widget-edit .userpanel {
+    outline: 1px dashed rgba(95,217,255,.6); outline-offset: 4px;
+  }
+  html.widget-edit .forecast::before, html.widget-edit .stocks::before,
+  html.widget-edit .agenda::before, html.widget-edit .nowplaying::before,
+  html.widget-edit .plan::before, html.widget-edit .chart::before,
+  html.widget-edit .userpanel::before {
+    content: "\2715"; position: absolute; top: -10px; right: -10px; z-index: 4;
+    width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--deep); border: 1px solid var(--accent); color: var(--ice);
+    font: 11px/1 var(--mono); cursor: pointer;
+  }
+  html.widget-edit .forecast::after, html.widget-edit .stocks::after,
+  html.widget-edit .agenda::after, html.widget-edit .nowplaying::after,
+  html.widget-edit .plan::after, html.widget-edit .chart::after,
+  html.widget-edit .userpanel::after { opacity: .9; }
+  .widget-editbar {
+    position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 61;
+    display: flex; gap: 10px; align-items: center; padding: 8px 10px 8px 16px;
+    background: var(--deep); border: 1px solid var(--accent); border-radius: 999px;
+    font: 11px var(--mono); color: var(--ice); letter-spacing: .04em;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  .widget-editbar[hidden] { display: none; }
+  .widget-editbar button, .wgal button {
+    font: 11px var(--mono); letter-spacing: .06em; cursor: pointer; padding: 6px 12px;
+    border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ice);
+  }
+  .widget-editbar button.primary, .wgal button.primary {
+    background: var(--accent); color: var(--void); border-color: var(--accent); font-weight: 600;
+  }
+  .widget-editbar button:focus-visible, .wgal button:focus-visible,
+  .wgal input:focus-visible, .wgal textarea:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
+  /* Flex, not grid: a grid track sized to its content ignored the card's
+     max-height on a short window, and the top of the gallery ran off screen. */
+  .wgal { position: fixed; inset: 0; z-index: 880; display: flex; align-items: center;
+          justify-content: center; background: rgba(2,6,10,.72); padding: 16px; box-sizing: border-box; }
+  .wgal[hidden] { display: none; }
+  .wgal .wg-card {
+    width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box;
+    background: var(--deep); color: var(--ice); border: 1px solid var(--line);
+    border-top: 2px solid var(--accent); border-radius: 10px; padding: 18px 20px;
+    font-family: var(--mono); box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  }
+  .wgal h3 { font-family: var(--display); font-size: 22px; letter-spacing: .06em;
+             color: var(--accent); margin: 0 0 4px; font-weight: 600; }
+  .wgal .wg-sub { font-size: 11.5px; color: var(--cyan-dim); margin: 0 0 14px; line-height: 1.6; }
+  .wgal h4 { font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase;
+             color: var(--cyan-dim); margin: 16px 0 8px; font-weight: 500; }
+  .wgal .wg-row { display: flex; align-items: center; gap: 10px; padding: 7px 0;
+                  border-top: 1px dashed rgba(18,41,60,.9); font-size: 12px; }
+  .wgal .wg-row:first-of-type { border-top: 0; }
+  .wgal .wg-row .grow { flex: 1; overflow-wrap: anywhere; }
+  .wgal .wg-row .state { font-size: 10px; color: var(--cyan-dim); }
+  .wgal .wg-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .wgal .wg-tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+                   display: flex; flex-direction: column; gap: 7px; }
+  .wgal .wg-tile b { font-size: 12px; color: var(--ice); font-weight: 600; }
+  .wgal .wg-tile span { font-size: 10.5px; color: var(--cyan-dim); line-height: 1.5; }
+  .wgal input, .wgal textarea {
+    width: 100%; box-sizing: border-box; background: rgba(3,7,12,.7); color: var(--ice);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: 12px var(--mono);
+  }
+  .wgal textarea { resize: vertical; min-height: 56px; }
+  .wgal .wg-status { min-height: 18px; font-size: 11px; color: var(--accent); margin-top: 12px; }
+  .wgal .wg-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
 </style>
 
 <div class="field">
@@ -2087,6 +2166,7 @@
         <div class="chead">This screen</div>
         <button id="nightBtn" title="Silence the mic and interaction chirps; keep only spoken replies">Night mode</button>
         <button id="fullscreenBtn" title="Toggle full-screen (or press F)">⛶ Full screen</button>
+        <button id="widgetsBtn" title="Choose which cards are on this screen, add a clock, countdown, note or stock, and arrange them.">Widgets</button>
         <button id="resetPanelsBtn" title="Snap the weather and stock panels back to their default spots">Reset panels</button>
         <button id="tourBtn" title="Walk through what everything on this screen does. You saw it once when you first signed in.">Take the tour</button>
         <button id="watchStatsBtn" title="Arc Watch — what ARC has cost and done, day by day. Opens in its own tab; leave it on a second screen.">⌘ Arc Watch</button>
@@ -9149,6 +9229,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
                run: cmdClear },
     tutorial: { hint: "the tour of this screen, again",
                run: cmdTutorial },
+    widgets: { hint: "choose, add and arrange the cards on this screen",
+               run: cmdWidgets },
   };
 
   async function runCommand(text) {
@@ -9333,6 +9415,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   function cmdClear() { el.clearBtn.click(); }
 
   function cmdTutorial() { arcTour.start("replay"); }
+
+  function cmdWidgets() { arcWidgets.open(); }
 
   el.sendBtn.addEventListener("click", () => {
     const t = el.typed.value.trim();
@@ -10204,6 +10288,251 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     });
   })();
 
+
+  /* ---------- widgets ----------
+     "I want a widget system like phones have, so people can customise their
+     space." A gallery to put cards away and bring them back, add a clock, a
+     countdown, a note or a stock, and an arrange mode where every card shows a
+     ✕ and its grip.
+
+     What is added from here is a PANEL (panels.add_widget on the server), so it
+     is per person, checked like one Bella makes, and dragged and resized by the
+     same machinery as every other card. Which built-in cards are put away is
+     remembered on this device, like where they sit: a phone and a desktop are
+     different screens, and hiding the weather on one should not hide it on the
+     other.
+
+     Nothing here is built from a server string with innerHTML: every name and
+     title goes in through textContent or an input's value. */
+  const arcWidgets = (() => {
+    const HIDDEN_KEY = "arc.widgets.hidden";
+    const BUILTIN = [
+      ["forecast", "Weather"], ["stocks", "Markets"], ["chart", "Stock chart"],
+      ["agenda", "Today's calendar"], ["nowplaying", "Now playing"], ["plan", "Plan"],
+    ];
+    const NAMES = Object.fromEntries(BUILTIN);
+    let hidden = [];
+    try { hidden = JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]") || []; } catch (_) {}
+    hidden = hidden.filter(id => NAMES[id]);
+
+    const mk = (tag, cls, text) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    };
+
+    function applyHidden() {
+      BUILTIN.forEach(([id]) => {
+        const card = document.getElementById(id);
+        if (card) card.classList.toggle("widget-off", hidden.includes(id));
+      });
+    }
+    function saveHidden() {
+      try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden)); } catch (_) {}
+    }
+    function setShown(id, on) {
+      hidden = hidden.filter(x => x !== id);
+      if (!on) hidden.push(id);
+      saveHidden(); applyHidden();
+    }
+
+    /* --- arrange mode --- */
+    const bar = mk("div", "widget-editbar");
+    bar.hidden = true;
+    bar.setAttribute("role", "toolbar");
+    bar.append(mk("span", null, "Drag to move · corner to resize · ✕ to remove"));
+    const addBtn = mk("button", null, "Add widget");
+    const doneBtn = mk("button", "primary", "Done");
+    bar.append(addBtn, doneBtn);
+    document.body.appendChild(bar);
+    addBtn.addEventListener("click", () => { arrange(false); open(); });
+    doneBtn.addEventListener("click", () => arrange(false));
+
+    function cardOf(target) {
+      return target && target.closest && target.closest(
+        ".forecast, .stocks, .agenda, .nowplaying, .plan, .chart, .userpanel");
+    }
+    // The ✕ is drawn as ::before, just outside the card's top-right corner, so
+    // a press on it is recognised by position, the same way the resize grip is.
+    function onX(card, e) {
+      const r = card.getBoundingClientRect();
+      return e.clientX >= r.right - 12 && e.clientY <= r.top + 12;
+    }
+
+    async function removeCard(card) {
+      if (card.id.indexOf("userpanel-") === 0) {
+        try {
+          await fetch("/api/widgets/remove", { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: card.id.slice("userpanel-".length) }) });
+        } catch (_) {}
+        if (window.arcPanels) window.arcPanels.refresh();
+      } else if (NAMES[card.id]) {
+        setShown(card.id, false);
+      }
+    }
+
+    // In arrange mode a press on a ✕ removes, and a plain click inside a card
+    // does nothing — so tidying the screen cannot also edit a stock or open
+    // the chart. Dragging still works: that is the card's own pointer handling.
+    document.addEventListener("pointerdown", e => {
+      if (!document.documentElement.classList.contains("widget-edit")) return;
+      const card = cardOf(e.target);
+      if (card && onX(card, e)) {
+        e.preventDefault(); e.stopPropagation();
+        removeCard(card);
+      }
+    }, true);
+    document.addEventListener("click", e => {
+      if (!document.documentElement.classList.contains("widget-edit")) return;
+      if (cardOf(e.target)) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+
+    function arrange(on) {
+      document.documentElement.classList.toggle("widget-edit", !!on);
+      bar.hidden = !on;
+      if (on) doneBtn.focus();
+    }
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && !bar.hidden && gal.hidden) arrange(false);
+    });
+
+    /* --- the gallery --- */
+    const gal = mk("div", "wgal");
+    gal.hidden = true;
+    gal.setAttribute("role", "dialog");
+    gal.setAttribute("aria-modal", "true");
+    gal.setAttribute("aria-label", "Widgets");
+    const card = mk("div", "wg-card");
+    gal.appendChild(card);
+    document.body.appendChild(gal);
+    gal.addEventListener("click", e => { if (e.target === gal) close(); });
+    gal.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); close(); } });
+
+    let status = null;
+    function say(text) { if (status) status.textContent = text || ""; }
+
+    async function add(payload) {
+      say("Adding…");
+      try {
+        const r = await fetch("/api/widgets/add", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const d = await r.json();
+        say(d.said || (d.ok ? "Added." : "That didn't work."));
+        if (d.ok && window.arcPanels) await window.arcPanels.refresh();
+        if (d.ok) render();
+        return !!d.ok;
+      } catch (_) {
+        say("Couldn't reach ARC just now.");
+        return false;
+      }
+    }
+
+    function tile(title, blurb, fields, build) {
+      const t = mk("div", "wg-tile");
+      t.append(mk("b", null, title), mk("span", null, blurb));
+      const inputs = fields.map(([kind, placeholder, extra]) => {
+        const i = mk(kind === "textarea" ? "textarea" : "input");
+        if (kind !== "textarea") i.type = kind;
+        i.placeholder = placeholder;
+        i.setAttribute("aria-label", placeholder);
+        Object.assign(i, extra || {});
+        t.appendChild(i);
+        return i;
+      });
+      const b = mk("button", null, "Add");
+      b.addEventListener("click", async () => {
+        if (await add(build(inputs.map(i => i.value)))) inputs.forEach(i => { i.value = ""; });
+      });
+      t.appendChild(b);
+      return t;
+    }
+
+    async function render() {
+      card.textContent = "";
+      card.append(mk("h3", null, "Widgets"),
+        mk("p", "wg-sub", "Choose what's on your screen. Cards can be dragged anywhere and " +
+                          "resized from their corner. You can also just ask me for a panel."));
+
+      card.append(mk("h4", null, "On your screen"));
+      const list = mk("div");
+      BUILTIN.forEach(([id, name]) => {
+        if (!document.getElementById(id)) return;
+        const row = mk("div", "wg-row");
+        const on = !hidden.includes(id);
+        row.append(mk("span", "grow", name), mk("span", "state", on ? "showing" : "put away"));
+        const b = mk("button", null, on ? "Hide" : "Show");
+        b.addEventListener("click", () => { setShown(id, !on); render(); });
+        row.appendChild(b);
+        list.appendChild(row);
+      });
+      let mine = [];
+      try {
+        const r = await fetch("/api/panels");
+        if (r.ok) mine = ((await r.json()).panels) || [];
+      } catch (_) {}
+      mine.forEach(p => {
+        const row = mk("div", "wg-row");
+        row.append(mk("span", "grow", p.title || "Panel"), mk("span", "state", "yours"));
+        const b = mk("button", null, "Remove");
+        b.addEventListener("click", async () => {
+          await removeCard({ id: "userpanel-" + p.id });
+          render();
+        });
+        row.appendChild(b);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+
+      card.append(mk("h4", null, "Add a widget"));
+      const tiles = mk("div", "wg-tiles");
+      tiles.append(
+        tile("Clock", "The time, always on screen.", [], () => ({ kind: "clock" })),
+        tile("Countdown", "Days until something you're waiting for.",
+             [["text", "What is it? (e.g. Holiday)", { maxLength: 40 }], ["date", "Date"]],
+             ([title, date]) => ({ kind: "countdown", title, date })),
+        tile("Note", "A few lines to keep in view.",
+             [["text", "Title (optional)", { maxLength: 40 }], ["textarea", "Write your note", { maxLength: 600 }]],
+             ([title, text]) => ({ kind: "note", title, text })),
+        tile("Stock", "A live price for one symbol.",
+             [["text", "Symbol, e.g. AAPL", { maxLength: 16 }]],
+             ([symbol]) => ({ kind: "stock", symbol })));
+      card.appendChild(tiles);
+
+      status = mk("div", "wg-status");
+      status.setAttribute("aria-live", "polite");
+      card.appendChild(status);
+
+      const foot = mk("div", "wg-foot");
+      const arr = mk("button", null, "Arrange cards");
+      arr.addEventListener("click", () => { close(); arrange(true); });
+      const done = mk("button", "primary", "Done");
+      done.addEventListener("click", close);
+      foot.append(arr, done);
+      card.appendChild(foot);
+    }
+
+    let lastFocus = null;
+    async function open() {
+      lastFocus = document.activeElement;
+      gal.hidden = false;
+      await render();
+      const first = card.querySelector("button");
+      if (first) first.focus();
+    }
+    function close() {
+      gal.hidden = true;
+      if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (_) {} }
+    }
+
+    applyHidden();
+    return { open, close, arrange, setShown, get hidden() { return hidden.slice(); } };
+  })();
+  window.arcWidgets = arcWidgets;
+  const widgetsBtn = document.getElementById("widgetsBtn");
+  if (widgetsBtn) widgetsBtn.addEventListener("click", () => arcWidgets.open());
+
   /* ---------- full-screen toggle ---------- */
   (function fullscreen() {
     const btn = document.getElementById("fullscreenBtn");
@@ -10396,7 +10725,8 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       { target: () => document.getElementById("stocks") || document.getElementById("forecast"),
         title: "Panels",
         body: () => ["Weather, stocks and your calendar sit around the edges. Drag one to move it. " +
-                     "Want something else on screen? Ask: ",
+                     "Press Widgets in the controls to put cards away or add a clock, a countdown, " +
+                     "a note or a stock — or just ask: ",
                      { q: "make me a panel counting down to my holiday" }, "."] },
       { target: () => document.getElementById("googleBtn"), title: "Your Google account",
         body: () => ["Connect your own Google account so I can check your calendar, mail and Drive. " +

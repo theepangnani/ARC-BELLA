@@ -190,6 +190,82 @@ def remove_panel(which: str = "") -> str:
     return f"Taken down, sir. {len(kept)} left."
 
 
+def remove_panel_id(pid: str = "") -> str:
+    """Take down one panel by its id — the ✕ on a card, where there is no
+    sentence to match a title against, and two cards may share a word."""
+    pid = _clean(pid, 40)
+    mine = _load()
+    kept = [p for p in mine if p.get("id") != pid]
+    if not pid or len(kept) == len(mine):
+        return "That panel is already gone."
+    _save(kept)
+    return "Removed."
+
+
+# --- widgets ------------------------------------------------------------------
+#
+# The widget gallery is the person doing by hand what they could ask Bella for:
+# "put a countdown to my exam on screen". So a widget IS a panel — the same
+# store, per person, the same checks on every string and on `live`, the same
+# card that drags and resizes — built from a template rather than from a
+# sentence. One kind of card, not two that drift apart.
+
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SYMBOL = re.compile(r"^[A-Za-z0-9.&\-^=]{1,16}$")
+KINDS = ("clock", "countdown", "note", "stock")
+
+
+def _note_rows(text: str) -> list:
+    """A note as rows of whole words, since a row is one line of MAX_VALUE."""
+    words = re.sub(r"\s+", " ", str(text or "")).strip().split(" ")
+    rows, line = [], ""
+    for w in words:
+        w = w[:MAX_VALUE]
+        if line and len(line) + 1 + len(w) > MAX_VALUE:
+            rows.append(line)
+            line = w
+        else:
+            line = (line + " " + w).strip()
+        if len(rows) >= MAX_ITEMS:
+            break
+    if line and len(rows) < MAX_ITEMS:
+        rows.append(line)
+    return [{"label": "", "value": r} for r in rows if r]
+
+
+def add_widget(kind: str = "", title: str = "", date: str = "", text: str = "",
+               symbol: str = "") -> dict:
+    """{"ok": bool, "said": str, "id": str} for the page's gallery."""
+    kind = str(kind or "").strip().lower()
+    if kind not in KINDS:
+        return {"ok": False, "said": "I don't have a widget called that."}
+    if kind == "clock":
+        t, rows = title or "Clock", [{"label": "", "value": "", "live": "clock"}]
+    elif kind == "countdown":
+        d = str(date or "").strip()
+        if not _DATE.match(d):
+            return {"ok": False, "said": "Pick a date for the countdown."}
+        t = title or "Countdown"
+        rows = [{"label": "", "value": d, "live": "countdown:" + d},
+                {"label": "on", "value": d}]
+    elif kind == "note":
+        rows = _note_rows(text)
+        if not rows:
+            return {"ok": False, "said": "Write something for the note."}
+        t = title or "Note"
+    else:
+        s = str(symbol or "").strip().upper()
+        if not _SYMBOL.match(s):
+            return {"ok": False, "said": "That doesn't look like a stock symbol."}
+        t = title or s
+        rows = [{"label": s, "value": "", "live": "ticker:" + s}]
+    before = {p.get("id") for p in _load()}
+    said = make_panel(t, rows)
+    made = [p for p in _load() if p.get("id") not in before
+            and (p.get("title") or "").lower() == _clean(t, MAX_TITLE).lower()]
+    return {"ok": bool(made), "said": said, "id": made[0]["id"] if made else ""}
+
+
 def panels_for_screen() -> list:
     """What the HUD polls for. Shape is fixed here rather than in the route so
     the page can trust it: every row has a label and a value, and `live` is
