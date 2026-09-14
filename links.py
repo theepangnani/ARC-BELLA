@@ -204,6 +204,39 @@ UNAVAILABLE = [
 _pending: dict = {}      # state -> {service, who, verifier, redirect, at}
 _pending_lock = threading.Lock()
 PENDING_SECONDS = 600
+# Sign-ins started and not finished are held in memory, so they are bounded:
+# swept on every start, finish and poll (it used to be only a redirect start,
+# so device sign-ins could pile up without end), at most a few per person —
+# a new one pushes out that person's oldest, never somebody else's — and at
+# most PENDING_MAX in all (Claude 4's review).
+PENDING_PER_PERSON = 5
+PENDING_MAX = 256
+
+
+def _expires(v: dict) -> float:
+    """When a pending sign-in stops being any use. A device sign-in lasts as
+    long as the service said its code does (Microsoft and GitHub: 15 minutes);
+    sweeping it at the redirect's ten ended sign-ins still being typed in."""
+    return v.get("expires") or v["at"] + PENDING_SECONDS
+
+
+def _sweep(now: float) -> None:
+    """Caller holds _pending_lock."""
+    for k in [k for k, v in _pending.items() if now > _expires(v)]:
+        del _pending[k]
+
+
+def _admit(key: str, entry: dict) -> None:
+    """Hold a new pending sign-in, within the caps. Caller holds _pending_lock."""
+    # Oldest by insertion order (a dict keeps it), not by "at": on Windows the
+    # clock is coarse enough that sign-ins started together share a stamp.
+    _sweep(entry["at"])
+    mine = [k for k, v in _pending.items() if v["who"] == entry["who"]]
+    for k in mine[:max(0, len(mine) - PENDING_PER_PERSON + 1)]:
+        del _pending[k]
+    for k in list(_pending)[:max(0, len(_pending) - PENDING_MAX + 1)]:
+        del _pending[k]
+    _pending[key] = entry
 
 
 def _client_id(sid: str) -> str:
@@ -346,10 +379,8 @@ def start_redirect(sid: str, redirect_uri: str, bind: str = "") -> str:
     state = secrets.token_urlsafe(24)
     now = time.time()
     with _pending_lock:
-        for k in [k for k, v in _pending.items() if now - v["at"] > PENDING_SECONDS]:
-            del _pending[k]
-        _pending[state] = {"service": sid, "who": whose.current(), "bind": bind,
-                           "verifier": verifier, "redirect": redirect_uri, "at": now}
+        _admit(state, {"service": sid, "who": whose.current(), "bind": bind,
+                       "verifier": verifier, "redirect": redirect_uri, "at": now})
     q = httpx.QueryParams({
         "client_id": _client_id(sid), "response_type": "code",
         "redirect_uri": redirect_uri, "code_challenge_method": "S256",
@@ -364,6 +395,7 @@ def finish_redirect(sid: str, state: str, code: str, post=None, bind: str = "") 
     that doesn't match — wrong service, expired, used, another account, another
     browser — stores nothing, and is spent either way."""
     with _pending_lock:
+        _sweep(time.time())
         p = _pending.pop(state or "", None)
     # "verifier": a device-flow handle passed as a state is not a redirect
     # sign-in, and used to reach a KeyError below.
@@ -399,11 +431,12 @@ def start_device(sid: str, post=None, bind: str = "") -> dict:
         raise RuntimeError("%s would not start a sign-in (%s)" % (s["name"], r.status_code))
     d = r.json()
     handle = secrets.token_urlsafe(18)
+    now = time.time()
     with _pending_lock:
-        _pending[handle] = {"service": sid, "who": whose.current(), "bind": bind,
-                            "device_code": d["device_code"],
-                            "at": time.time(), "expires": time.time() + int(d.get("expires_in", 900)),
-                            "interval": int(d.get("interval", 5)), "last": 0.0}
+        _admit(handle, {"service": sid, "who": whose.current(), "bind": bind,
+                        "device_code": d["device_code"],
+                        "at": now, "expires": now + int(d.get("expires_in", 900)),
+                        "interval": int(d.get("interval", 5)), "last": 0.0})
     # Only what the person needs to see. The device code itself never leaves.
     return {"handle": handle, "user_code": d["user_code"],
             "verification_uri": d.get("verification_uri") or d.get("verification_url", ""),
@@ -413,7 +446,10 @@ def start_device(sid: str, post=None, bind: str = "") -> dict:
 def poll_device(sid: str, handle: str, post=None, bind: str = "") -> str:
     """'linked', 'waiting', or a sentence saying what went wrong."""
     with _pending_lock:
+        # Looked up BEFORE the sweep, so this poll's own expired code still
+        # gets its message just below rather than the vaguer "isn't running".
         p = _pending.get(handle or "")
+        _sweep(time.time())
     if (not p or p["service"] != sid or p["who"] != whose.current()
             or p.get("bind", "") != bind):
         return "That sign-in isn't running any more. Start again."
