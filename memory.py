@@ -53,6 +53,16 @@ _lock = storefile.lock(STORE)
 # she promised to remember, forgot, and nobody could tell.
 COULD_NOT = "I couldn't reach my memory just now, so nothing was changed. Try again in a moment."
 
+# Said when the file is damaged rather than busy. "Try again in a moment" never
+# works for damage, since the file is just as broken a moment later. Self-repair
+# can put back the last good copy (memory.json is in selfheal.DATA_FILES).
+DAMAGED = ("My memory file is damaged, so nothing was changed. Ask me to repair "
+           "myself and I'll put back the last good copy.")
+
+
+def _refusal(e: Exception) -> str:
+    return COULD_NOT if isinstance(e, storefile.Busy) else DAMAGED
+
 MAX_FACTS = 200          # per account; was 120 in the browser
 MAX_LEN = 240
 
@@ -187,8 +197,8 @@ def remember(fact: str = "", supersede: bool = True) -> str:
     with _lock:
         try:
             all_of_it = _load()
-        except storefile.Unreadable:
-            return COULD_NOT
+        except storefile.Unreadable as e:
+            return _refusal(e)
         mine = list(_mine(all_of_it))
         low = f.lower()
         if any((m.get("text") or "").lower() == low for m in mine):
@@ -220,8 +230,8 @@ def forget(which: str = "") -> str:
     with _lock:
         try:
             all_of_it = _load()
-        except storefile.Unreadable:
-            return COULD_NOT
+        except storefile.Unreadable as e:
+            return _refusal(e)
         mine = _mine(all_of_it)
         if not mine:
             return "I don't know anything about you yet."
@@ -245,7 +255,7 @@ def forget(which: str = "") -> str:
         return said
 
 
-def import_facts(items) -> int:
+def import_facts(items, only_if_empty: bool = False) -> int:
     """Take what a browser had in localStorage, once.
 
     Nobody should lose months of accumulated memory because the storage moved.
@@ -253,16 +263,29 @@ def import_facts(items) -> int:
     where the "only once" actually lives.
     """
     n = 0
-    for raw in (items or []):
-        text = raw if isinstance(raw, str) else (raw or {}).get("text") or ""
-        if isinstance(text, str) and text.strip():
-            # No superseding on an import: these arrived without dates and in
-            # an order nobody can vouch for, so guessing which replaced which
-            # would delete things on the strength of a coin toss.
-            # Counted only if it was actually kept — a refused secret is not
-            # an import, and saying it was would be the one lie this can tell.
-            if remember(text, supersede=False).startswith("Noted"):
-                n += 1
+    # only_if_empty: "only when this account has none", decided under the lock
+    # and from a strict read. The route's own check goes through count(), which
+    # is a display read and calls a busy file empty — so a stale browser could
+    # pass it while the real facts were only momentarily locked, and then push
+    # its old ones in on top. The lock is re-entrant, so remember() below can
+    # still take it.
+    with _lock:
+        if only_if_empty:
+            try:
+                if _mine(_load()):
+                    return 0
+            except storefile.Unreadable:
+                return 0
+        for raw in (items or []):
+            text = raw if isinstance(raw, str) else (raw or {}).get("text") or ""
+            if isinstance(text, str) and text.strip():
+                # No superseding on an import: these arrived without dates and in
+                # an order nobody can vouch for, so guessing which replaced which
+                # would delete things on the strength of a coin toss.
+                # Counted only if it was actually kept — a refused secret is not
+                # an import, and saying it was would be the one lie this can tell.
+                if remember(text, supersede=False).startswith("Noted"):
+                    n += 1
     return n
 
 

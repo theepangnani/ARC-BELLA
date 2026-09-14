@@ -146,7 +146,10 @@ def record(*, tok_in=0, tok_out=0, cache_read=0, cache_write=0, cost=0.0,
             for t in tools or ():
                 d["tools"][t] = d["tools"].get(t, 0) + 1
             if model:
-                d["models"][model] = d["models"].get(model, 0) + 1
+                # Turns per model count turns. A part of one (a stepped-up
+                # turn's early rounds, turn=False) adds its spend but not a turn.
+                if turn:
+                    d["models"][model] = d["models"].get(model, 0) + 1
                 # setdefault, because a day recorded before this existed has
                 # no "spend" key at all and reading it back must not throw.
                 spend = d.setdefault("spend", {})

@@ -53,8 +53,9 @@ c("  it knows exactly which files are its business",
   sorted(selfheal.DATA_FILES),
   # plan, panels, missed alarms and the tour record joined on 13 Sep 2026: a bug
   # check found them with no backups and missing from the export.
-  # lessons joined with lessons.py itself.
-  ["alarms.json", "lessons.json", "missed_alarms.json", "notes.json", "panels.json", "plan.json",
+  # lessons joined with lessons.py itself. memory joined the same day, once
+  # memory.py stopped writing over damage and so needed something to repair it.
+  ["alarms.json", "lessons.json", "memory.json", "missed_alarms.json", "notes.json", "panels.json", "plan.json",
    "price_alerts.json", "reminders.json", "todos.json", "triggers.json",
    "tutorial.json", "usage.json"])
 for secret in ("credentials.json", "credentials_web.json", "token.json", ".env"):

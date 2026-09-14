@@ -480,8 +480,51 @@ def thinking_for(model: str, want_on: bool) -> dict:
     two, and lower effort with thinking ON is both cheaper and safer than
     thinking OFF. Haiku and Sonnet keep the fast path — the failure is not
     documented there, and latency is the whole reason the default exists.
+
+    HAIKU 4.5 HAS NO ADAPTIVE THINKING. It takes the older manual form, a type of
+    "enabled" with a token budget, and answers "adaptive" with a 400. Until a
+    bug check caught it, every chat-mode question Auto sent to the fast brain,
+    and every turn with the Thinking switch on and Fast pinned, failed outright.
+    The budget has to sit under max_tokens, and the smallest ceiling a turn on
+    that path gets is MAX_TOKENS, so it is kept well below that.
     """
-    return {"type": "adaptive"} if (want_on or "opus" in (model or "").lower())         else {"type": "disabled"}
+    if not (want_on or "opus" in (model or "").lower()):
+        return {"type": "disabled"}
+    if not supports_adaptive(model):
+        return {"type": "enabled", "budget_tokens": HAIKU_THINK_BUDGET}
+    return {"type": "adaptive"}
+
+
+# Haiku's manual thinking budget. The API's floor is 1024; a voice turn wants
+# an answer quickly, so this is enough to reason with and no more.
+HAIKU_THINK_BUDGET = 2048
+
+
+def supports_adaptive(model: str) -> bool:
+    # Adaptive thinking is on Opus and on Sonnet 4.6 and later. Haiku 4.5 and
+    # anything older take manual budgets only.
+    m = (model or "").lower()
+    return "haiku" not in m and not m.startswith("claude-3")
+
+
+def fit_thinking(thinking: dict, max_tokens: int) -> dict:
+    """A manual budget that fits under this request's ceiling, or no thinking.
+
+    The API refuses a budget at or above max_tokens, and ARC_MAX_TOKENS can be
+    set low. Room is left for the reply itself. Below the API's 1024 floor there
+    is no budget that works, and an unthinking answer is better than a 400.
+    """
+    if (thinking or {}).get("type") != "enabled":
+        return thinking
+    budget = min(int(thinking.get("budget_tokens") or 0), int(max_tokens) - 256)
+    if budget < 1024:
+        return {"type": "disabled"}
+    return {"type": "enabled", "budget_tokens": budget}
+
+
+def thought(thinking: dict) -> bool:
+    """Whether a thinking block actually lets the model think, in either form."""
+    return (thinking or {}).get("type") in ("adaptive", "enabled")
 
 def resolve_model(choice) -> str:
     return MODEL_CHOICES.get(str(choice or "").strip().lower(), MODEL)
@@ -2036,6 +2079,16 @@ async def chat(request: Request, _=Depends(require_auth)):
     # and the day they are decided in four places is the day they disagree.
     chat_view = bool(payload.get("chat")) and may(request, "chat")
 
+    want_think = payload.get("think")
+    thinking_on = want_think is True or str(want_think).lower() in ("on", "always", "adaptive", "true")
+    # A turn that will think goes to Sonnet when Auto is choosing. Someone who
+    # asked for thinking, or is reading rather than listening, has already said
+    # this is not a quick one. It also keeps Haiku's manual thinking (see
+    # thinking_for) to turns where Fast was pinned, and those never step up. So
+    # no turn starts thinking in one form and has to carry on in the other.
+    if auto_used and brain == "fast" and (thinking_on or chat_view):
+        brain, brain_why = "smart", "thinking was asked for"
+
     model = resolve_model(brain)
 
     if not isinstance(messages, list) or not messages:
@@ -2170,13 +2223,13 @@ async def chat(request: Request, _=Depends(require_auth)):
     # Thinking is the single biggest source of reply latency, so for a voice
     # loop it is OFF by default and only turns on when the user explicitly asks
     # (the THINKING switch set to ON/ALWAYS). Most spoken questions don't need
-    # it; the ones that do can opt in.
+    # it; the ones that do can opt in. thinking_on is read further up, where
+    # Auto is told about it.
     #
     # thinking_for() then has the last word, because on Opus that default is not
     # safe to honour — see the note on the helper. The switch still means what it
     # says on the two brains that answer most turns.
-    want_think = payload.get("think")
-    thinking_on = want_think is True or str(want_think).lower() in ("on", "always", "adaptive", "true")
+    #
     # `or chat_view`: in chat mode nobody is waiting to HEAR anything, which is
     # the only reason thinking is off by default. Server-side rather than left
     # to the page, so it cannot come adrift from the register it belongs to.
@@ -2295,6 +2348,7 @@ async def chat(request: Request, _=Depends(require_auth)):
     # every stepped-up turn — and the daily cap reads that number.
     early_spent = early_saved = 0.0
     at_step = (0, 0, 0, 0, 0)
+    early_model = ""
     for _ in range(rounds):
         used_rounds += 1
         kwargs = dict(
@@ -2302,7 +2356,7 @@ async def chat(request: Request, _=Depends(require_auth)):
             max_tokens=MAX_TOKENS_CHAT if chat_view else MAX_TOKENS,
             system=system,
             messages=convo,
-            thinking=thinking,
+            thinking=fit_thinking(thinking, MAX_TOKENS_CHAT if chat_view else MAX_TOKENS),
         )
         # The effort control is a Sonnet/Opus feature; Haiku rejects it. Only
         # send it on models that accept it — decided per-request, since the brain
@@ -2476,6 +2530,7 @@ async def chat(request: Request, _=Depends(require_auth)):
                 early_saved += ((cache_read - at_step[2]) / 1e6
                                 * prices_for(model)[0] * (1 - CACHE_READ_RATE))
                 at_step = (tokens_in, tokens_out, cache_read, cache_write, searches)
+                early_model = model
                 brain, brain_why = "smart", brain_why + "; " + up
                 model = resolve_model("smart")
                 thinking = thinking_for(model, thinking_on or chat_view)
@@ -2543,17 +2598,24 @@ async def chat(request: Request, _=Depends(require_auth)):
     # until this existed the honest answer to "what did I spend on Tuesday?"
     # was that nobody knew, including ARC. Counts and costs only — no prompts,
     # no replies, nothing anybody said. See stats.py.
+    #
+    # A stepped-up turn books its Haiku rounds to Haiku. The per-model spend is
+    # the evidence router.py argues from, and putting all of it on Sonnet would
+    # hide exactly the cost the step-up exists to measure. turn=False, so it is
+    # still one turn, answered by the model that finished it.
+    if early_model:
+        stats.record(cost=early_spent, saved=early_saved, model=early_model, turn=False)
     stats.record(
         tok_in=tokens_in, tok_out=tokens_out,
         cache_read=cache_read, cache_write=cache_write,
-        cost=spent, saved=saved,
+        cost=spent - early_spent, saved=saved - early_saved,
         tools=used, model=model, searched=searched,
         refusal=(reply == "I can't help with that one, sir."))
 
     return JSONResponse({
         "reply": reply,
         "searched": searched,
-        "thought": thinking["type"] == "adaptive",
+        "thought": thought(thinking),
         "brain": brain,
         "auto": auto_used,
         "why": brain_why,
@@ -3096,7 +3158,9 @@ async def memory_import(request: Request, _=Depends(require_auth)):
     items = payload.get("facts") or []
     if not isinstance(items, list):
         raise HTTPException(400, "facts must be a list.")
-    n = memory.import_facts(items[:memory.MAX_FACTS])
+    # only_if_empty repeats the check above strictly, under memory's lock:
+    # count() calls a busy file empty. See import_facts.
+    n = memory.import_facts(items[:memory.MAX_FACTS], only_if_empty=True)
     if n:
         print(f"{C_DIM}  · took over {n} remembered fact"
               f"{'s' if n != 1 else ''} from a browser{C_OFF}")

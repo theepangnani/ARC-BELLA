@@ -38,6 +38,7 @@ import session   # noqa: E402
 import memory    # noqa: E402
 import router    # noqa: E402
 import selfheal  # noqa: E402
+import stats     # noqa: E402
 
 page = io.open(HUD, encoding="utf-8").read()
 body = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", page, re.S)[0]
@@ -129,6 +130,15 @@ for t in HANDS + FIXES:
     c("  better %-46s" % t, got, "smart")
 c("  ...but a bare no is still a standing phrase",
   router.why([{"role": "user", "content": "no"}])[0], "fast")
+# The same words as nouns, and agreement rather than correction. A bug check
+# found each one going to Sonnet for nothing.
+# Judged on the reason, not the brain: a longer one may still go to Sonnet by
+# the ordinary rule, and that is not what is being checked here.
+for t in ["what type of dog is a corgi", "press release for apple today",
+          "I need a hard copy", "no, you are right", "no, you're right"]:
+    c("  not screen work or a fix: %-30s" % t,
+      router.why([{"role": "user", "content": t}])[1]
+      in ("working the screen", "a correction — the last try missed"), False)
 
 print("\nA follow-up is as hard as what it follows:")
 
@@ -157,6 +167,13 @@ c("  next, after music, is still the next song",
   router.why(convo("play something", "next"))[0], "fast")
 c("  and a follow-up with nothing before it is judged as itself",
   router.why(convo("yes"))[0], "fast")
+c("  a few follow-up words together still carry on",
+  router.why(convo("click the blue button", "yes, do it"))[0], "smart")
+# The whole reply has to be a continuation. These are an ending and an order.
+c("  okay thanks, after screen work, is an ending",
+  router.why(convo("click the blue button", "okay thanks"))[0], "fast")
+c("  please stop is not a continuation",
+  router.why(convo("click the blue button", "please stop"))[0], "fast")
 
 print("\nA turn that turns into a job steps up while it runs:")
 c("  one simple call stays put", router.step_up(1, ["weather"]), "")
@@ -170,6 +187,27 @@ _run = io.open(ARC / "run.py", encoding="utf-8").read()
 c.truthy("  only on auto, only from fast",
          'if auto_used and brain == "fast" and not searched:' in _run)
 c.truthy("  and the Haiku rounds are billed at Haiku's price", "early_spent" in _run)
+# And booked to Haiku in usage.json, which is where Arc Watch's per-model table
+# and router.py's own argument come from.
+c.truthy("  and recorded against Haiku, not the model that finished",
+         "stats.record(cost=early_spent, saved=early_saved, model=early_model, turn=False)" in _run)
+# A turn that will think goes to Sonnet on Auto, so Haiku's manual thinking is
+# never carried into a stepped-up turn.
+c.truthy("  a thinking turn is not left on Haiku by Auto",
+         'if auto_used and brain == "fast" and (thinking_on or chat_view):' in _run)
+# Copied, because series() shares the nested dicts with the live record.
+_before = json.loads(json.dumps(stats.series(1)[-1]))
+stats.record(cost=0.3, model="claude-haiku-4-5-20251001", turn=False)
+stats.record(cost=0.4, model="claude-sonnet-5")
+_after = json.loads(json.dumps(stats.series(1)[-1]))
+c("  a part of a turn is not counted as a turn",
+  _after.get("turns", 0) - _before.get("turns", 0), 1)
+c("  but its spend lands on its own model",
+  round((_after.get("spend") or {}).get("claude-haiku-4-5-20251001", 0)
+        - (_before.get("spend") or {}).get("claude-haiku-4-5-20251001", 0), 6), 0.3)
+c("  and it adds no Haiku turn",
+  (_after.get("models") or {}).get("claude-haiku-4-5-20251001", 0)
+  - (_before.get("models") or {}).get("claude-haiku-4-5-20251001", 0), 0)
 
 print("\nAnd it never overrules a person who has chosen:")
 for asked in ("smart", "fast"):
@@ -368,7 +406,24 @@ c("  Sonnet keeps the fast default",
 c("  Haiku too", run.thinking_for(run.MODEL_CHOICES["fast"], False)["type"], "disabled")
 c("  and both still obey the switch when it is on",
   [run.thinking_for(run.MODEL_CHOICES[b], True)["type"] for b in ("smart", "fast")],
-  ["adaptive", "adaptive"])
+  ["adaptive", "enabled"])
+# Haiku 4.5 has no adaptive thinking and answers it with a 400. This check used
+# to pin "adaptive" for Haiku, which pinned the bug in place.
+_h = run.thinking_for(run.MODEL_CHOICES["fast"], True)
+c("  Haiku thinks in the manual form it accepts", _h.get("type"), "enabled")
+c.truthy("  with a budget the API allows, under the smallest ceiling",
+         1024 <= _h.get("budget_tokens", 0) < run.MAX_TOKENS)
+c("  and the reply still says it thought", run.thought(_h), True)
+c("  a disabled block did not think", run.thought({"type": "disabled"}), False)
+# ARC_MAX_TOKENS is configurable, and a budget at or above it is a 400.
+c("  the budget shrinks to fit a low ceiling",
+  run.fit_thinking(_h, 3000), {"type": "enabled", "budget_tokens": 2048})
+c("  ...under it, with room for the reply",
+  run.fit_thinking(_h, 2200), {"type": "enabled", "budget_tokens": 1944})
+c("  and with no room at all it does not think", run.fit_thinking(_h, 1200), {"type": "disabled"})
+c("  adaptive is left alone", run.fit_thinking({"type": "adaptive"}, 1200), {"type": "adaptive"})
+c.truthy("  the tool loop fits it to its own ceiling",
+         "thinking=fit_thinking(thinking, MAX_TOKENS_CHAT if chat_view else MAX_TOKENS)" in _run)
 _run_src = io.open(ARC / "run.py", encoding="utf-8").read()
 c.truthy("  the route asks the helper rather than deciding for itself",
          re.search(r"\n\s*thinking = thinking_for\(model, [^)]*thinking_on", _run_src) is not None)

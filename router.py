@@ -66,10 +66,14 @@ HARD = re.compile(r"""
 #
 # "what type of..." and "open a new tab" land here too. Both are wrong in the
 # cheap direction, which is the direction this file has already chosen.
+#
+# Not "what type of dog", "a press release" or "a hard copy": those are the
+# same words as nouns, and a bug check found each going to Sonnet for nothing.
 HANDS = re.compile(r"""
-    \b(click|double[- ]?click|right[- ]?click|tap\s+on|scroll|drag|type|press|
+    \b(click|double[- ]?click|right[- ]?click|tap\s+on|scroll|drag|
+       type(?!\s+of\b)|press(?!\s+(release|conference)\b)|
        select|highlight|fill\s+in|fill\s+out|log\s*in|sign\s*in|
-       go\s+to|navigate|download|upload|install|copy|paste|
+       go\s+to|navigate|download|upload|install|(?<!hard\s)copy|paste|
        button|tab|field|menu|window|
        (on|at)\s+(my|the|this)\s+screen|this\s+page|that\s+page)\b
 """, re.I | re.X)
@@ -80,7 +84,7 @@ HANDS = re.compile(r"""
 # Checked before EASY, because a bare "no" is a standing phrase and "no, not
 # that one" is not.
 CORRECTION = re.compile(r"""
-    ^\s*no[,.!]?\s+(not|the\s+other|that'?s|i\s+(said|meant)|wrong|you)\b
+    ^\s*no[,.!]?\s+(not|the\s+other|that'?s\s+(not|wrong)|i\s+(said|meant)|wrong|you\s+missed)\b
     |\b(that'?s|you'?re|you\s+got\s+it|still)\s+(wrong|not\s+(it|right|what))\b
     |\b(didn'?t|doesn'?t|did\s+not|does\s+not|isn'?t)\s+work
     |\b(try\s+again|not\s+that\s+one|wrong\s+(one|window|button|thing)|you\s+missed)\b
@@ -91,12 +95,18 @@ CORRECTION = re.compile(r"""
 # "shall I fill in the form?" — so they are judged by the request they continue.
 # "carry on" matters most: it is exactly what ARC tells you to say when a job
 # ran out of rounds, and on its own it read as two easy words.
-FOLLOW = re.compile(r"""
-    ^\s*(yes|yeah|yep|yup|sure|ok(ay)?|please|go\s+(on|ahead)|do\s+it|do\s+that|
-        carry\s+on|continue|keep\s+going|proceed|next|and\s+then|
-        (the\s+)?(first|second|third|last|other|top|bottom)(\s+one)?|that\s+one|this\s+one|
-        same\s+again|again|one\s+more|more)\b
-""", re.I | re.X)
+#
+# The WHOLE reply has to be follow-up words, a few at most ("yes please", "ok,
+# carry on"). Matching only the start sent "okay thanks" and "please stop" to
+# Sonnet after any hard turn, and those are an ending and an instruction, not a
+# continuation.
+_FOLLOW_WORD = r"""
+    (yes|yeah|yep|yup|sure|ok(ay)?|please|go\s+(on|ahead)|do\s+it|do\s+that|
+     carry\s+on|continue|keep\s+going|proceed|next|and\s+then|
+     (the\s+)?(first|second|third|last|other|top|bottom)(\s+one)?|that\s+one|this\s+one|
+     same\s+again|again|one\s+more|more)
+"""
+FOLLOW = re.compile(r"^\s*(?:" + _FOLLOW_WORD + r"\b[\s,.!]*){1,3}$", re.I | re.X)
 
 # Multi-clause questions, which are almost never simple lookups.
 CLAUSES = re.compile(r"\b(and\s+then|after\s+that|also|as\s+well\s+as|but\s+if|"

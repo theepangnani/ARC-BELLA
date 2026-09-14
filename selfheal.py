@@ -75,6 +75,12 @@ DATA_FILES = {
     # A dict, not a list — the shape check below is what makes that matter, and
     # it would catch a file that had somehow become the wrong kind of thing.
     "usage.json":        ({}, "usage record"),
+    # What ARC remembers about each person (memory.py). It was only in the
+    # export, so it had no snapshots and no repair. That did not matter while a
+    # damaged file was quietly overwritten. Since memory.py refuses to write
+    # over damage, a damaged memory.json stops every remember and forget until
+    # something puts it right, and this is the something.
+    "memory.json":       ({}, "memory"),
 }
 
 # Never copied into backups/, each for its own reason:
@@ -100,7 +106,16 @@ PER_PERSON = {"notes.json", "todos.json", "reminders.json", "alarms.json",
               "missed_alarms.json", "tutorial.json", "lessons.json"}
 
 
+# Split by person and nothing else: {address: [items]} is the only healthy
+# shape. Unlike PER_PERSON there is no older plain-list form to accept, and
+# memory.py treats a list as damage. A check that passed one would put back
+# a copy its own store refuses to read.
+SPLIT_ONLY = {"memory.json"}
+
+
 def _shape_ok(name: str, data) -> bool:
+    if name in SPLIT_ONLY:
+        return isinstance(data, dict) and all(isinstance(v, list) for v in data.values())
     if name in PER_PERSON:
         if isinstance(data, list):
             return True
@@ -349,7 +364,7 @@ def export_all(path: str = "") -> str:
     out = {"arc_export": 1, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
            "from": str(DATA_DIR), "files": {}, "repairs": history(50)}
     skipped = []
-    for name in list(DATA_FILES) + ["memory.json"]:
+    for name in DATA_FILES:
         if name in KEEP_OUT:
             continue
         src = DATA_DIR / name
