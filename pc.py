@@ -1389,7 +1389,9 @@ def input_refusal(at=None):
         hwnd, title = _window_at(*pt)
     if not hwnd:
         return None
-    return codeguard.check_window(title, _exe_of(hwnd))
+    # at=None is typing (keyboard, hold_key, key_macro); anything else is a
+    # click, which Explorer — the taskbar and desktop — may receive.
+    return codeguard.check_window(title, _exe_of(hwnd), typing=at is None)
 
 
 def _focused() -> tuple:

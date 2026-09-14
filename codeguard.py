@@ -97,12 +97,18 @@ _TERMINALS = {
     # actually associates with .py, node is a REPL, git-bash and sh are bash.
     "powershell_ise.exe", "py.exe", "pyw.exe", "node.exe", "git-bash.exe",
     "sh.exe", "kitty.exe", "hyper.exe", "tabby.exe", "cmder.exe",
-    # Explorer runs what is typed into its address bar (F4, Ctrl+L) and owns
-    # the Win+R Run box, which is a command line with a text field for a face.
-    # Neither shows up in a title. So typing into Explorer is refused whole; a
-    # file can still be renamed by the owner's own hand.
-    "explorer.exe",
 }
+
+# Explorer runs what is TYPED into its address bar (F4, Ctrl+L) and owns the
+# Win+R Run box, which is a command line with a text field for a face. Neither
+# shows up in a title. So typing into Explorer is refused whole.
+#
+# CLICKING is not. Explorer is also the taskbar, the Start button and the
+# desktop ("Program Manager"), and the first version put it in _TERMINALS,
+# which refuses clicks too — Claude 1 found that every click on the taskbar
+# was refused. A click cannot type a command; a window showing this folder is
+# still refused by its title, like any other.
+_TYPE_ONLY = {"explorer.exe"}
 
 # Editors with a terminal built in. The window title says "run.py - arc -
 # Visual Studio Code" whether the cursor is in the file or in the terminal
@@ -345,13 +351,13 @@ def check_command(command: str):
 
 # --- windows that typing or clicking would reach -----------------------------
 
-def check_window(title: str, exe: str = ""):
+def check_window(title: str, exe: str = "", typing: bool = True):
     """None if input may go to this window; the refusal if it would reach a
-    shell or an editor showing ARC's code."""
+    shell or an editor showing ARC's code. `typing` is False for a click."""
     e = (exe or "").strip().lower()
     t = (title or "").strip()
     low = t.lower()
-    if e in _TERMINALS:
+    if e in _TERMINALS or (typing and e in _TYPE_ONLY):
         return (f"{LAW} — the window in front runs what is typed into it ({e}), "
                 f"and typing or clicking there is running commands unchecked.")
     if e in _IDES:

@@ -359,6 +359,15 @@ c.truthy("  a click on the editor is refused",
          codeguard.LAW in refused(pc.mouse_control, "click", 100, 100))
 c.truthy("  auto_click on it is refused", codeguard.LAW in automation.auto_click(2, 1, x=100, y=100))
 c("  nothing started", automation.running(), False)
+# Explorer is the taskbar and the desktop as well as the address bar. Typing
+# there is refused; clicking must not be, or ARC cannot press the Start button.
+for title in ("", "Program Manager", "Downloads"):
+    under.update(title=title, exe="explorer.exe")
+    c("  a click on Explorer (%s) is allowed" % (title or "taskbar"),
+      pc.input_refusal((100, 100)), None)
+under.update(title=root, exe="explorer.exe")
+c.truthy("  but not on an Explorer window showing this folder",
+         codeguard.LAW in (pc.input_refusal((100, 100)) or ""))
 
 print("\nOpening a Python file is running it, so it is refused like any script:")
 opened = []
