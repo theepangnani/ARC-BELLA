@@ -2288,6 +2288,13 @@ async def chat(request: Request, _=Depends(require_auth)):
     rounds = (MAX_TOOL_ROUNDS_DEEP if (chat_view or brain == "deep")
               else MAX_TOOL_ROUNDS)
     used_rounds = 0
+    # A turn that steps up from Haiku to Sonnet part-way (router.step_up) is
+    # two turns on the bill. The rounds already run are priced here, at Haiku's
+    # rate, and the totals at that moment kept, so the rest is priced at
+    # Sonnet's. Pricing all of it at whichever model finished would overstate
+    # every stepped-up turn — and the daily cap reads that number.
+    early_spent = early_saved = 0.0
+    at_step = (0, 0, 0, 0, 0)
     for _ in range(rounds):
         used_rounds += 1
         kwargs = dict(
@@ -2452,6 +2459,30 @@ async def chat(request: Request, _=Depends(require_auth)):
             {"role": "assistant", "content": resp.content},
             {"role": "user", "content": results},
         ]
+
+        # Auto chose Haiku from the first sentence; now we can see what the
+        # turn is actually doing. Screen work, or a third round, finishes on
+        # Sonnet. Only Auto's own choice moves — a person who pinned Fast keeps
+        # Fast — and only once a turn has not searched: the two brains take
+        # different web-search tool versions, and a result block from one is
+        # not something to hand the other mid-conversation.
+        if auto_used and brain == "fast" and not searched:
+            up = router.step_up(used_rounds, [c.name for c in calls])
+            if up:
+                early_spent += turn_cost(
+                    model, tokens_in - at_step[0], tokens_out - at_step[1],
+                    cache_read - at_step[2], cache_write - at_step[3],
+                    searches - at_step[4])
+                early_saved += ((cache_read - at_step[2]) / 1e6
+                                * prices_for(model)[0] * (1 - CACHE_READ_RATE))
+                at_step = (tokens_in, tokens_out, cache_read, cache_write, searches)
+                brain, brain_why = "smart", brain_why + "; " + up
+                model = resolve_model("smart")
+                thinking = thinking_for(model, thinking_on or chat_view)
+                if any(t.get("name") == "web_search" for t in tools):
+                    tools = [t for t in tools if t.get("name") != "web_search"]
+                    tools.append(search_tool_for(model))
+                print(f"{C_DIM}  · auto: {up}{C_OFF}")
     else:
         # Ran out of rounds. Say what was actually DONE rather than only that it
         # stopped -- "more steps than I could finish" tells you nothing about
@@ -2498,12 +2529,15 @@ async def chat(request: Request, _=Depends(require_auth)):
     _day["tok_cache_read"] += cache_read
     _day["tok_cache_write"] += cache_write
     # Priced at whatever answered, not at whatever the default is.
-    spent = turn_cost(model, tokens_in, tokens_out, cache_read, cache_write,
-                      searches)
+    # A stepped-up turn adds what its Haiku rounds cost; see early_spent.
+    spent = turn_cost(model, tokens_in - at_step[0], tokens_out - at_step[1],
+                      cache_read - at_step[2], cache_write - at_step[3],
+                      searches - at_step[4]) + early_spent
     _day["cost"] += spent
     # What the cache kept: the difference between what those tokens cost as
     # reads and what they would have cost at the full input rate.
-    saved = cache_read / 1e6 * prices_for(model)[0] * (1 - CACHE_READ_RATE)
+    saved = ((cache_read - at_step[2]) / 1e6 * prices_for(model)[0]
+             * (1 - CACHE_READ_RATE)) + early_saved
 
     # And to disk, for Arc Watch. _day is memory only and resets on restart, so
     # until this existed the honest answer to "what did I spend on Tuesday?"

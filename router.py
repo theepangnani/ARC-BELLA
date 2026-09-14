@@ -54,6 +54,50 @@ HARD = re.compile(r"""
        pros?\s+and\s+cons?|should\s+i|worth\s+it|what\s+if)\b
 """, re.I | re.X)
 
+# Working the computer by hand. Short, no reasoning words, and the hardest job
+# ARC does: find the thing in a screenshot, click it, check it worked, fix what
+# did not. "click the search bar" is five words and HARD never saw it, so every
+# one of these went to Haiku — and Haiku then drove the whole job. The usage
+# file for 11 September 2026 is the evidence: 99 Haiku turns, 320 mouse
+# clicks, 294 screenshots, $10.62 on Haiku against $0.35 on Sonnet. The cheap
+# brain was not cheap; a model that misreads the screen takes more rounds to
+# get there, and every round re-sends the pictures. So it was the expensive
+# day AND the unreliable one.
+#
+# "what type of..." and "open a new tab" land here too. Both are wrong in the
+# cheap direction, which is the direction this file has already chosen.
+HANDS = re.compile(r"""
+    \b(click|double[- ]?click|right[- ]?click|tap\s+on|scroll|drag|type|press|
+       select|highlight|fill\s+in|fill\s+out|log\s*in|sign\s*in|
+       go\s+to|navigate|download|upload|install|copy|paste|
+       button|tab|field|menu|window|
+       (on|at)\s+(my|the|this)\s+screen|this\s+page|that\s+page)\b
+""", re.I | re.X)
+
+# Being told the last answer was wrong. Short by nature — "no, the other one",
+# "that didn't work" — and it means the easy route already failed once. Sending
+# the retry to the brain that just got it wrong is how one mistake becomes three.
+# Checked before EASY, because a bare "no" is a standing phrase and "no, not
+# that one" is not.
+CORRECTION = re.compile(r"""
+    ^\s*no[,.!]?\s+(not|the\s+other|that'?s|i\s+(said|meant)|wrong|you)\b
+    |\b(that'?s|you'?re|you\s+got\s+it|still)\s+(wrong|not\s+(it|right|what))\b
+    |\b(didn'?t|doesn'?t|did\s+not|does\s+not|isn'?t)\s+work
+    |\b(try\s+again|not\s+that\s+one|wrong\s+(one|window|button|thing)|you\s+missed)\b
+""", re.I | re.X)
+
+# Carrying on with whatever came before. These say nothing about difficulty on
+# their own — "yes" is easy after "is it raining?" and a thirty-click job after
+# "shall I fill in the form?" — so they are judged by the request they continue.
+# "carry on" matters most: it is exactly what ARC tells you to say when a job
+# ran out of rounds, and on its own it read as two easy words.
+FOLLOW = re.compile(r"""
+    ^\s*(yes|yeah|yep|yup|sure|ok(ay)?|please|go\s+(on|ahead)|do\s+it|do\s+that|
+        carry\s+on|continue|keep\s+going|proceed|next|and\s+then|
+        (the\s+)?(first|second|third|last|other|top|bottom)(\s+one)?|that\s+one|this\s+one|
+        same\s+again|again|one\s+more|more)\b
+""", re.I | re.X)
+
 # Multi-clause questions, which are almost never simple lookups.
 CLAUSES = re.compile(r"\b(and\s+then|after\s+that|also|as\s+well\s+as|but\s+if|"
                      r"instead\s+of|rather\s+than|unless|whereas)\b", re.I)
@@ -87,6 +131,22 @@ def _text_of(messages) -> str:
     return ""
 
 
+def _before_last_user(messages) -> list:
+    """The history up to and including the PREVIOUS thing the user said.
+
+    Empty when there is none. Everything after it is dropped, so why() on the
+    result reads that earlier request as though it were the latest.
+    """
+    msgs = list(messages or [])
+    seen = 0
+    for i in range(len(msgs) - 1, -1, -1):
+        if (msgs[i] or {}).get("role") == "user":
+            seen += 1
+            if seen == 2:
+                return msgs[:i + 1]
+    return []
+
+
 def why(messages, has_image: bool = False, tools_likely: bool = False) -> tuple:
     """(choice, reason). choice is "fast" or "smart"; reason is for the log."""
     text = (_text_of(messages) or "").strip()
@@ -103,15 +163,55 @@ def why(messages, has_image: bool = False, tools_likely: bool = False) -> tuple:
         return "smart", "%d words" % words
     if HARD.search(text):
         return "smart", "reasoning words"
+    if CORRECTION.search(text):
+        return "smart", "a correction — the last try missed"
+    if HANDS.search(text):
+        return "smart", "working the screen"
     if CLAUSES.search(text):
         return "smart", "more than one clause"
     if text.count("?") > 1:
         return "smart", "more than one question"
+    if words <= 6 and FOLLOW.match(text):
+        before = _before_last_user(messages)
+        if before:
+            # Judged as the request it continues. That one may itself be a
+            # follow-up — "yes", "carry on" — so this walks back until it finds
+            # something with content, bounded by the history the page sends.
+            got, _ = why(before)
+            if got == "smart":
+                return "smart", "carrying on with a harder request"
     if EASY.match(text):
         return "fast", "a standing phrase"
     if words <= 6:
         return "fast", "%d words, nothing hard in it" % words
     return "smart", "not clearly simple"
+
+
+# The tools that mean a turn has turned into hands-on work at the screen. Not
+# open_app or media: "open spotify" really is one call and done.
+SCREEN_TOOLS = frozenset({"screenshot", "mouse_control", "keyboard", "key_macro",
+                          "scroll", "hold_key", "auto_click", "focus_window"})
+
+# A job still going on its third round is a job, however short the sentence
+# that started it. "look at the calendar, then act on it" is two.
+STEP_UP_ROUND = 3
+
+
+def step_up(round_no: int, called) -> str:
+    """Why an Auto turn that started on Haiku should finish on Sonnet, or "".
+
+    why() judges a turn by its first sentence and cannot see where it goes.
+    "sort this out" is three words and may be thirty rounds at the screen. So
+    the question is asked again while the turn runs, from what it is actually
+    DOING — the one thing the words could not tell us. It only ever moves up.
+    Nothing here moves a turn down, and nothing moves it to deep.
+    """
+    hands = sorted(SCREEN_TOOLS.intersection(called or ()))
+    if hands:
+        return "stepped up: it is working the screen (%s)" % hands[0]
+    if round_no >= STEP_UP_ROUND:
+        return "stepped up: round %d, this is a job" % round_no
+    return ""
 
 
 def pick(choice, messages, has_image: bool = False) -> tuple:

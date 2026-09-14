@@ -116,6 +116,61 @@ for t in HARD:
     got, _ = router.why([{"role": "user", "content": t}])
     c("  better %-46s" % t, got, "smart")
 
+print("\nWorking the screen, and being corrected, are not easy:")
+# Short commands with no reasoning words in them, and the hardest thing ARC does.
+# On 11 September 2026 Auto sent them to Haiku: 99 turns, 320 clicks, $10.62 on
+# Haiku against $0.35 on Sonnet. The cheap brain was the expensive one that day.
+HANDS = ["click the search bar", "scroll down", "type hello", "press enter",
+         "go to youtube", "close that window", "log in to my bank"]
+FIXES = ["no, the other one", "that didn't work", "try again", "that's wrong",
+         "wrong button", "it doesn't work"]
+for t in HANDS + FIXES:
+    got, _ = router.why([{"role": "user", "content": t}])
+    c("  better %-46s" % t, got, "smart")
+c("  ...but a bare no is still a standing phrase",
+  router.why([{"role": "user", "content": "no"}])[0], "fast")
+
+print("\nA follow-up is as hard as what it follows:")
+
+
+def convo(*said):
+    out = []
+    for i, t in enumerate(said):
+        out.append({"role": "user", "content": t})
+        if i < len(said) - 1:
+            out.append({"role": "assistant", "content": "Okay."})
+    return out
+
+
+# "carry on" is what ARC itself tells you to say when a job runs out of rounds.
+c("  carry on, after screen work",
+  router.why(convo("fill in the form on this page", "carry on"))[0], "smart")
+c("  yes, after an offer to click",
+  router.why(convo("click the blue button", "yes"))[0], "smart")
+c("  the second one, after a correction",
+  router.why(convo("that didn't work", "the second one"))[0], "smart")
+c("  through a chain of follow-ups",
+  router.why(convo("explain how caching works", "go on", "keep going"))[0], "smart")
+c("  but yes after an easy question stays cheap",
+  router.why(convo("what's the time", "yes"))[0], "fast")
+c("  next, after music, is still the next song",
+  router.why(convo("play something", "next"))[0], "fast")
+c("  and a follow-up with nothing before it is judged as itself",
+  router.why(convo("yes"))[0], "fast")
+
+print("\nA turn that turns into a job steps up while it runs:")
+c("  one simple call stays put", router.step_up(1, ["weather"]), "")
+c("  two rounds is still ordinary", router.step_up(2, ["list_events"]), "")
+c.truthy("  a screenshot steps it up", router.step_up(1, ["screenshot"]))
+c.truthy("  so does a click", router.step_up(1, ["open_app", "mouse_control"]))
+c("  opening an app is one call and done", router.step_up(1, ["open_app"]), "")
+c.truthy("  a third round is a job", router.step_up(3, ["find_files"]))
+_run = io.open(ARC / "run.py", encoding="utf-8").read()
+# Only Auto's OWN choice moves. A person who pinned Fast chose it.
+c.truthy("  only on auto, only from fast",
+         'if auto_used and brain == "fast" and not searched:' in _run)
+c.truthy("  and the Haiku rounds are billed at Haiku's price", "early_spent" in _run)
+
 print("\nAnd it never overrules a person who has chosen:")
 for asked in ("smart", "fast"):
     got, _, auto = router.pick(asked, [{"role": "user", "content": "stop"}])

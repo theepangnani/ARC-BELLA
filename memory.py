@@ -37,13 +37,21 @@ import threading
 import time
 
 import redact
+import storefile
 from pathlib import Path
 
 ROOT = Path(__file__).parent.resolve()
 DATA_DIR = Path(os.getenv("ARC_DATA_DIR") or ROOT).resolve()
 STORE = DATA_DIR / "memory.json"
 
-_lock = threading.RLock()
+# The file's one lock, shared with anything else in the process that writes it.
+# It was a private RLock, which only stopped memory.py interleaving with itself.
+_lock = storefile.lock(STORE)
+
+# Said instead of "Noted." when the file could not be read or written. Before
+# storefile, a failed save was swallowed and the reply still said "Noted." —
+# she promised to remember, forgot, and nobody could tell.
+COULD_NOT = "I couldn't reach my memory just now, so nothing was changed. Try again in a moment."
 
 MAX_FACTS = 200          # per account; was 120 in the browser
 MAX_LEN = 240
@@ -78,21 +86,27 @@ def connected() -> bool:
 # --- storage ----------------------------------------------------------------
 
 def _load() -> dict:
-    try:
-        data = json.loads(STORE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    """Everybody's memory. Raises storefile.Unreadable rather than guess.
+
+    This used to turn ANY failure to read into {} — and on Windows a file being
+    replaced by another thread routinely fails to read. remember() then wrote
+    back a file holding only the current person's facts, and every other
+    account's memory was gone. It is the bug storefile.py was written for, in
+    the one store that had not been moved onto it. Only a missing file is
+    empty; a busy or damaged one stops the write.
+    """
+    data = storefile.read(STORE, empty=dict)
+    if not isinstance(data, dict):
+        # Memory has only ever been {address: [facts]}. A list here is not an
+        # older shape to migrate, it is damage, and not something to write over.
+        raise storefile.Unreadable("memory.json holds a %s, not a dict"
+                                   % type(data).__name__)
+    return data
 
 
 def _save(all_of_it: dict) -> None:
-    try:
-        STORE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STORE.with_name(STORE.name + ".tmp")
-        tmp.write_text(json.dumps(all_of_it, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, STORE)     # atomic, like every other data file here
-    except Exception:
-        pass
+    """Raises OSError if it could not be saved. Callers say so."""
+    storefile.write(STORE, all_of_it)
 
 
 def _mine(all_of_it: dict) -> list:
@@ -101,9 +115,16 @@ def _mine(all_of_it: dict) -> list:
 
 
 def facts(limit: int = 0) -> list:
-    """Newest last, which is the order they should be read in."""
+    """Newest last, which is the order they should be read in.
+
+    A DISPLAY read, so a busy or damaged file shows as nothing rather than
+    failing the turn. Nothing that saves may use it to decide what to write.
+    """
     with _lock:
-        out = _mine(_load())
+        try:
+            out = _mine(_load())
+        except storefile.Unreadable:
+            out = []
     return out[-limit:] if limit else out
 
 
@@ -164,7 +185,10 @@ def remember(fact: str = "", supersede: bool = True) -> str:
     if redact.looks_secret(f):
         return (REFUSED_SECRET + " A password manager is the right place for it.")
     with _lock:
-        all_of_it = _load()
+        try:
+            all_of_it = _load()
+        except storefile.Unreadable:
+            return COULD_NOT
         mine = list(_mine(all_of_it))
         low = f.lower()
         if any((m.get("text") or "").lower() == low for m in mine):
@@ -180,7 +204,10 @@ def remember(fact: str = "", supersede: bool = True) -> str:
                      "text": f, "at": time.time()})
         del mine[:-MAX_FACTS]
         all_of_it[current()] = mine
-        _save(all_of_it)
+        try:
+            _save(all_of_it)
+        except OSError:
+            return COULD_NOT
     if replaced:
         return "Noted, and I've dropped the older version (%s)." % replaced[:60]
     return "Noted."
@@ -191,22 +218,31 @@ def forget(which: str = "") -> str:
     if not w:
         return "Forget what?"
     with _lock:
-        all_of_it = _load()
+        try:
+            all_of_it = _load()
+        except storefile.Unreadable:
+            return COULD_NOT
         mine = _mine(all_of_it)
         if not mine:
             return "I don't know anything about you yet."
         if w in ("all", "everything"):
             n = len(mine)
             all_of_it[current()] = []
+            said = "Forgotten all %d." % n
+        else:
+            keep = [m for m in mine
+                    if m.get("id") != w and w not in (m.get("text") or "").lower()]
+            if len(keep) == len(mine):
+                return "Nothing I know matches '%s'." % which
+            all_of_it[current()] = keep
+            said = "Forgotten %d." % (len(mine) - len(keep))
+        # "Forgotten" when it was not is the worse lie of the two: somebody
+        # asked for a thing to be gone, and it is still sent on every turn.
+        try:
             _save(all_of_it)
-            return "Forgotten all %d." % n
-        keep = [m for m in mine
-                if m.get("id") != w and w not in (m.get("text") or "").lower()]
-        if len(keep) == len(mine):
-            return "Nothing I know matches '%s'." % which
-        all_of_it[current()] = keep
-        _save(all_of_it)
-        return "Forgotten %d." % (len(mine) - len(keep))
+        except OSError:
+            return COULD_NOT
+        return said
 
 
 def import_facts(items) -> int:
