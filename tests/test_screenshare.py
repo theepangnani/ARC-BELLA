@@ -67,6 +67,18 @@ c.truthy("  the button says when it is sharing", '"Live screen: sharing"' in lab
 c.truthy("  starting it says what it means",
          "I can look, " in body and "not click." in body and "Nothing is saved." in body)
 c.truthy("  cancelling the picker is not reported as a fault", "Cancelling the picker is a choice" in body)
+# Chrome's cancel is NotAllowedError "Permission denied", with no word "cancel"
+# in it, so matching on /cancel/ reported every cancel as a failure (Claude 1's
+# review). Only the SYSTEM's refusal of a NotAllowedError is explained.
+c("  ...and is not recognised by the word 'cancel', which Chrome never says",
+  "/cancel|dismiss/" in body, False)
+c.truthy("  the system blocking it is explained", "/system/i.test(e.message" in body)
+# getDisplayMedia can succeed and play() still fail; the stream was not yet
+# sharedStream, so stopScreenShare() could not reach it and the browser's
+# sharing bar stayed up over nothing.
+c.truthy("  a capture that never played is stopped",
+         re.search(r"await video\.play\(\);\s*\}\s*catch \(e\) \{[^}]*stream\.getTracks\(\)\.forEach",
+                   fn("startScreenShare")) is not None)
 
 print("\nA frame rides with each message, the way the camera's does:")
 c.truthy("  in the same image field", "image: pendingCameraImage || sharedScreenFrame()" in body)

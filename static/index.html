@@ -8095,7 +8095,14 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     video.srcObject = stream;
     video.muted = true;
     video.playsInline = true;
-    await video.play();
+    try {
+      await video.play();
+    } catch (e) {
+      // Not yet sharedStream, so stopScreenShare() would not reach it: stop the
+      // capture here or the browser's "sharing" bar stays up over nothing.
+      stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+      throw e;
+    }
     sharedStream = stream;
     sharedVideo = video;
     stream.getVideoTracks().forEach(t => t.addEventListener("ended", () => {
@@ -8171,10 +8178,15 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       } catch (e) {
         stopScreenShare();
         paintLiveScreen();
-        // Cancelling the picker is a choice, not a fault; only a real refusal
-        // needs explaining.
-        if (!(e && e.name === "NotAllowedError" && /cancel|dismiss/i.test(e.message || ""))) {
-          addEntry("sys", "SYSTEM", "Screen sharing didn't start. Allow screen sharing for this site if it asked, then try again.");
+        // Cancelling the picker is a choice, not a fault. Browsers report it as
+        // NotAllowedError ("Permission denied" in Chrome, no word "cancel"), so
+        // only a refusal by the SYSTEM, or any other failure, is explained.
+        const refused = e && e.name === "NotAllowedError";
+        if (refused && /system/i.test(e.message || "")) {
+          addEntry("sys", "SYSTEM", "Your computer blocked screen sharing for this browser. Allow it in the "
+            + "system's privacy settings for screen recording, then try again.");
+        } else if (!refused) {
+          addEntry("sys", "SYSTEM", "Screen sharing didn't start. Try again, or pick a different window.");
         }
         return;
       }
