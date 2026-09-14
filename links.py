@@ -357,9 +357,12 @@ def poll_device(sid: str, handle: str, post=None, bind: str = "") -> str:
         with _pending_lock:
             _pending.pop(handle, None)
         return "The code expired before it was entered. Start again."
-    if time.time() - p["last"] < p["interval"]:
-        return "waiting"
-    p["last"] = time.time()
+    # Checked and stamped under the lock, so two polls for one sign-in (two
+    # tabs, or a double click) cannot both decide it is their turn to ask.
+    with _pending_lock:
+        if time.time() - p["last"] < p["interval"]:
+            return "waiting"
+        p["last"] = time.time()
     s = SERVICES[sid]
     post = post or httpx.post
     r = post(s["token_url"], data={
@@ -371,7 +374,8 @@ def poll_device(sid: str, handle: str, post=None, bind: str = "") -> str:
     if err in ("authorization_pending",):
         return "waiting"
     if err == "slow_down":
-        p["interval"] += 5
+        with _pending_lock:
+            p["interval"] += 5
         return "waiting"
     if err or not d.get("access_token"):
         with _pending_lock:

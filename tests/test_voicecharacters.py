@@ -137,7 +137,7 @@ def run_picker(payload):
     import tempfile
     exe = next((b for b in BROWSERS if b and os.path.isfile(b)), None)
     if not exe:
-        return None
+        return "no browser"
     start = page.index("async function fillVoices(")
     end = page.index("return true;", page.index("function chooseVoice(")) + len("return true;\n  }")
     mod = page[start:end]
@@ -187,10 +187,22 @@ payload = {
     "personas": [{"id": p["id"], "label": p["label"], "gender": p["gender"]}
                  for p in voices.PERSONAS],
 }
-got = run_picker(payload)
-if got is None:
+# Up to three runs. Under the full suite's load a headless Chrome can dump the
+# page before the async probe has written all twelve answers — a flake seen on
+# the laptop, passing alone every time. A run that came back short is tried
+# again; three short runs is a real failure, never a quiet pass (the same
+# treatment Claude 1 gave test_widgets).
+got = None
+for attempt in range(3):
+    got = run_picker(payload)
+    if got == "no browser" or (got and len(got) >= 12):
+        break
+if got == "no browser":
     print("  (no Chrome or Edge here — the browser half is checked where there is one)")
 else:
+    c.truthy("  the browser run finished (took %d tr%s)" % (attempt + 1, "y" if attempt == 0 else "ies"),
+             got and len(got) >= 12)
+    got = got or [""] * 12
     c("  characters first, then this country, then the others",
       got[0], "Characters,English (Canada),English (United Kingdom)")
     c("  'jarvis' picks the butler", got[1:4], ["true", "persona:butler", "true"])
