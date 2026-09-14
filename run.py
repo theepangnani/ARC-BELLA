@@ -434,6 +434,28 @@ def dispatch_tool(name: str, args: dict, local: bool = True,
     return out, failed
 
 
+# Kits that only talk to a web API, so their calls can wait on a worker thread
+# instead of on the event loop. A Slack read that times out ten times over used
+# to stall every other request for minutes, including the poll that rings
+# alarms. An ALLOWLIST: pc and automation drive COM and the desktop, which
+# expect the thread they started on, and a kit added later stays on the loop
+# until someone has checked it is plain HTTP. Linked-account kits (LINK_KITS)
+# count too, looked up at call time because they are listed further down.
+OFF_LOOP_KITS = frozenset({gcal, gmail, gextra, maps, market, youtubeapi, connectors})
+
+
+async def dispatch_off_loop(name: str, args: dict, local: bool = True,
+                            guest: bool = False) -> tuple[str, bool]:
+    """dispatch_tool, run on a thread when the tool's kit is allowed off the
+    loop. The thread gets a copy of this request's context, so whose, memory,
+    the Google token and the lessons record all still point at the right
+    person. dispatch_tool is looked up by name each call so tests can swap it."""
+    kit = TOOL_OWNER.get(name)
+    if kit in OFF_LOOP_KITS or kit in LINK_KITS.values():
+        return await asyncio.to_thread(dispatch_tool, name, args, local=local, guest=guest)
+    return dispatch_tool(name, args, local=local, guest=guest)
+
+
 # --- consent gate ----------------------------------------------------------
 # Tools that only LOOK something up / report — they never change the machine or
 # send anything out, so they're always safe to run. Everything NOT in this set
@@ -2942,8 +2964,8 @@ async def chat(request: Request, _=Depends(require_auth)):
             else:
                 attempt, out, failed = 1, None, True
                 while True:
-                    out, failed = dispatch_tool(call.name, args,
-                                                local=local, guest=guest)
+                    out, failed = await dispatch_off_loop(call.name, args,
+                                                          local=local, guest=guest)
                     # Only a hiccup, and only on a tool that can be done twice
                     # without consequence. See RETRYABLE in retry.py: getting
                     # that wrong sends somebody the same message again.
