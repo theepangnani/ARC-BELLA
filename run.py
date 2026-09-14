@@ -449,11 +449,23 @@ async def dispatch_off_loop(name: str, args: dict, local: bool = True,
     """dispatch_tool, run on a thread when the tool's kit is allowed off the
     loop. The thread gets a copy of this request's context, so whose, memory,
     the Google token and the lessons record all still point at the right
-    person. dispatch_tool is looked up by name each call so tests can swap it."""
+    person. dispatch_tool is looked up by name each call so tests can swap it.
+
+    A tool that raises something its kit didn't expect (a KeyError from an odd
+    JSON shape, say) comes back as a failed result instead of a 500, so the
+    model still gets its tool_result and the person still gets a reply. Only
+    the exception's type goes to the model: its text can carry a request URL or
+    a token. Exception, not BaseException, so a cancelled turn still cancels."""
     kit = TOOL_OWNER.get(name)
-    if kit in OFF_LOOP_KITS or kit in LINK_KITS.values():
-        return await asyncio.to_thread(dispatch_tool, name, args, local=local, guest=guest)
-    return dispatch_tool(name, args, local=local, guest=guest)
+    try:
+        if kit in OFF_LOOP_KITS or kit in LINK_KITS.values():
+            return await asyncio.to_thread(dispatch_tool, name, args, local=local, guest=guest)
+        return dispatch_tool(name, args, local=local, guest=guest)
+    except Exception as e:
+        import traceback
+        print(f"{C_RED}  ! {name} crashed:{C_OFF}")
+        traceback.print_exc()
+        return "%s failed unexpectedly (%s)." % (name, type(e).__name__), True
 
 
 # --- consent gate ----------------------------------------------------------
@@ -2299,7 +2311,9 @@ async def links_poll(sid: str, request: Request, _=Depends(require_auth)):
 @app.post("/api/links/{sid}/unlink")
 async def links_unlink(sid: str, request: Request, _=Depends(require_auth)):
     _link_service(request, sid)
-    return JSONResponse({"ok": True, "removed": links.unlink(sid)})
+    # On a thread: unlinking can revoke the token at the service (and refresh
+    # it first), up to ~14 s of network on a bad day. to_thread carries whose.
+    return JSONResponse({"ok": True, "removed": await asyncio.to_thread(links.unlink, sid)})
 
 
 @app.get("/oauth/link/{sid}/callback")

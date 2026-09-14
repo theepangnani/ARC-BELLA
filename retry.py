@@ -91,6 +91,9 @@ PERMANENT = (
     "isadirectoryerror", "keyerror", "valueerror", "typeerror",
     "attributeerror", "401", "403", "404", "quota exceeded",
     "insufficient permission",
+    # run.dispatch_off_loop's words for a tool that raised: a crash is a bug,
+    # not a hiccup, and doing it again only crashes again.
+    "failed unexpectedly",
 )
 
 TRANSIENT = (

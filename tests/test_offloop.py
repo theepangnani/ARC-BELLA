@@ -128,4 +128,34 @@ s = asyncio.run(turn_with("screenshot", blocking=False))
 c("  ran on the event loop's own thread, as COM needs", s.get("on_loop"), True)
 c("  the turn finished", s.get("chat"), 200)
 
+print("\nA tool that raises something its kit didn't expect:")
+import retry   # noqa: E402
+
+
+def crash(exc):
+    def boom(name, args, **kw):
+        raise exc
+    real = run.dispatch_tool
+    run.dispatch_tool = boom
+    try:
+        return asyncio.run(run.dispatch_off_loop("market_outlook", {})), \
+            asyncio.run(run.dispatch_off_loop("screenshot", {}))
+    finally:
+        run.dispatch_tool = real
+
+
+(off, on) = crash(KeyError("token=sekrit"))
+c("  off the loop it comes back as a failed result", off, ("market_outlook failed unexpectedly (KeyError).", True))
+c("  on the loop too", on, ("screenshot failed unexpectedly (KeyError).", True))
+c("  the exception's text never reaches the model", "sekrit" in off[0] or "sekrit" in on[0], False)
+(off, _) = crash(TimeoutError("slow"))
+c("  and a crash is never retried, even one named like a hiccup",
+  retry.may_retry("weather", "weather failed unexpectedly (TimeoutError).", True), False)
+cancelled = False
+try:
+    crash(asyncio.CancelledError())
+except asyncio.CancelledError:
+    cancelled = True
+c("  a cancelled turn still cancels", cancelled, True)
+
 c.done()
