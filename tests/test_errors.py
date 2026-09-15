@@ -140,8 +140,11 @@ c("  no site still forwards the raw message",
 # chat()'s handler books what the turn had already spent before raising (Claude
 # 4's cost audit, tests/test_costbooking.py), so one book(error=True) line may
 # sit between the except and the raise. Still the mapper, still both sites.
+# The note route frees a guest's in-flight slot the same way (Claude 2, guest
+# budgets), so _guest_booked(note_guest, 0.0) is the other line allowed there.
 c("  both APIStatusError handlers use the mapper",
-  len(re.findall(r"except anthropic\.APIStatusError as e:\s*\n(?:\s*book\(error=True\)\s*\n)?"
+  len(re.findall(r"except anthropic\.APIStatusError as e:\s*\n"
+                 r"(?:\s*(?:book\(error=True\)|_guest_booked\(note_guest, 0\.0\))\s*\n)?"
                  r"\s*raise _claude_error\(e\)", src)), 2)
 c.truthy("  and the detail is still logged in full for whoever is debugging",
          'print(f"{C_RED}  ! anthropic {status}' in src)

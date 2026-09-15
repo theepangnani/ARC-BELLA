@@ -132,8 +132,14 @@ _PRIVATE_EXT = {".pem", ".key", ".p12", ".pfx", ".kdbx", ".keychain", ".ppk",
 # ARC's own token stores, wherever ARC_FILE_ROOTS happens to reach: every
 # signed-in Google session and every linked account. Only reachable if the
 # roots were widened over the data folder, which is exactly when it matters.
+#
+# Both places a data folder can be: ARC_DATA_DIR, and the code folder, which is
+# the data folder when it is unset. run.py copies .env into the environment
+# before importing this, but a kit imported on its own (a test, a script) sees
+# only the real environment, so the code folder is covered either way.
 _ARC_DATA = Path(os.getenv("ARC_DATA_DIR") or Path(__file__).parent)
-_TOKEN_DIRS = [(_ARC_DATA / d) for d in ("google_sessions", "links", "backups")]
+_TOKEN_DIRS = [(base / d) for base in dict.fromkeys((_ARC_DATA, Path(__file__).parent))
+               for d in ("google_sessions", "links", "backups")]
 
 
 def _private(p: Path) -> bool:

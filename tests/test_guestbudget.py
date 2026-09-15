@@ -157,6 +157,26 @@ try:
         c("  nothing charged", run._guest_day["spend"][GUEST], 0.0)
         c("  and not in flight", len(run._guest_day["pending"][GUEST]), 0)
 
+        print("\nA request that stops before the model holds no slot:")
+        fresh()
+        r = client.post("/api/chat", cookies=G, json=dict(BODY, system="x" * (run.MAX_SYSTEM_CHARS + 1)))
+        c("  a refused payload (system too long)", r.status_code, 400)
+        c("  ...is not left in flight", len(run._guest_day["pending"][GUEST]), 0)
+        r = client.post("/api/summarize", cookies=G, json={"note": "", "messages": []})
+        c("  a note with nothing to fold in", r.status_code, 200)
+        c("  ...is not left in flight", len(run._guest_day["pending"][GUEST]), 0)
+        mode["fail"] = True
+        r = client.post("/api/summarize", cookies=G, json={
+            "note": "", "messages": [{"role": "user", "content": "hi"}]})
+        c("  a note whose model call fails", r.status_code, 502)
+        c("  ...is not left in flight either", len(run._guest_day["pending"][GUEST]), 0)
+        mode["fail"] = False
+        r = client.post("/api/summarize", cookies=G, json={
+            "note": "", "messages": [{"role": "user", "content": "hi"}]})
+        c("  a note that is written is charged to the guest",
+          (r.status_code, run._guest_day["spend"][GUEST] > 0, len(run._guest_day["pending"][GUEST])),
+          (200, True, 0))
+
         print("\nA new day:")
         fresh()
         run._guest_day["spend"][GUEST] = 99.0

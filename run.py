@@ -1924,7 +1924,6 @@ def check_rate(request: Request):
     _day["count"] += 1
     if who:
         _guest_day["turns"][who] += 1
-        _guest_day["pending"][who].append(now)
 
 
 # Guests have their own budget, inside the deployment's. The caps above are one
@@ -1973,6 +1972,16 @@ def _guest_check(who: str, now: float) -> None:
         raise HTTPException(429, "Guest accounts have used today's allowance. It resets tomorrow.")
     if sum(g["turns"].values()) >= DAILY_CAP * GUEST_SHARE:
         raise HTTPException(429, "Guest accounts have used today's questions. It resets tomorrow.")
+
+
+def _guest_started(who: str) -> None:
+    """A guest's turn is about to call the model: in flight from here until
+    _guest_booked. Marked here rather than in check_rate, because a request
+    that stops before any model call (a bad payload, a note with nothing to
+    fold in) never books, and used to hold one of the guest's two slots for
+    GUEST_PENDING_SECONDS (Claude 4's audit)."""
+    if who:
+        _guest_day["pending"][who].append(time.time())
 
 
 def _guest_booked(who: str, cost: float) -> None:
@@ -3256,6 +3265,7 @@ async def chat(request: Request, _=Depends(require_auth)):
             # A turn that failed is counted in "errors", not as a turn answered.
             turn=not error, refusal=(reply == "I can't help with that one, sir."))
 
+    _guest_started(guest_who)
     for _ in range(rounds):
         used_rounds += 1
         kwargs = dict(
@@ -3571,6 +3581,8 @@ async def summarize(request: Request, _=Depends(require_auth)):
     user_msg = f"PREVIOUS NOTE:\n{note or '(none yet)'}\n\nRECENT CONVERSATION:\n{transcript}"
 
     claude = request.app.state.claude
+    note_guest = _guest_key(request)
+    _guest_started(note_guest)
     try:
         # Same rule as the chat route, and for the same reason — this one is
         # hardcoded to MODEL, so setting ARC_MODEL to an Opus id would otherwise
@@ -3588,11 +3600,16 @@ async def summarize(request: Request, _=Depends(require_auth)):
             messages=[{"role": "user", "content": user_msg}],
             thinking=think,
         )
+    # A failed note had nothing come back to charge; each branch frees the
+    # guest's slot before the error goes out.
     except anthropic.APIConnectionError as e:
+        _guest_booked(note_guest, 0.0)
         raise HTTPException(502, f"Could not reach the Anthropic API: {e}")
     except anthropic.RateLimitError:
+        _guest_booked(note_guest, 0.0)
         raise HTTPException(429, "Rate limited by the Anthropic API.")
     except anthropic.APIStatusError as e:
+        _guest_booked(note_guest, 0.0)
         raise _claude_error(e)
 
     u = resp.usage
@@ -3606,7 +3623,7 @@ async def summarize(request: Request, _=Depends(require_auth)):
     # invisibly and never counts towards the cap.
     note_cost = turn_cost(MODEL, s_in, s_out)
     _day["cost"] += note_cost
-    _guest_booked(_guest_key(request), note_cost)
+    _guest_booked(note_guest, note_cost)
     # And on disk, for Arc Watch: it reached the daily cap but never usage.json,
     # so the spend Arc Watch showed was short by every note ever written
     # (Claude 4's cost audit). Not a turn — nobody asked anything.
