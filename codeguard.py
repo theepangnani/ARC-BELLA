@@ -181,6 +181,16 @@ def _folder_names() -> list:
     return [n for n in names if len(n) > 2]
 
 
+def _subfolder_names() -> set:
+    """The name of every folder inside this one, the skipped ones included
+    (.git, backups): Explorer can show those as well as anything else."""
+    names = set()
+    for dirpath, dirnames, _ in os.walk(ROOT):
+        names.update(d.lower() for d in dirnames)
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+    return {n for n in names if n}
+
+
 def _names() -> set:
     """The distinctive names a command or a window title would use for this
     code: every locked file's name, and this folder's own path and name."""
@@ -404,6 +414,14 @@ def check_window(title: str, exe: str = "", typing: bool = True):
     segments |= {s.lstrip("●*• ").strip() for s in segments}
     if any(n in segments for n in _folder_names()) or "arc-bella" in segments:
         return f"{LAW} — the window in front has ARC's code open."
+    # Explorer titles a window with the folder's own name and nothing else, so
+    # "tests" or "static" is ARC's subfolder as far as anything outside can
+    # tell, and a double-click there opens a .py or a .bat (Claude 4's audit:
+    # only the root's name was refused). Any folder inside ARC counts. A
+    # stranger's folder called "docs" is refused too; clicking elsewhere, the
+    # taskbar and the desktop, is not.
+    if e in _TYPE_ONLY and any(n in segments for n in _subfolder_names()):
+        return f"{LAW} — the window in front may be one of ARC's own folders."
     # "README.md - Notepad" is any project's readme; a title that is really
     # ours also names the folder, and was refused just above.
     hit = sorted(n for n in _names() if n in segments and n not in _GENERIC_TITLE)

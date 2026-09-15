@@ -371,6 +371,14 @@ for title in ("", "Program Manager", "Downloads"):
 under.update(title=root, exe="explorer.exe")
 c.truthy("  but not on an Explorer window showing this folder",
          codeguard.LAW in (pc.input_refusal((100, 100)) or ""))
+# Explorer's title is only the folder's name, so ARC's own subfolders have to
+# be refused by name: a double-click in "tests" opens a .py (Claude 4's audit).
+for title in ("tests", "static", "prompts - File Explorer", ".github"):
+    under.update(title=title, exe="explorer.exe")
+    c.truthy("  nor on Explorer showing ARC's %s" % title.split(" - ")[0],
+             codeguard.LAW in (pc.input_refusal((100, 100)) or ""))
+c("  ...a folder name only counts in Explorer",
+  codeguard.check_window("tests - Notepad", "notepad.exe", typing=False), None)
 
 print("\nOpening a Python file is running it, so it is refused like any script:")
 opened = []
