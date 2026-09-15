@@ -40,6 +40,27 @@ app…*) and it behaves like any installed app. Because the microphone needs rea
 Chrome/Edge, this stays a Chromium app rather than a bundled Electron `.exe`
 (which would break voice).
 
+### Mini Bella
+
+Minimise Bella's window and a small circle with her logo sits in the
+bottom-right corner of the screen, just above the taskbar. It's for a question
+you'd rather type than say — in a meeting, on a call, late at night.
+
+| Do this | And |
+|---|---|
+| **Click** the circle | A small chat box opens beside it. Type, press Enter, and the answer appears underneath |
+| **Right-click** the circle | Bella's full window comes back |
+
+The chat box answers the same way Bella does, through the same "ask before
+acting" rule, but it is deliberately small: typing only, no microphone, and it
+never remembers facts, sets timers or draws boards — for those, right-click
+the circle and use full Bella. The circle only shows while her window is
+minimised, and only one runs at a time.
+
+It starts with the private Bella (`launch-bella-private.ps1`) only, since the
+circle is for your own Bella and not the shared one guests reach. Put
+`ARC_MINI_BELLA=off` in `arc.env` if you'd rather not have it.
+
 ### On a second machine
 
 ```
@@ -132,6 +153,13 @@ icon and a full-screen window just like an installed app. Two ways:
   rest still run there.
 
 Sign-in is Google either way, so nothing is exposed by the URL alone.
+
+**If the phone shows "421"**, ARC doesn't recognise the address the phone used
+to reach it — it only answers to names it knows, which is what stops another
+website from talking to your ARC through your own browser. Add that name to
+`ARC_ALLOWED_HOSTS` in `.env` (comma-separated, e.g. your tunnel's `…ts.net`
+name) and restart. A plain `http://<PC-IP>:8420` address on your Wi-Fi and a
+Cloudflare quick tunnel are recognised on their own.
 
 ---
 
@@ -471,6 +499,34 @@ No setup — both work out of the box.
 - **To-do list** — *"add renew passport to my list"*, *"what's on my list?"*,
   *"tick off the sunscreen."* Kept in `todos.json` on your machine. Distinct
   from memory: the list is tasks to tick off, memory is durable facts.
+
+## Asking before acting
+
+With **Ask before acting** on (the default), Bella looks things up freely but
+asks before she *does* anything — clicks, types, opens, sends, sets, deletes.
+
+**A yes is for the thing she asked about.** When she wants to act, the
+transcript says exactly what: *"Awaiting your go-ahead before I act: keyboard
+{"text": "hello"}. Say "yes" to allow just that."* Your yes lets that action
+run once, and more of the **same kind** for the rest of that reply — so "fill
+in this form" doesn't need a yes for every click and keystroke. Anything of a
+different kind still needs its own yes: running a command, sending, deleting,
+setting up a standing rule. A yes also only counts from the browser where you
+gave it, and only for five minutes.
+
+Before, one yes let her do anything for the rest of the reply, including
+things you were never shown — the opening a web page or an email could use to
+steer her. Running a shell command is the clearest case: preparing one needs
+no yes, and the yes you give to run it shows the command's own text.
+
+**After she has read something from outside** — a web page, an email, a linked
+account — anything in that reply that would set an alarm, start or cancel a
+timer, or change your stock watchlist appears as a **Do it / Skip** card
+instead of just happening. Nothing you didn't write gets to change your
+morning.
+
+Turn **Ask before acting** off and she acts without asking, as before. That's
+your switch.
 
 ## Computer control
 
@@ -1048,8 +1104,11 @@ passphrase any more.
 | `ARC_ALARM_KEEPS_SESSION` | `1` | While an alarm is set, its poll counts as use so the tab is still signed in when the alarm goes off. `0` = strict idle timeout, and alarms reach the phone only. |
 | `ARC_PUBLIC_URL` | *(empty)* | The origin Google redirects back to. Pin it on anything public. |
 | `ARC_ALLOWED_HOSTS` | *(empty)* | Extra host names this server answers to, comma-separated (the funnel's `…ts.net` name when `ARC_PUBLIC_URL` is left empty). Loopback at the listening port and `ARC_PUBLIC_URL`'s host are always allowed; any other Host is refused with 421. |
+| `ARC_GUEST_DAILY_COST` | `1.0` | Dollars each guest may spend per day. Guests together never get more than half of `ARC_DAILY_COST_CAP`. `0` = no per-guest limit. |
+| `ARC_GUEST_DAILY_TURNS` | `150` | Replies each guest may have per day, and together at most half of `ARC_DAILY_CAP`. `0` = no per-guest limit. |
 | `ARC_SECRET` | *(random)* | Signs the short-lived sign-in cookie. Set it, or a restart mid-sign-in fails. |
 | `ARC_AUTH_MODE` | `google` | `open` disables sign-in entirely, and is refused unless the bind is loopback. |
+| `ARC_STREAM` | *(off)* | `1` streams replies: the words arrive as they're written, so Bella starts speaking the first sentence sooner. A server without it answers the ordinary way, and the page falls back on its own. |
 | `ARC_SECURITY_HEADERS` | `1` | CSP, nosniff, frame denial, referrer and permissions policy on every response; HSTS when the request came over HTTPS. `0` turns the lot off, which is the escape hatch if a policy ever breaks the page. |
 
 **Staying signed in.** ARC works like logging off rather than like a parking
@@ -1181,6 +1240,14 @@ Three things enforce it, because one wasn't enough:
 - the REST routes that touch your data directly — `/api/reminders/due`,
   `/api/alerts/due`, `/api/push/test`, `/api/display` — return 403
 
+**A guest has their own budget** inside yours: $1 and 150 turns a day each,
+two replies running at once, and all guests together at most half of the day's
+spending cap and turn limit. The rest of the day is yours, so a busy guest can't
+use up the allowance and lock you out. Change the per-guest numbers with
+`ARC_GUEST_DAILY_COST` and `ARC_GUEST_DAILY_TURNS` (`0` means no per-guest
+limit). The half-share is checked before each reply starts, so guests together
+can run a little past it with replies already under way.
+
 The list is **default-deny**: a tool added later is refused to guests until
 someone puts it in `GUEST_TOOLS` on purpose. ARC is also told it's on a guest
 account, so it says "that's off on a guest account" rather than offering
@@ -1232,5 +1299,6 @@ client, which matters the moment this stops being localhost.
   [gcal.py](gcal.py). Gmail and Home Assistant's REST API are the shortest next
   steps. Instagram is not: Meta's API covers Business accounts only, and never
   a personal feed or DMs.
-- **Streaming** — switch `/api/chat` to SSE and start speaking the first
-  sentence before the rest arrives. Biggest perceived-latency win available.
+- **Streaming on by default** — it's built: with `ARC_STREAM=1` the reply's
+  words arrive as they're written and the first sentence starts speaking before
+  the rest is done. It ships off; making it the default is the next step.
