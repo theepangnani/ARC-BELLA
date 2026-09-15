@@ -55,3 +55,7 @@ jobs:
       # points anywhere that looks like real data.
       - name: Tests
         run: python tests/run_all.py
+        env:
+          # windows-latest's console is cp1252; the suites print arrows and ⏎.
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"

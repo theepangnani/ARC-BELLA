@@ -29,7 +29,17 @@ SUITES = sorted(p.name for p in TESTS.glob("test_*.py"))
 
 
 def main(argv):
-    picked = [s for s in SUITES if not argv or any(a in s for a in argv)]
+    # The children were told to speak UTF-8 (below); this process was not. On a
+    # console or runner still on cp1252 it printed PASS lines happily and then
+    # died with UnicodeEncodeError on the first failing suite's output (a ⏎ in
+    # test_codelock's) — so CI went red for 40 runs saying only "encoding", and
+    # the failure it was trying to show was never seen.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    picked =[s for s in SUITES if not argv or any(a in s for a in argv)]
     if not picked:
         print("nothing matched %r; have: %s" % (argv, ", ".join(SUITES)))
         return 2
