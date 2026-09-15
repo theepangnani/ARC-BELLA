@@ -52,6 +52,10 @@ SHORT = 12
 # "fix this bug" is debugging, and "help me with my homework" is reasoning
 # however few words it takes. And taken back out, as nouns: "my plan for today"
 # is reading the plan store, and "the area code" is not programming.
+#
+# Teaching is aimed at someone: "teach me", "tutor my son". A bare "teach" put
+# "remind me to teach the kids piano at 5" on Sonnet, and that is a reminder.
+# "reschedule" and "rearrange" move more than one thing, and have to find them.
 HARD = re.compile(r"""
     \b(why|how\s+come|how\s+does|how\s+do\s+(i|you|we)|how\s+can\s+i|
        explain|compare|versus|vs|trade[- ]?off|
@@ -61,7 +65,8 @@ HARD = re.compile(r"""
        (?<!area\s)(?<!zip\s)(?<!postal\s)(?<!post\s)(?<!dress\s)code|
        script|function|error|exception|stack\s*trace|regex|
        summari[sz]e|draft|write\s+me|rewrite|translate|homework|help\s+me\s+with|
-       teach|tutor|walk\s+me\s+through|quiz\s+me|
+       teach\s+(me|us|my|him|her|them)|tutor\s+(me|us|my|him|her|them)|
+       walk\s+me\s+through|quiz\s+me|reschedule|rearrange|
        pros?\s+and\s+cons?|should\s+i|worth\s+it|what\s+if)\b
 """, re.I | re.X)
 
@@ -83,7 +88,8 @@ HARD = re.compile(r"""
 #
 # From the route corpus as well: "find the settings icon" and "tick the
 # checkbox" are clicks by other names, while "time to go to bed", "field
-# hockey" and "the window cleaner" are nothing to do with a screen.
+# hockey" and "the window cleaner" are nothing to do with a screen. A popup, a
+# dialog and "the other monitor" are screen work by their names alone.
 HANDS = re.compile(r"""
     \b(click|double[- ]?click|right[- ]?click|tap\s+on|scroll|drag|
        type(?!\s+of\b)|press(?!\s+(release|conference)\b)|
@@ -91,7 +97,7 @@ HANDS = re.compile(r"""
        go\s+to(?!\s+(bed|sleep|work|school|church|the\s+gym)\b)|
        navigate|download|upload|install|(?<!hard\s)copy|paste|
        find\s+the(?!\s+(nearest|closest|best|cheapest|time|lyrics|address|number)\b)|
-       icon|checkbox|check\s*box|
+       icon|checkbox|check\s*box|pop-?up|dialog|other\s+(monitor|screen)|
        button|tab|field(?!\s+(hockey|trip)\b)|menu|window(?!\s+(cleaner|seat|sill)\b)|
        (on|at)\s+(my|the|this)\s+screen|this\s+page|that\s+page)\b
 """, re.I | re.X)
@@ -106,7 +112,7 @@ CORRECTION = re.compile(r"""
     |\b(that'?s|you'?re|you\s+got\s+it|still)\s+(wrong|not\s+(it|right|what))\b
     |\b(didn'?t|doesn'?t|did\s+not|does\s+not|isn'?t|still\s+not)\s+work
     |\b(it'?s|that'?s|it\s+is|still)\s+(still\s+)?broken\b
-    |\b(try\s+again|not\s+that\s+one|wrong\s+(one|window|button|thing)|you\s+missed)\b
+    |\b(try\s+again|not\s+that\s+one|wrong\s+(one|window|button|thing)|you\s+missed|not\s+quite)\b
 """, re.I | re.X)
 
 # Carrying on with whatever came before. These say nothing about difficulty on
@@ -122,7 +128,7 @@ CORRECTION = re.compile(r"""
 _FOLLOW_WORD = r"""
     (yes|yeah|yep|yup|sure|ok(ay)?|please|go\s+(on|ahead)|do\s+it|do\s+that|
      carry\s+on|continue|keep\s+going|proceed|next|and\s+then|
-     (the\s+)?(first|second|third|last|other|top|bottom)(\s+one)?|that\s+one|this\s+one|
+     (the\s+)?(first|second|third|last|other|top|bottom)(\s+(one|option|way|version))?|that\s+one|this\s+one|
      same\s+again|again|one\s+more|more)
 """
 FOLLOW = re.compile(r"^\s*(?:" + _FOLLOW_WORD + r"\b[\s,.!]*){1,3}$", re.I | re.X)
@@ -134,13 +140,16 @@ FOLLOW = re.compile(r"^\s*(?:" + _FOLLOW_WORD + r"\b[\s,.!]*){1,3}$", re.I | re.
 # like FOLLOW does, so "make it 15" after a timer stays on the cheap brain.
 #
 # A leading "and", "then" or "ok" is still an edit ("and add logging"). "put on"
-# is play, not an edit. And an edit aimed at one of the person's own lists is a
+# is play, not an edit. "what about the second one", "now do it in python" and
+# "can you show me an example" are the same kind of turn in question form.
+# And an edit aimed at one of the person's own lists is a
 # new easy request that happens to start with the same verb: "add milk to my
 # shopping list" after a hard question is a to-do, not a change to the answer.
 EDIT = re.compile(r"""
     ^\s*((and|then|also|ok(ay)?|so)[\s,]+)?
     (make|change|move|add|remove|drop|swap|switch|put(?!\s+on\b)|use|rename|
-     shorten|lengthen|simplify|instead|actually|but)\b
+     shorten|lengthen|simplify|instead|actually|but|now|(what|how)\s+about|show\s+me|
+     (can|could)\s+you\s+(show|give)\s+me|give\s+me\s+(an?\s+)?(example|another))\b
 """, re.I | re.X)
 OWN_LISTS = re.compile(r"\b(my\s+(shopping\s+|grocery\s+|to-?do\s+)?list|to-?do|my\s+notes?|"
                        r"my\s+calendar|a\s+reminder|shopping\s+list)\b", re.I)
@@ -148,10 +157,17 @@ OWN_LISTS = re.compile(r"\b(my\s+(shopping\s+|grocery\s+|to-?do\s+)?list|to-?do|
 
 # Multi-clause questions, which are almost never simple lookups.
 CLAUSES = re.compile(r"\b(and\s+then|after\s+that|also|as\s+well\s+as|but\s+if|"
-                     r"instead\s+of|rather\s+than|unless|whereas)\b", re.I)
+                     r"instead\s+of|rather\s+than|unless|whereas)\b"
+                     r"|^\s*(open|launch|go\s+to)\b.*\band\s+(search|type|find|look\s+up|sign|log|fill)\b", re.I)
 
-# Things that ARE simple, however they are phrased. Checked before HARD so that
-# "what's the weather and what time is it" does not get promoted by "and".
+# Things that ARE simple, however they are phrased. Checked last, after HARD,
+# CORRECTION, HANDS and CLAUSES, so it never pulls a harder request down; what
+# it does is catch these before the length rule sends them to Sonnet. "and" is
+# not in CLAUSES, so "what's the weather and what time is it" stays here.
+#
+# The person's own stores, however many words: a memory, an alarm or timer
+# changed, a price alert, a currency sum, a lunch in the calendar. Seven or
+# eight words each, and every one went to Sonnet as "not clearly simple".
 EASY = re.compile(r"""
     ^\s*(hi|hello|hey|thanks?|thank\s+you|cheers|ok|okay|stop|cancel|never\s*mind|
         yes|no|yep|nope|sure|goodnight|good\s+morning|good\s+evening)\b
@@ -161,6 +177,11 @@ EASY = re.compile(r"""
     |^\s*(play|pause|resume|skip|next|louder|quieter|volume|mute|unmute)\b
     |^\s*(set\s+(an?\s+)?(timer|alarm)|remind\s+me)\b
     |^\s*(open|launch|close)\s+\w+\s*$
+    |^\s*(remember|forget|wake\s+me|alert\s+me)\b
+    |^\s*(start|stop|cancel|snooze|move|delete|pause)\s+(an?\s+|my\s+|the\s+)?(\w+\s+)?(timer|alarm|reminder)s?\b
+    |^.*\b(left|remaining)\s+on\s+(the|my)\s+timer\b
+    |^\s*how\s+much\s+is\s+(an?|one|\d+(\.\d+)?)\s+\w+\s+in\s+\w+\s*\??\s*$
+    |^\s*(add|book|schedule)\s+(an?\s+)?(lunch|dinner|coffee|breakfast|meeting|call|appointment)\b
 """, re.I | re.X)
 
 
