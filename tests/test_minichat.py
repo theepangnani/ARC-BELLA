@@ -53,6 +53,8 @@ c("  one inline script, and no script loaded from anywhere", (len(SCRIPT), "<scr
 c("  nothing is ever written as markup",
   [w for w in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write") if w in PAGE], [])
 c("  no inline event handlers", re.findall(r"\son[a-z]+\s*=", PAGE), [])
+c.truthy("  it doesn't load a squashed second Bella into its own small window",
+         'href="/"' not in PAGE and "right-click the circle" in PAGE)
 c.truthy("  it never sets allow_actions to true outright",
          "allow_actions: authorize" in SCRIPT[0] and not re.search(r"allow_actions\s*:\s*true", SCRIPT[0]))
 c("  and it never calls the routes a directive would",
