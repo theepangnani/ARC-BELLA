@@ -15,6 +15,8 @@ midnight. What this holds:
   · a turn that ends, or fails, is taken off the in-flight count and charged
   · the owner is never in the guest pool
 """
+import asyncio
+import inspect
 import os
 import sys
 import time
@@ -201,6 +203,144 @@ try:
         c("  a note that is written is charged to the guest",
           (r.status_code, run._guest_day["spend"][GUEST] > 0, len(run._guest_day["pending"][GUEST])),
           (200, True, 0))
+
+        print("\nA burst of requests cannot run more than two at once:")
+        # The slot used to be taken after the body was read, so every request in
+        # a burst passed the check before any of them held a slot (Claude 6's
+        # review). read_json is made to yield here, as a slow upload would, so
+        # the old order lets all twelve through and this one does not.
+        fresh()
+        real_read, real_claude = run.read_json, run.app.state.claude
+
+        async def slow_read(request):
+            await asyncio.sleep(0)
+            return await real_read(request)
+
+        async def burst():
+            gate, seen = asyncio.Event(), {"now": 0, "most": 0, "calls": 0}
+
+            class Held:
+                class messages:
+                    @staticmethod
+                    async def create(**kw):
+                        seen["now"] += 1
+                        seen["calls"] += 1
+                        seen["most"] = max(seen["most"], seen["now"])
+                        await gate.wait()
+                        seen["now"] -= 1
+                        return Resp(10)
+
+            run.app.state.claude = Held()
+            transport = httpx.ASGITransport(app=run.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as cl:
+                guests = [asyncio.create_task(cl.post("/api/chat", cookies=G, json=BODY))
+                          for _ in range(12)]
+                for _ in range(50):
+                    await asyncio.sleep(0.01)
+                owner = asyncio.create_task(cl.post("/api/chat", cookies=O, json=BODY))
+                for _ in range(20):
+                    await asyncio.sleep(0.01)
+                gate.set()
+                return [r.status_code for r in await asyncio.gather(*guests)], (await owner).status_code, seen
+
+        run.read_json = slow_read
+        try:
+            codes, owner_code, seen = asyncio.run(burst())
+        finally:
+            run.read_json, run.app.state.claude = real_read, real_claude
+        c("  twelve at once: two answered", codes.count(200), 2)
+        c("  ...and ten told to wait", codes.count(429), 10)
+        c("  the model saw at most two of them", seen["calls"] - 1, 2)   # one is the owner's
+        c("  the owner is answered in the middle of it", owner_code, 200)
+        c("  and afterwards nothing is left in flight", len(run._guest_day["pending"][GUEST]), 0)
+
+        print("\nA turn that breaks between the model and the booking still books and frees:")
+        # Anything raised after a round came back used to skip book() entirely:
+        # the slot stayed held and the round's cost reached no meter.
+        class Broken:
+            def __init__(self, n):
+                self.content, self.usage = [Blk()], Usage(n)
+
+            @property
+            def stop_reason(self):
+                raise self.error
+
+        def breaking(error):
+            class Fake2:
+                class messages:
+                    @staticmethod
+                    async def create(**kw):
+                        r = Broken(1000)
+                        r.error = error
+                        return r
+            return Fake2()
+
+        fresh()
+        run.app.state.claude = breaking(RuntimeError("our own bug"))
+        before = run._day["cost"]
+        try:
+            try:
+                client.post("/api/chat", cookies=G, json=BODY)
+            except RuntimeError:
+                pass                     # TestClient re-raises the server's error
+        finally:
+            run.app.state.claude = real_claude
+        c("  an error of our own: the slot is given back", len(run._guest_day["pending"][GUEST]), 0)
+        c.truthy("  ...and the round it had paid for is charged to the guest",
+                 run._guest_day["spend"][GUEST] > 0)
+        c.truthy("  ...and to the day", run._day["cost"] > before)
+
+        fresh()
+
+        async def cancelled():
+            run.app.state.claude = breaking(asyncio.CancelledError())
+            transport = httpx.ASGITransport(app=run.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as cl:
+                try:
+                    await cl.post("/api/chat", cookies=G, json=BODY)
+                except BaseException:
+                    pass
+
+        try:
+            asyncio.run(cancelled())
+        except BaseException:
+            pass
+        finally:
+            run.app.state.claude = real_claude
+        c("  a cancel (the client went away): the slot is given back",
+          len(run._guest_day["pending"][GUEST]), 0)
+        c.truthy("  ...and what was spent is still charged", run._guest_day["spend"][GUEST] > 0)
+
+        fresh()
+
+        class NoteBreaks:
+            class messages:
+                @staticmethod
+                async def create(**kw):
+                    raise ValueError("not one of the Anthropic errors")
+
+        run.app.state.claude = NoteBreaks()
+        try:
+            try:
+                client.post("/api/summarize", cookies=G, json={
+                    "note": "", "messages": [{"role": "user", "content": "hi"}]})
+            except ValueError:
+                pass
+        finally:
+            run.app.state.claude = real_claude
+        c("  a note that fails some other way gives its slot back too",
+          len(run._guest_day["pending"][GUEST]), 0)
+
+        print("\nWhere the slot is taken and given back:")
+        c.truthy("  in check_rate, which has no await in it",
+                 "request.state.guest_slot" in inspect.getsource(run.check_rate)
+                 and "await" not in inspect.getsource(run.check_rate))
+        c.truthy("  given back in chat()'s finally",
+                 "finally:" in inspect.getsource(run.chat)
+                 and "_guest_release(request)" in inspect.getsource(run.chat))
+        c.truthy("  ...and summarize()'s", "_guest_release(request)" in inspect.getsource(run.summarize))
+        c.truthy("  ...and by the stream when its body never arrives",
+                 "except BaseException:" in inspect.getsource(run.chat_stream))
 
         print("\nA new day:")
         fresh()

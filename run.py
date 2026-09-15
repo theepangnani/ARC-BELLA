@@ -1931,6 +1931,15 @@ def check_rate(request: Request):
     _day["count"] += 1
     if who:
         _guest_day["turns"][who] += 1
+        # The guest's slot is taken HERE, in the same step as the check, with
+        # nothing between them that yields. It used to be taken after the body was
+        # read, so twelve requests sent at once all found the queue empty and
+        # all ran (Claude 6's review). The route gives it back in a finally; see
+        # _guest_release.
+        stamp = time.time()
+        pending = _guest_day["pending"][who]
+        pending.append(stamp)
+        request.state.guest_slot = (who, stamp, pending)
 
 
 # Guests have their own budget, inside the deployment's. The caps above are one
@@ -1991,25 +2000,30 @@ def _guest_check(who: str, now: float) -> None:
         raise HTTPException(429, "Guest accounts have used today's questions. It resets tomorrow.")
 
 
-def _guest_started(who: str) -> None:
-    """A guest's turn is about to call the model: in flight from here until
-    _guest_booked. Marked here rather than in check_rate, because a request
-    that stops before any model call (a bad payload, a note with nothing to
-    fold in) never books, and used to hold one of the guest's two slots for
-    GUEST_PENDING_SECONDS (Claude 4's audit)."""
-    if who:
-        _guest_day["pending"][who].append(time.time())
+def _guest_release(request, cost: float = 0.0) -> None:
+    """Give back the slot check_rate took for this request, charging `cost`.
 
+    Once per request: the first call charges and frees, and any later one does
+    nothing. So a turn that books its cost and then leaves through a finally is
+    charged once, and a request that stops before the model (a bad payload, a
+    note with nothing to fold in, a cancel) frees its slot at no cost instead
+    of holding it for GUEST_PENDING_SECONDS (Claude 4's audit).
 
-def _guest_booked(who: str, cost: float) -> None:
-    """A guest's turn (or note) has been paid for: on their meter, and no
-    longer in flight."""
-    if not who:
+    It removes THIS request's own entry, not the oldest one. popleft() took
+    whichever turn started first, so a turn older than GUEST_PENDING_SECONDS
+    that had already aged out took a newer turn's slot with it when it booked,
+    and the guest had a third turn running."""
+    state = getattr(request, "state", None)
+    slot = getattr(state, "guest_slot", None)
+    if not slot:
         return
+    state.guest_slot = None
+    who, stamp, pending = slot
     _guest_day["spend"][who] += cost
-    q = _guest_day["pending"][who]
-    if q:
-        q.popleft()
+    try:
+        pending.remove(stamp)
+    except ValueError:
+        pass                        # aged out already; nothing left to free
 
 
 # Failed sign-ins, counted globally as well as per-IP. Per-IP alone was the
@@ -2838,7 +2852,13 @@ async def chat_stream(request: Request, _=Depends(require_auth)):
     # streaming response starts it listens on the same channel for the client
     # going away, and a body chat() asked for after that is a body nobody
     # delivers: the turn waited for ever. Starlette keeps what was read here.
-    await request.body()
+    # A guest's slot is already taken, and chat() gives it back once the turn
+    # runs; a body that never arrives has to give it back here.
+    try:
+        await request.body()
+    except BaseException:
+        _guest_release(request)
+        raise
     q = _StreamSink()
     q.stop_when_gone = is_guest(request)
 
@@ -2889,6 +2909,22 @@ async def chat(request: Request, _=Depends(require_auth)):
     """Proxy to the Messages API. The key never reaches the browser."""
     if not getattr(request.state, "rate_checked", False):
         check_rate(request)
+    # Every way out of a turn passes here: a reply, a refused payload, an error
+    # from the model or from our own code between the rounds, a cancel when the
+    # client goes away (CancelledError is not an Exception, so an except would
+    # miss it). What the rounds already spent is booked, then the guest's slot
+    # is given back. Both are once only, so the normal path is not charged twice.
+    try:
+        return await _chat_turn(request)
+    finally:
+        book = getattr(request.state, "turn_book", None)
+        if book:
+            book(error=True)
+        _guest_release(request)
+
+
+async def _chat_turn(request: Request):
+    """chat()'s turn itself; chat() owns the booking and the slot."""
     if not ANTHROPIC_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY is not set. Add it to .env and restart.")
 
@@ -3001,7 +3037,6 @@ async def chat(request: Request, _=Depends(require_auth)):
     # --- what ARC can actually do this turn -------------------------------
     # Computer control only for the local desktop, never over the tunnel.
     guest = is_guest(request)
-    guest_who = _guest_key(request) if guest else ""   # whose budget book() charges
     # A guest is never "local", whatever the socket says. Belt and braces: it
     # already takes a loopback peer with no forwarding headers to be local, but
     # this way one check decides computer control, live screen and pc tools
@@ -3270,7 +3305,7 @@ async def chat(request: Request, _=Depends(require_auth)):
             # still the commonest failure there is (the API overloaded on the
             # first call), and Arc Watch's error count should see it.
             stats.record(model=model, error=True, turn=False)
-            _guest_booked(guest_who, 0.0)   # no longer in flight, and nothing to charge
+            _guest_release(request, 0.0)   # no longer in flight, and nothing to charge
             return
         _day["tok_in"] += tokens_in
         _day["tok_out"] += tokens_out
@@ -3282,7 +3317,7 @@ async def chat(request: Request, _=Depends(require_auth)):
                           cache_read - at_step[2], cache_write - at_step[3],
                           searches - at_step[4]) + early_spent
         _day["cost"] += spent
-        _guest_booked(guest_who, spent)
+        _guest_release(request, spent)
         # What the cache kept, less the write premium it cost; see cache_saved.
         saved = cache_saved(model, cache_read - at_step[2],
                             cache_write - at_step[3]) + early_saved
@@ -3306,7 +3341,9 @@ async def chat(request: Request, _=Depends(require_auth)):
             # A turn that failed is counted in "errors", not as a turn answered.
             turn=not error, refusal=(reply == "I can't help with that one, sir."))
 
-    _guest_started(guest_who)
+    # From the first model call on, whatever ends this turn books what it spent:
+    # chat()'s finally calls this if nothing else has.
+    request.state.turn_book = book
     for _ in range(rounds):
         used_rounds += 1
         kwargs = dict(
@@ -3616,6 +3653,16 @@ async def summarize(request: Request, _=Depends(require_auth)):
     of the sent history. The client sends the current note plus the recent turns;
     we fold them into a fresh, compact note. Cheap: one small, tool-free call."""
     check_rate(request)
+    # Whatever ends the note (nothing to fold in, any error at all, a cancel),
+    # a guest's slot is given back. A note that is written was charged already.
+    try:
+        return await _summarize_note(request)
+    finally:
+        _guest_release(request)
+
+
+async def _summarize_note(request: Request):
+    """summarize()'s note itself; summarize() owns the guest's slot."""
     if not ANTHROPIC_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY is not set.")
 
@@ -3651,8 +3698,6 @@ async def summarize(request: Request, _=Depends(require_auth)):
     user_msg = f"PREVIOUS NOTE:\n{note or '(none yet)'}\n\nRECENT CONVERSATION:\n{transcript}"
 
     claude = request.app.state.claude
-    note_guest = _guest_key(request)
-    _guest_started(note_guest)
     try:
         # Same rule as the chat route, and for the same reason — this one is
         # hardcoded to MODEL, so setting ARC_MODEL to an Opus id would otherwise
@@ -3670,16 +3715,13 @@ async def summarize(request: Request, _=Depends(require_auth)):
             messages=[{"role": "user", "content": user_msg}],
             thinking=think,
         )
-    # A failed note had nothing come back to charge; each branch frees the
-    # guest's slot before the error goes out.
+    # A failed note had nothing come back to charge, and summarize()'s finally
+    # frees the guest's slot, whatever the error was.
     except anthropic.APIConnectionError as e:
-        _guest_booked(note_guest, 0.0)
         raise HTTPException(502, f"Could not reach the Anthropic API: {e}")
     except anthropic.RateLimitError:
-        _guest_booked(note_guest, 0.0)
         raise HTTPException(429, "Rate limited by the Anthropic API.")
     except anthropic.APIStatusError as e:
-        _guest_booked(note_guest, 0.0)
         raise _claude_error(e)
 
     u = resp.usage
@@ -3693,7 +3735,7 @@ async def summarize(request: Request, _=Depends(require_auth)):
     # invisibly and never counts towards the cap.
     note_cost = turn_cost(MODEL, s_in, s_out)
     _day["cost"] += note_cost
-    _guest_booked(note_guest, note_cost)
+    _guest_release(request, note_cost)
     # And on disk, for Arc Watch: it reached the daily cap but never usage.json,
     # so the spend Arc Watch showed was short by every note ever written
     # (Claude 4's cost audit). Not a turn — nobody asked anything.
