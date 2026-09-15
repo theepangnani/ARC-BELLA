@@ -118,6 +118,11 @@ CASES = [
 
     # ------------------------------------------------------- work at the screen
     # The expensive day: 11 Sep 2026, 99 Haiku turns and 320 clicks.
+    # Teaching is building an explanation for this person, one step at a time.
+    # "teach me python lists" is four words and went to Haiku (check-up, 14 Sep).
+    ("teach me python lists", SMART, "a lesson, not a lookup"),
+    ("walk me through setting up a budget", SMART, "a lesson in steps"),
+    ("quiz me on spanish verbs", SMART, "a tutor has to judge the answers"),
     ("click the blue button", SMART, "finding a thing in a screenshot"),
     ("scroll down", SMART, "at the screen"),
     ("scroll down a bit more", SMART, "at the screen"),

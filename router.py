@@ -61,6 +61,7 @@ HARD = re.compile(r"""
        (?<!area\s)(?<!zip\s)(?<!postal\s)(?<!post\s)(?<!dress\s)code|
        script|function|error|exception|stack\s*trace|regex|
        summari[sz]e|draft|write\s+me|rewrite|translate|homework|help\s+me\s+with|
+       teach|tutor|walk\s+me\s+through|quiz\s+me|
        pros?\s+and\s+cons?|should\s+i|worth\s+it|what\s+if)\b
 """, re.I | re.X)
 
