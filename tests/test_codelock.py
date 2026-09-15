@@ -44,6 +44,10 @@ automation.IS_WIN = True
 assert pc._tap_vk.__name__ == "<lambda>", "real keystrokes are NOT intercepted"
 
 root = str(codeguard.ROOT)
+# The drive (or / ) this checkout sits on, and the first folder under it: enough
+# to write a path that walks out and back in, wherever the repo happens to be.
+_anchor = os.path.splitdrive(root)[0] + os.sep
+_first = str(codeguard.ROOT.relative_to(_anchor)).split(os.sep)[0]
 
 
 def refused(fn, *a, **kw):
@@ -88,7 +92,13 @@ bad = [
     ("base64 decoding",          "[Convert]::FromBase64String($x)"),
     ("python -c",                "python -c \"open('x','w')\""),
     # A path that does not SPELL the folder but resolves to it.
-    ("a .. path into the folder", "notepad C:\\Windows\\..\\" + root[3:] + "\\run.py"),
+    # Built from this folder's own drive. It was "C:\Windows\..\" + the rest of
+    # the path, which on a runner that checks the repo out onto D: pointed at
+    # C:\a\... — a real path into nothing, correctly not refused, and CI red for
+    # a lock that was working. Same rule as the bypasses below: from the
+    # environment, never typed out.
+    ("a .. path into the folder",
+     "notepad %s%s\\..\\%s\\run.py" % (_anchor, _first, root[len(_anchor):])),
     ("a quoted .. path",         'type "%s\\static\\..\\run.py"' % root),
     ("a wildcard inside a path", "del /s C:\\*.py"),
 ]
