@@ -151,8 +151,13 @@ real_folders = codeguard._folder_names
 # the laptop (whose folder is arc-bella) tests the case that actually bit.
 codeguard._folder_names = lambda: ["arc", "arc-voice-assistant"]
 try:
-    for cmd in ["echo arc is great", "type readme.md", "Get-Content license",
-                "Get-Process | Select-Object *", "python backup.py -c config.ini",
+    # Moved on the owner's "lock it" (15 Sep 2026): a short folder name or a
+    # generic file name on its own is refused again, not guessed innocent.
+    for label, cmd in [("the short name on its own", "echo arc is great"),
+                       ("a generic name on its own", "type readme.md"),
+                       ("another generic name", "Get-Content license")]:
+        c.truthy("  %-28s refused" % label, bool(codeguard.check_command(cmd)))
+    for cmd in ["Get-Process | Select-Object *", "python backup.py -c config.ini",
                 "Get-ChildItem C:\\Users\\Public\\*.pdf",
                 "curl https://example.com/index.html"]:
         c("  %-40s allowed" % cmd, codeguard.check_command(cmd), None)

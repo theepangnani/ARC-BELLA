@@ -133,8 +133,9 @@ _IDES = {
 
 # Names too common to mean THIS code on their own. "type readme.md" from the
 # home folder is somebody's readme, and "README.md - Notepad" is any project's.
-# These count only beside a path separator ("static\index.html", "\readme.md")
-# in a command, and not at all in a window title — where a title that is ours
+# In a command they count like any other name since the owner's "lock it" (15
+# Sep 2026); they are still skipped as wildcard targets, and not counted at
+# all in a window title — where a title that is ours
 # also names the folder, which is refused on its own. index.html is NOT here
 # for titles (see _GENERIC_TITLE): it is the whole HUD, and Notepad's title
 # cannot say which index.html it has open, so the lock fails closed on it.
@@ -145,10 +146,6 @@ _GENERIC = {
     "privacy.html", "terms.html", "deploy.md", "prd.md", ".env.example",
 }
 _GENERIC_TITLE = _GENERIC - {"index.html", "home.html", "sw.js"}
-
-# A folder name this short is an ordinary word ("arc"), so on its own it counts
-# only beside a separator or after a command that changes directory into it.
-_SHORT_FOLDER = 4
 
 _WILD = re.compile(r"[*?\[]")
 
@@ -354,7 +351,10 @@ def check_command(command: str):
         # A short folder name ("arc") is an ordinary word. It counts beside a
         # separator, or in a command that changes directory — "cd arc" from a
         # folder that holds it is the way in.
-        if folder in pathy or (folder in words and (len(folder) > _SHORT_FOLDER or cd)):
+        # The owner said "lock it" (15 Sep 2026) when asked whether 4d9d5f3's
+        # relaxations should stay: a short name counts on its own again, so
+        # "echo arc is great" is refused rather than guessed innocent.
+        if folder in pathy or folder in words:
             return f"{LAW} — that command names ARC's folder ({folder})."
         wild = [t for t in words if _WILD.search(t) and len(_WILD.sub("", t)) >= 2]
         if any(fnmatch.fnmatchcase(folder, t) for t in wild):
@@ -368,8 +368,10 @@ def check_command(command: str):
         return (f"{LAW} — a wildcard over *.{glob.group(1)} files could reach my "
                 f"code wherever it points. Name the files instead.")
     names = _names()
-    hit = sorted(n for n in names
-                 if (n in pathy) or (n in words and n not in _GENERIC))
+    # Generic names count on their own too since the owner's "lock it": "type
+    # readme.md" is refused, and the refusal says to give the full path, which
+    # is judged by where it resolves.
+    hit = sorted(n for n in names if (n in pathy) or (n in words))
     if not hit:
         # "codeguard.p?" and "run.[p]y" are run.py and codeguard.py without the
         # spelling. A pattern needs two real characters, so a lone "*" (as in
