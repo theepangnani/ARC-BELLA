@@ -351,6 +351,51 @@ memory.remember("I like green tea")
 memory.remember("The owner likes green tea")
 c("  and 'I' in front is the same subject as 'the owner'", texts(), ["The owner likes green tea"])
 
+print("\nFacts that look alike to a word count, and are not (bug check, 15 Sep 2026):")
+# Every pair here deleted one of its two facts before. A duplicate is untidy;
+# a fact that is simply gone cannot be got back.
+for first, second, why in (
+        ("His son was born in 2015", "His son was born in 2018", "a different year"),
+        ("Takes the 7am train", "Takes the 9am train", "a different time"),
+        ("The guest bedroom is upstairs", "The bedroom is upstairs",
+         "a subject word in front of a noun is part of the fact"),
+        ("The user group meets on Tuesdays", "The group meets on Tuesdays", "the same, in front"),
+        ("The owner likes fishing", "The owner likes fish", "-ing is not its plural"),
+        ("The owner hates flying", "The owner hates flies", "nor is this one"),
+        ("Maya is Leah's sister", "Leah is Maya's sister", "who is whose sister"),
+        ("The owner's flight is at 6", "The owner's flight is at 9", "a different hour")):
+    fresh()
+    memory.remember(first)
+    memory.remember(second)
+    c("  %-38s (%s)" % (first[:38], why), len(texts()), 2)
+fresh()
+memory.remember("The owner likes hiking")
+memory.remember("The owner likes to hike")
+c("  ...and a real rewording still folds", len(texts()), 1)
+
+print("\nA name that is also an ordinary word is not a word for the person:")
+fresh()
+memory.remember("My name is Will")
+memory.remember("Will call the dentist on Monday")
+memory.remember("Call the dentist on Monday")
+c("  the appointment survives being restated", len(texts()), 3)
+fresh()
+memory.remember("My name is not Tom")
+memory.remember("Allergic to peanuts")
+memory.remember("Not allergic to peanuts")
+c("  and 'not' never became a word for them", len(texts()), 3)
+
+print("\n'What do you know about me' is a request for all of it, however it is put:")
+fresh()
+memory.remember("The owner has a dog called Biscuit")
+memory.remember("The owner lives in Markham")
+for asked in ("what do you know about me", "what do you remember about me",
+              "tell me everything", "do you know anything about me", "about me"):
+    c.truthy("  %-32s" % asked, memory.list_memory(asked).startswith("2 things"))
+c.truthy("  ...while a real word still searches", "Biscuit" in memory.list_memory("dog"))
+c.truthy("  ...and one that matches nothing still says so",
+         "Nothing I know" in memory.list_memory("snowboarding"))
+
 print("\nA name is per person, like everything else here:")
 fresh()
 memory.use(OWNER)

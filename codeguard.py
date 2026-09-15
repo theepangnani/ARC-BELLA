@@ -226,8 +226,20 @@ def _names() -> set:
 # PowerShell takes ANY unambiguous prefix of -EncodedCommand — -e, -ec, -en,
 # -enc, -encod... — and / as well as -. The first version listed three
 # spellings and "-ec" walked past it; so it matches the family, not a list.
+#
+# The flag does not have to follow a space either. Handed to Start-Process as
+# an argument list it follows a quote, a bracket or a comma, and that walked
+# past as well: "powershell -enc <payload>" was refused while
+# "Start-Process powershell -ArgumentList '-enc','<same payload>'" ran (bug
+# check, 15 Sep 2026). The payload was also required to be 16 characters, and
+# eight base64 characters is already about five characters of command.
 _HIDDEN = re.compile(
-    r"(?i)((^|\s)[-/](e|ec|en[a-z]*)[:\s]+[\"']?[A-Za-z0-9+/=]{16,}"   # powershell -enc <b64>
+    r"(?i)((^|\s)[-/](e|ec|en[a-z]*)[:\s]+[\"']?[A-Za-z0-9+/=]{8,}"   # powershell -enc <b64>
+    # The same flag handed to Start-Process, where it follows a quote and is
+    # separated from its payload by a comma and another quote. Anchored to a
+    # shell so that "sed -e 's/foo/bar/'" stays an ordinary command.
+    r"|(powershell|pwsh|saps|start-process)[^\n]{0,60}?"
+    r"[-/](e|ec|en[a-z]*)[:\s,'\"]+[A-Za-z0-9+/=]{8,}"
     r"|\biex\b|invoke-expression|frombase64string|\[convert\]::"
     r"|certutil\b.*-decode|\bscriptblock\b|add-type\b"
     r"|\bexec\s*\(|\beval\s*\(|\bmshta\b)")

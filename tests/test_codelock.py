@@ -141,6 +141,14 @@ bypasses = [
     ("git by a quoted path",      "& '%s' reset --hard"
      % os.path.join(PF, "Git", "cmd", "git.exe").replace("\\", "/")),
     ("the folder beside a \\",    "cd ..\\%s" % R.name),
+    # The flag does not have to follow a space: as an argument list it follows
+    # a quote and a comma, and that ran while the plain spelling was refused
+    # (bug check, 15 Sep 2026). A short payload is the same hole: eight base64
+    # characters is about five characters of command.
+    ("-enc in an argument list",  "Start-Process powershell -ArgumentList '-enc','%s'" % b64),
+    ("...with the alias",         "saps powershell -ArgumentList '-enc','%s'" % b64),
+    ("...in an array",            "Start-Process powershell -ArgumentList @('-enc','%s')" % b64),
+    ("a short encoded payload",   "powershell -enc QQBCAEMARABFAA=="),
 ]
 for label, cmd in bypasses:
     c.truthy("  %-28s refused" % label, bool(codeguard.check_command(cmd)))

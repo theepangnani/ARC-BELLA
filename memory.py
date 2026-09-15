@@ -259,6 +259,17 @@ _THEIR_NAME = re.compile(
     r"|^\s*i\s+am\s+(?:called|named)\s+([^\W\d_]+)", re.I | re.UNICODE)
 
 
+# Names that are also ordinary English words. Taken as a word for the person,
+# each of these deleted facts: with the owner called Will, "Will call the
+# dentist on Monday" was replaced by "Call the dentist on Monday". A person
+# called Will keeps their name everywhere else; it just never becomes a word
+# memory may set aside (bug check, 15 Sep 2026).
+_ALSO_WORDS = {"will", "may", "mark", "bill", "sue", "rose", "grace", "hope",
+               "dawn", "art", "june", "july", "drew", "frank", "rob", "pat",
+               "don", "chase", "chance", "faith", "joy", "sky", "ray", "hazel",
+               "penny", "summer", "autumn", "reed", "wade", "rich"}
+
+
 def _subjects(mine: list) -> set:
     """_SELF, plus this account's own name if one of ITS facts gives it.
 
@@ -269,9 +280,17 @@ def _subjects(mine: list) -> set:
     """
     out = set(_SELF)
     for m in mine:
-        hit = _THEIR_NAME.match(m.get("text") or "")
-        if hit:
-            out.add(_stem(next(g for g in hit.groups() if g).lower()))
+        text = m.get("text") or ""
+        hit = _THEIR_NAME.match(text)
+        if not hit:
+            continue
+        name = next(g for g in hit.groups() if g)
+        # A NAME, not whatever followed the words: "My name is not Tom" made
+        # "not" a word for the person, and "Not allergic to peanuts" then
+        # deleted "Allergic to peanuts". A name is capitalised where it was
+        # written, and is not an ordinary word (bug check, 15 Sep 2026).
+        if name[:1].isupper() and name.lower() not in _ALSO_WORDS:
+            out.add(_stem(name.lower()))
     return out
 
 
@@ -307,29 +326,96 @@ def _stems(text: str) -> set:
 # Words that can sit in front of the subject: "The user's…", "my…", "I…".
 _LEAD = {"the", "a", "an", "i", "my", "s"}
 
+# What tells a SUBJECT from a word that merely looks like one. A subject is
+# followed by something said about it — a verb, or the "s" of "the user's".
+# Without this the leading word was taken whatever came next, and "The guest
+# bedroom is upstairs" was deleted by "The bedroom is upstairs", "The user group
+# meets on Tuesdays" by "The group meets on Tuesdays" (bug check, 15 Sep 2026).
+_SAYS = {
+    "s", "is", "isn", "was", "are", "were", "be", "been", "am",
+    "has", "have", "had", "does", "did", "do", "will", "would", "can", "could",
+    "likes", "like", "liked", "loves", "love", "hates", "hate", "dislikes",
+    "prefers", "prefer", "wants", "want", "needs", "need", "uses", "use",
+    "owns", "own", "lives", "live", "lived", "works", "worked", "plays",
+    "speaks", "drives", "takes", "goes", "keeps", "studies", "studied",
+    "enjoys", "enjoy", "finished", "started", "runs", "walks", "reads",
+    "drinks", "eats", "says", "said", "thinks", "asked", "calls", "called",
+    "gets", "made", "makes", "sleeps", "wakes", "travels", "teaches",
+}
 
-def _about(text: str, subjects) -> set:
-    """The meaning-carrying stems once the SUBJECT is set aside.
+# Facts are compared by their words, so a number that only differs by its
+# digits used to be invisible: "born in 2015" was deleted by "born in 2018",
+# and "the 7am train" by "the 9am train" (bug check, 15 Sep 2026). Digits are
+# compared separately, since _keys drops them for searching.
+_DIGITS = re.compile(r"\d+")
 
-    Only the words the fact opens with are the subject. Setting subject words
-    aside wherever they appeared folded "Maya is a guest" onto "Maya is a user"
-    and "Maya likes him" onto "Maya likes them" — the subject words there are
-    what the fact SAYS, and one replaced the other (Claude 2, landing Claude 5's
-    recall work). So "The owner likes hiking" and "The user likes to hike" are
-    still one fact, and those two pairs are two each.
+
+def _about(text: str, subjects) -> tuple:
+    """(what the fact says, its numbers), once the SUBJECT is set aside.
+
+    Only the words the fact opens with are the subject, and only when what
+    follows says something about them. Setting subject words aside wherever
+    they appeared folded "Maya is a guest" onto "Maya is a user" and "Maya
+    likes him" onto "Maya likes them" — there, the subject words are what the
+    fact SAYS (Claude 2, landing Claude 5's recall work). "The owner likes
+    hiking" and "The user likes to hike" are still one fact.
     """
     subj = {_stem(w) for w in subjects}
     words = re.findall(r"[^\W\d_]+", (text or "").lower(), re.UNICODE)
     i = 0
-    while i < len(words) and (words[i] in _LEAD or _stem(words[i]) in subj):
-        i += 1
+    while i < len(words):
+        w = words[i]
+        if w in _LEAD:
+            i += 1
+        elif _stem(w) in subj and i + 1 < len(words) and words[i + 1] in _SAYS:
+            i += 1
+        else:
+            break
     kept = " ".join(words[i:])
-    return _stems(kept) - {_stem(w) for w in _PHRASING}
+    return _stems(kept) - {_stem(w) for w in _PHRASING}, set(_DIGITS.findall(text or ""))
+
+
+def _ing(text: str) -> set:
+    """The -ing words a fact uses, unfolded.
+
+    _stem folds "fishing" to "fish" and "flies" to "fly", which is right for
+    searching and wrong for deleting: "likes fishing" was deleted by "likes
+    fish", "hates flying" by "hates flies". So an -ing word only restates a
+    plain one when the other fact says "to" — "likes hiking" / "likes to hike",
+    which is the fold the owner asked to keep (bug check, 15 Sep 2026).
+    """
+    return {w for w in _keys(text) if len(w) > 5 and w.endswith("ing")}
+
+
+_NAME_IN = re.compile(r"(?<![^\W_])([A-Z][^\W\d_]+)", re.UNICODE)
+
+
+def _named(text: str) -> list:
+    """Capitalised words in the order they appear — the people a fact is about.
+
+    A fact's first word is capitalised because it starts a sentence, so the
+    ordinary openers are dropped rather than the first word itself: "Maya is
+    Leah's sister" has to keep Maya, or it reads as being about one person.
+    """
+    skip = {w.lower() for w in _LEAD} | {w.lower() for w in _SELF} | {"his", "her", "their"}
+    return [m.group(1) for m in _NAME_IN.finditer(text or "")
+            if m.group(1).lower() not in skip]
 
 
 def _supersedes(new: str, old: str, subjects=frozenset(_SELF)) -> bool:
-    a, b = _about(new, subjects), _about(old, subjects)
-    return bool(a) and a == b
+    (a, a_num), (b, b_num) = _about(new, subjects), _about(old, subjects)
+    if not a or a != b or a_num != b_num:
+        return False
+    # "likes fishing" and "likes fish" are not the same fact; "likes hiking"
+    # and "likes to hike" are. See _ing.
+    if _ing(new) != _ing(old) and " to " not in " %s %s " % (new.lower(), old.lower()):
+        return False
+    # Two people in one fact: the same words in the other order are a different
+    # fact. "Maya is Leah's sister" is not "Leah is Maya's sister".
+    n_new, n_old = _named(new), _named(old)
+    if len(set(n_new)) > 1 and n_new != n_old:
+        return False
+    return True
 
 
 def _new_id(mine: list) -> str:
@@ -516,8 +602,12 @@ def import_facts(items, only_if_empty: bool = False) -> int:
 _EVERYTHING = {"me", "myself", "about me", "all", "everything", "anything",
                "all of it", "everything about me", "you know", "what you know"}
 
-# Asked about a subject rather than naming one.
-_ASKING = {"know", "tell", "does", "remember", "anything", "something"}
+# Asked about a subject rather than naming one. "you" and "your" belong here
+# too: without them "what do you know about me" kept "you" as the thing to
+# search for and answered "Nothing I know matches that" — to the phrasing the
+# tool's own description suggests (bug check, 15 Sep 2026).
+_ASKING = {"know", "tell", "does", "remember", "anything", "something",
+           "you", "your", "everything", "about"}
 
 
 def search(query: str = "") -> list:
@@ -540,6 +630,15 @@ def search(query: str = "") -> list:
         score = (2 if phrase and _names(text, [phrase]) else 0) + len(want & _stems(text))
         if score:
             hits.append((score, i, m))
+    # Nothing to search FOR and nothing matched: that is a question like "what
+    # do you know about me" or "tell me everything", which is a request for all
+    # of it however it is worded. It used to answer "Nothing I know matches
+    # that" — to the phrasings the tool's own description suggests. A short word
+    # ("Go") still searches: it leaves no stems but does match as a phrase, and
+    # answering it with everything would be a different wrong answer (bug
+    # check, 15 Sep 2026).
+    if not hits and not want:
+        return facts()
     return [m for _, _, m in sorted(hits, key=lambda p: (-p[0], -p[1]))]
 
 
