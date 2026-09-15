@@ -2538,7 +2538,13 @@ def _json_only(request: Request) -> None:
     SameSite to protect, so any web page the owner happened to visit could
     submit a plain form to 127.0.0.1:8421/api/links/spotify/unlink. A form
     cannot send application/json without a CORS preflight this server never
-    grants, so asking for it closes that door. (Claude 4's review.)"""
+    grants, so asking for it closes that door. (Claude 4's review.)
+
+    The RequestGate refuses the same thing first, and refuses a cross-site
+    Origin before that. This is deliberately the second lock, and it is the
+    stricter one: it wants JSON even when the body is empty. Two locks, one
+    door — don't delete this one because the gate exists, or the other because
+    this one does."""
     if request.method == "POST" and not (request.headers.get("content-type") or "").startswith("application/json"):
         raise HTTPException(415, "Expected JSON.")
 
@@ -5132,9 +5138,17 @@ _refused_hosts: set = set()
 def _ip_host(host: str, port) -> bool:
     """An IP address at the listening port: a phone on the same Wi-Fi opening
     http://192.168.1.20:8420. DNS rebinding needs a NAME the attacker's DNS
-    answers for; a bare address has no DNS to rebind, so it is safe to allow."""
+    answers for; a bare address has no DNS to rebind, so it is safe to allow.
+
+    A Host with no port at all means port 80, the same way loopback_hosts reads
+    it: on a deployment listening there, the phone's address bar says
+    http://192.168.1.20 and the browser sends no port."""
     import ipaddress
-    h, _, p = host.rpartition(":")
+    # "[fe80::1]" is an address, not an address and a port: the brackets exist
+    # precisely because the colons inside are part of it.
+    bare = host if not host.rpartition(":")[0] or (
+        host.startswith("[") and host.endswith("]")) else ""
+    h, p = (bare, "80") if bare else host.rpartition(":")[::2]
     if not h or p != str(port):
         return False
     try:
@@ -5221,8 +5235,16 @@ class RequestGate:
                     and not origin_matches(headers, host):
                 return await refuse(403, "Requests must come from ARC's own page.")
             length = headers.get("content-length", "").strip()
+            # Both of these are HTTP/1.1 spellings, which is all uvicorn speaks.
+            # Under HTTP/2 a body arrives with neither header, and this would
+            # read as "no body": if ARC is ever served over HTTP/2, ask the
+            # receive channel instead of the headers.
             has_body = (length not in ("", "0")) or "transfer-encoding" in headers
             ctype = headers.get("content-type", "").split(";")[0].strip().lower()
+            # An EMPTY body is exempt, because the page's goodbye is
+            # sendBeacon("/api/leave", an empty text/plain Blob). So this rule
+            # does NOT close the door on cross-site forms by itself — the
+            # Origin check above is what does that, and it has to stay.
             if has_body and ctype != "application/json":
                 return await refuse(415, "Expected a JSON body.")
 

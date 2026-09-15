@@ -123,6 +123,12 @@ c("  and a name that merely looks like one is not", run.host_allowed("192.168.1.
 c("  Cloudflare's quick tunnel, whatever it is called today",
   run.host_allowed("brave-otter-tuesday.trycloudflare.com", 8420), True)
 c("  but not a lookalike", run.host_allowed("trycloudflare.com.evil.example", 8420), False)
+# A browser sends no port when it is the scheme's own, so on a deployment
+# listening on 80 the phone's Host is the bare address.
+c("  the same phone where ARC listens on 80", run.host_allowed("192.168.1.20", 80), True)
+c("  and the bracketed IPv6 form of it", run.host_allowed("[fe80::1]", 80), True)
+c("  a bare address is still refused anywhere else", run.host_allowed("192.168.1.20", 8420), False)
+c("  and a name without a port is not an address", run.host_allowed("evil.example", 80), False)
 c("  a Wi-Fi address is still not local", run.is_local_request(Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"host", b"192.168.1.20:8420")], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8420), "query_string": b""})), False)
 late = FAKE
 real_name = run.tailscale_name
@@ -188,6 +194,12 @@ c("  a form is refused",
 c("  JSON with a charset is fine",
   local.post("/api/logout", headers={"origin": ME, "content-type": "application/json; charset=utf-8"},
              content=b"{}").status_code, 200)
+c.truthy("  and the comment says the Origin check is what stops cross-site forms",
+         "Origin check above is what does that" in inspect.getsource(run.RequestGate))
+c.truthy("  the HTTP/2 assumption in has_body is written down",
+         "HTTP/2" in inspect.getsource(run.RequestGate))
+c.truthy("  _json_only says it is the second lock, not a spare one",
+         "second lock" in inspect.getsource(run._json_only))
 c("  an empty text/plain beacon is fine",
   local.post("/api/logout", headers={"origin": ME, "content-type": "text/plain"}).status_code, 200)
 # The page's goodbye: navigator.sendBeacon("/api/leave", new Blob([], {type: "text/plain"})).
