@@ -143,6 +143,8 @@ for good in ("The owner's dog is called Bella",
              "Never eats meat",
              "The owner's work email is sam@example.com",
              "The owner's blog is at https://example.com/sam",
+             "Posts photos on Instagram as @jane_doe", "Payroll contact is pay@acme.com",
+             "Shares a flat with sam@example.com",
              "The owner sends the kids to school at eight",
              "The owner should finish the tax return by April"):
     c.truthy("  kept: %r" % good, memory.remember(good, supersede=False).startswith("Noted"))

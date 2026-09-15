@@ -38,6 +38,20 @@ for rel in (".ssh/id_ed25519", ".ssh/config", ".aws/credentials", ".env",
     out = pc.read_file(str(put(rel, "SECRET-" + rel)))
     c.truthy("  %s" % rel, out.startswith("Refused:") and "SECRET-" not in out)
 
+print("\nARC's own token stores, if the roots were widened over them:")
+data = DATA / "arcdata"
+pc._TOKEN_DIRS = [data / d for d in ("google_sessions", "links", "backups")]
+pc.FILE_ROOTS = [home, data]
+for rel in ("google_sessions/abc123.json", "links/dropbox/abc123.json", "backups/2026/token.bak"):
+    p = data / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("SECRET-token", encoding="utf-8")
+    out = pc.read_file(str(p))
+    c.truthy("  %s" % rel, out.startswith("Refused:") and "SECRET-" not in out)
+out = pc.read_file(str(put("Documents/arc.session", "SECRET-tg")))
+c.truthy("  a Telegram .session file", out.startswith("Refused:") and "SECRET-" not in out)
+pc.FILE_ROOTS = [home]
+
 print("\nStill read:")
 for rel in ("Documents/notes.txt", "Documents/shopping list.md", "projects/app/README.md",
             "Desktop/recipe cookies.txt"):

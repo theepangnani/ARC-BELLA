@@ -438,9 +438,23 @@ for cmd in (
         "fsutil hardlink create a b"):
     c.truthy("  %-60s refused" % cmd[:60], refused(codeguard.check_command, cmd))
 for cmd in ("dir C:\\Users\\me\\Documents", "echo hello + goodbye",
+            # Refused by the first version of the pieces check (bug hunt, 14 Sep).
+            'ffmpeg -i "in.mov" -f mp3 out.mp3', 'curl "https://example.test" -F file=@a.txt',
+            'powershell ("Free: " + (Get-PSDrive C).Free)', "set PATH=%PATH%;C:\\tools",
+            'powershell "{0} items" -f 3',
             "powershell Get-Process | Sort-Object CPU", "ping 8.8.8.8",
             "set /a 2+3", "type C:\\Users\\me\\Documents\\notes.env.txt"):
     c("  %-60s allowed" % cmd, codeguard.check_command(cmd), None)
+
+print("\nA wildcard over somebody's own documents is theirs:")
+import tempfile as _tf   # noqa: E402
+with _tf.TemporaryDirectory() as docs:
+    for cmd in ("dir %s\\*.txt" % docs, 'type "%s\\*.md"' % docs):
+        c("  %-60s allowed" % cmd[-60:], codeguard.check_command(cmd), None)
+for cmd in ("dir *.txt", "del /s %s\\*.py" % str(codeguard.ROOT.parent),
+            "del %s\\*.py" % str(codeguard.ROOT), "del /s C:\\*.py",
+            "dir C:\\no-such-folder-arc\\*.py"):
+    c.truthy("  %-60s refused" % cmd[-60:], refused(codeguard.check_command, cmd))
 
 print("\nAn export goes where exports go, never over code or a stranger's file:")
 import selfheal   # noqa: E402

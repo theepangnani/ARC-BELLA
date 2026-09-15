@@ -102,7 +102,10 @@ _INSTRUCTION = re.compile(
     r"tell|say|answer|recommend|obey|follow|trust)\b"
     # Moving something to somebody. Not "email": "his work email is sam@..." is
     # the commonest fact with an address in it, and it moves nothing.
-    r"|\b(forward|send|share|cc|bcc|upload|post|transfer|pay)\w*\b.{0,60}"
+    # The verb as an instruction gives it: bare, and followed by a space. With
+    # any ending it caught facts that describe ("Posts photos as @jane",
+    # "Payroll contact is pay@acme.com"), which are exactly what memory is for.
+    r"|\b(forward|send|share|cc|bcc|upload|post|transfer|pay)\s.{0,60}"
     r"(@|https?://|\bwww\.)"
     r"|\btreat\b.{0,60}\bas\b.{0,25}\b(me|mine|the owner|instructions?|commands?)\b"
     r"|\b(instructions?|commands?|orders?)\b.{0,30}\b(in|from)\b.{0,20}"
@@ -578,8 +581,10 @@ TOOLS = [
      "description": (
          "Remove something ARC remembers — by subject, or 'all'. Use when the user "
          "says 'forget that', 'that's wrong', 'stop remembering X'. If a fact is "
-         "merely out of date, prefer just remembering the new version, which "
-         "replaces it. If a subject matches several different facts, nothing is "
+         "merely out of date, forget the old one and remember the new one: a new "
+         "fact only replaces an old one saying the same thing in other words, so "
+         "'lives in Leeds' does not remove 'lives in York'. If a subject matches "
+         "several different facts, nothing is "
          "removed and they are listed with ids: ask which, then forget by id."),
      "input_schema": {"type": "object", "properties": {
          "which": {"type": "string", "description": "Subject, id, or 'all'"}},

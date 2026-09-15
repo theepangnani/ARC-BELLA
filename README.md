@@ -920,9 +920,12 @@ indistinguishable from a fault.
 
 ## Memory
 
-ARC keeps up to 120 durable facts about you — your name, how you like
+ARC keeps up to 200 durable facts per account — your name, how you like
 answers pitched, projects that keep coming up — and feeds them back on every
-request. Stored in your browser on your own machine, never anywhere else.
+request. Stored on the server on your own machine (so every device you sign in
+on knows the same things), never anywhere else. A fact that turns up while ARC
+is reading something from outside — a mail, a web page — is not kept until you
+press Keep.
 
 The `MEMORY` readout shows how many it's holding. **Forget** wipes them.
 
@@ -1159,8 +1162,8 @@ ARC_GUEST_EMAILS=someone@gmail.com
 ```
 
 Being listed as a guest implies permission to sign in, so that one line is the
-whole change. They sign in exactly as normal and get a cut-down ARC — 13 tools
-instead of 45.
+whole change. They sign in exactly as normal and get a cut-down ARC — no
+computer control, and nothing of the owner's.
 
 **A guest gets** their own Google account — calendar, mail, drive, contacts —
 plus weather, stocks, news and web search. Their Google data is genuinely their
@@ -1194,7 +1197,7 @@ rather than buried in `.env`.
 python tests/run_all.py
 ```
 
-21 suites, no pytest, no keys, no network, no microphone. They run against a
+Nearly a hundred suites, no pytest, no keys, no network, no microphone. They run against a
 throwaway data directory — never your real one, and the harness refuses to
 start if you point it at real data — so running them cannot sign you out,
 delete a token or cancel tomorrow's alarm.

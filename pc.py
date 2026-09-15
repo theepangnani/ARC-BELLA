@@ -127,7 +127,13 @@ _PRIVATE_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "known_hosts",
                   "sessions.json", ".git-credentials",
                   ".netrc", ".pgpass")
 _PRIVATE_EXT = {".pem", ".key", ".p12", ".pfx", ".kdbx", ".keychain", ".ppk",
-                ".gpg", ".asc", ".jks", ".keystore", ".ovpn", ".rdp"}
+                ".gpg", ".asc", ".jks", ".keystore", ".ovpn", ".rdp",
+                ".session"}     # Telethon's file: the whole Telegram account
+# ARC's own token stores, wherever ARC_FILE_ROOTS happens to reach: every
+# signed-in Google session and every linked account. Only reachable if the
+# roots were widened over the data folder, which is exactly when it matters.
+_ARC_DATA = Path(os.getenv("ARC_DATA_DIR") or Path(__file__).parent)
+_TOKEN_DIRS = [(_ARC_DATA / d) for d in ("google_sessions", "links", "backups")]
 
 
 def _private(p: Path) -> bool:
@@ -135,6 +141,12 @@ def _private(p: Path) -> bool:
         rp = p.resolve()
     except Exception:
         return True
+    for d in _TOKEN_DIRS:
+        try:
+            if d.resolve() in rp.parents:
+                return True
+        except OSError:
+            continue
     parts = rp.parts
     for r in FILE_ROOTS:
         try:
