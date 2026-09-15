@@ -171,7 +171,12 @@
     if (pendingConsent && isPlainYes(text) && held.length > 1) {
       add("sys", "Several actions are waiting, so a yes can't tell which. Open full Bella to allow each one.");
     }
+    // Trimmed the same way save() trims, and then made to START with the
+    // person: a window that reaches KEEP dropped its first user message on the
+    // way in, the API refuses a history that opens with a reply, and every
+    // later message in that window failed for good (bug check, 15 Sep 2026).
     const messages = history.concat([{ role: "user", content: text }]).slice(-KEEP);
+    while (messages.length && messages[0].role !== "user") messages.shift();
     add("me", text);
     const wait = add("sys thinking", "Bella is thinking…");
     send.disabled = true;

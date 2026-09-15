@@ -171,6 +171,35 @@ try:
 finally:
     httpx.post = real_post
 
+print("\nA file somebody else has open is still unlinked (bug check, 15 Sep 2026):")
+# On Windows, deleting a file another handle holds raises PermissionError, and
+# storefile.read takes no lock — so the Connectors sheet reading /api/links at
+# that moment made Disconnect raise, the route 500, and the token file survive.
+link("dropbox")
+p = links._path("dropbox")
+holder = io.open(p, "r", encoding="utf-8")
+try:
+    removed, log = unlink_logged("dropbox", ok_post)
+    c("  it does not raise, and says it removed the link", removed, True)
+    c("  and the link is gone whether the file is or not", links.linked("dropbox"), False)
+    c.truthy("  ...with no token left in the file",
+             not p.exists() or ACCESS not in p.read_text(encoding="utf-8"))
+except Exception as e:
+    c.truthy("  it does not raise (%s)" % type(e).__name__, False)
+finally:
+    holder.close()
+links.unlink("dropbox")
+
+print("\nA sign-in that is not a device sign-in is turned away, not crashed into:")
+os.environ["SPOTIFY_CLIENT_ID"] = "sp-client"
+state = httpx.URL(links.start_redirect(
+    "spotify", "https://arc.example/oauth/link/spotify/callback", bind="B")).params["state"]
+try:
+    said = links.poll_device("spotify", state, bind="B")
+    c.truthy("  it says to start again", "isn't running" in said)
+except Exception as e:
+    c.truthy("  polling a redirect state does not raise (%s)" % type(e).__name__, False)
+
 print("\nOne person's disconnect is their own:")
 link("dropbox")
 whose.use("guest@example.com")

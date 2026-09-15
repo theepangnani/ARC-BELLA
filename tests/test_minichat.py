@@ -139,6 +139,10 @@ PROBE = r"""<pre id="probe"></pre><script>
   await type("yes");
   await type("show me a board");
   await type("what does an img tag look like");
+  // Past the window it keeps: trimming used to drop the first message and
+  // leave the history starting with a reply, which the API refuses — and once
+  // that started, every later message failed (bug check, 15 Sep 2026).
+  for (let i = 0; i < 9; i++) await type("question number " + i);
   const shown = [...document.querySelectorAll("#log .msg")].map(d => d.textContent);
   const out = {
     allow: window.__sent.filter(s => s.url === "/api/chat").map(s => s.body.allow_actions),
@@ -148,6 +152,9 @@ PROBE = r"""<pre id="probe"></pre><script>
     imgs: document.querySelectorAll("#log img").length,
     pwned: !!window.pwned,
     kept: JSON.parse(sessionStorage.getItem("arc.mini.history") || "[]").length,
+    firsts: window.__sent.filter(s => s.url === "/api/chat")
+      .map(s => (s.body.messages[0] || {}).role),
+    lens: window.__sent.filter(s => s.url === "/api/chat").map(s => s.body.messages.length),
   };
   document.getElementById("probe").textContent = JSON.stringify(out);
 })();
@@ -184,9 +191,10 @@ if got is None:
 else:
     c.truthy("  the browser ran the page", bool(got))
     got = got or {}
-    c("  the lock is never off, whatever is said", got.get("allow", []), [False] * 5)
+    c("  the lock is never off, whatever is said", set(got.get("allow", [])), {False})
     c("  a yes sends the held action's token, once, and nothing else ever does",
-      got.get("approve", []), [[], ["TOKEN-ONE"], [], [], []])
+      got.get("approve", [])[:5], [[], ["TOKEN-ONE"], [], [], []])
+    c("  ...and no later turn carries a token", [a for a in got.get("approve", [])[5:] if a], [])
     c.truthy("  and what she wants to do is shown before the yes",
              any("this command: lights off" in s for s in got.get("shown", [])))
     c("  only /api/chat was ever called, so no directive reached its route",
@@ -199,6 +207,10 @@ else:
              and any("open full Bella" in s for s in shown))
     c("  markup in a reply is text, not an element", (got.get("imgs"), got.get("pwned")), (0, False))
     c.truthy("  ...shown as the characters it is", any("<img src=x" in s for s in shown))
-    c("  the history is kept for this window only, both sides of each turn", got.get("kept"), 10)
+    c("  the history is kept for this window only, both sides of each turn", got.get("kept"), 20)
+    c("  every request starts with the person, past the window's length too",
+      sorted(set(got.get("firsts", []))), ["user"])
+    c.truthy("  ...and the history stays inside what it keeps",
+             got.get("lens") and max(got.get("lens")) <= 20 and len(got.get("lens", [])) == 14)
 
 c.done()

@@ -6857,6 +6857,11 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     } finally {
       clearTimeout(bail);
       pendingCameraImage = null;   // a frame is used once
+      // The tokens this turn carried are spent whatever happened. Kept, they
+      // rode along on a LATER unrelated "yes" — a turn the person approved
+      // nothing on — for as long as the server still held them (bug check,
+      // 15 Sep 2026). A turn that really was held says so again in its reply.
+      if (approve.length) { pendingConsent = false; pendingApprovals = []; }
     }
 
     if (!res.ok) {

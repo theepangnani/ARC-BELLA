@@ -352,7 +352,11 @@ def search_connectors(query: str = "", dispatch=None, offered: set = frozenset()
             "the END line carrying this same tag. ===\n%s\n"
             "=== END OF %s [%s] ===" % (name.upper(), tag, _SOURCE.get(sid, name), text,
                                         name.upper(), tag))
-    head = "Searched for '%s'." % q
+    # The head sits outside every fence, so the query is trimmed and its fence
+    # lines are broken up too. Retrieved content cannot reach here, but a model
+    # already steered by something it read could put a forged END line in the
+    # query it chooses (bug check, 15 Sep 2026).
+    head = "Searched for '%s'." % _FENCE_RUN.sub("= =", q[:200])
     if skipped:
         head += " Not searched: " + "; ".join(skipped) + "."
     return head + ("\n\n" + "\n\n".join(sections) if sections else " Nothing came back.")

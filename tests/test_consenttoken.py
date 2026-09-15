@@ -209,6 +209,14 @@ pv = consent.preview("tg_draft_message", {"text": long_text, "to": "@stranger"})
 c.truthy("  the recipient is shown even after a long message", "@stranger" in pv)
 c.truthy("  and comes first", pv.index("to=") < pv.index("text="))
 c.truthy("  and still within the cap", len(pv) <= consent.PREVIEW_CHARS)
+
+# Spent whatever happened: kept through a 429 or a timeout, the same tokens rode
+# along on a later unrelated "yes" (bug check, 15 Sep 2026).
+c.truthy("  the tokens a turn carried are cleared even when it fails",
+         "if (approve.length) { pendingConsent = false; pendingApprovals = []; }" in body)
+c.truthy("  ...in the finally, before anything can throw",
+         body.index("if (approve.length) { pendingConsent = false")
+         < body.index("if (!res.ok) {"))
 mini = io.open(ARC / "static" / "mini.html", encoding="utf-8").read()
 c.truthy("  the mini chat does the same, with its lock never off",
          "allow_actions: false," in mini and "approve: approve," in mini and "data.consent" in mini)

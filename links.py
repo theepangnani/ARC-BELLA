@@ -38,6 +38,7 @@ are (Spotify's play and pause). Widening a scope is the owner's decision.
 
 import base64
 import hashlib
+import io
 import os
 import secrets
 import threading
@@ -344,16 +345,46 @@ def unlink(sid: str, post=None) -> bool:
     try:
         outcome = _revoke(sid, post=post)
     finally:
-        p = _path(sid)
-        with storefile.lock(p):
-            try:
-                p.unlink()
-                removed = True
-            except FileNotFoundError:
-                removed = False
+        removed = _delete_token(sid)
         if removed:
             print("  links: %s unlinked, revoke %s" % (sid, outcome))
     return removed
+
+
+def _delete_token(sid: str) -> bool:
+    """Take the token off the disk, come what may.
+
+    On Windows a file another handle has open cannot be deleted, and
+    storefile.read takes no lock — so the Connectors sheet reading /api/links
+    at that moment made Disconnect raise, the route answer 500, and the token
+    FILE SURVIVE with a live token in it (bug check, 15 Sep 2026). So: retry
+    while it is busy, exactly as storefile.read does, and if it still cannot be
+    deleted, empty it, which revokes the link here even when the file must stay.
+    """
+    p = _path(sid)
+    with storefile.lock(p):
+        for attempt in range(storefile.RETRIES):
+            try:
+                p.unlink()
+                return True
+            except FileNotFoundError:
+                return False
+            except OSError:
+                if attempt == storefile.RETRIES - 1:
+                    break
+                time.sleep(storefile.WAIT)
+        try:
+            # Emptied IN PLACE rather than left: a file with no access_token in
+            # it is "not linked" everywhere (linked() reads it), so the link is
+            # gone even though the file could not be. Not storefile.write,
+            # which replaces the file — the very thing Windows is refusing.
+            with io.open(p, "w", encoding="utf-8", newline="\r\n") as fh:
+                fh.write("{}")
+            print("  links: %s could not be deleted (in use); emptied instead" % sid)
+            return True
+        except Exception as e:
+            print("  links: %s could NOT be unlinked (%s)" % (sid, type(e).__name__))
+            return False
 
 
 def _store_token(sid: str, tok: dict, account_name: str = "") -> None:
@@ -452,8 +483,12 @@ def poll_device(sid: str, handle: str, post=None, bind: str = "") -> str:
         # gets its message just below rather than the vaguer "isn't running".
         p = _pending.get(handle or "")
         _sweep(time.time())
-    if (not p or p["service"] != sid or p["who"] != whose.current()
-            or p.get("bind", "") != bind):
+    # "expires": a redirect STATE passed here as a device handle matches the
+    # service, the account and the browser, and then read a key only a device
+    # sign-in has — a KeyError instead of an answer. The same shape as the
+    # device handle passed to finish_redirect, fixed there (bug check, 15 Sep).
+    if (not p or p["service"] != sid or "expires" not in p
+            or p["who"] != whose.current() or p.get("bind", "") != bind):
         return "That sign-in isn't running any more. Start again."
     if time.time() > p["expires"]:
         with _pending_lock:
