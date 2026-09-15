@@ -1895,6 +1895,14 @@ def check_rate(request: Request):
         # would refuse to answer every day from then on.
         _day.update(stamp=today, count=0, tok_in=0, tok_out=0,
                     tok_cache_read=0, tok_cache_write=0, cost=0.0)
+    if _guest_day["stamp"] != today:
+        _guest_day.update(stamp=today, spend=defaultdict(float), turns=defaultdict(int),
+                          pending=defaultdict(deque))
+    # Before the deployment's caps, so a guest over their own share is told
+    # that, and the owner's caps below are reached by the owner's use.
+    who = _guest_key(request)
+    if who:
+        _guest_check(who, time.time())
     if _day["count"] >= DAILY_CAP:
         raise HTTPException(429, "Daily limit reached for this deployment. Try again tomorrow.")
     if DAILY_COST_CAP > 0 and _day_cost() >= DAILY_COST_CAP:
@@ -1914,6 +1922,68 @@ def check_rate(request: Request):
 
     q.append(now)
     _day["count"] += 1
+    if who:
+        _guest_day["turns"][who] += 1
+        _guest_day["pending"][who].append(now)
+
+
+# Guests have their own budget, inside the deployment's. The caps above are one
+# counter for everybody, and the per-minute limit is per address, so one guest
+# running long tool turns in parallel could spend DAILY_COST_CAP by lunch and
+# the owner would be told "spending safety cap" until midnight. Now:
+#   - each guest has GUEST_DAILY_COST dollars and GUEST_DAILY_TURNS turns a day;
+#   - all guests together stop at GUEST_SHARE of the deployment's cost and turn
+#     caps, so what is left of the day always belongs to the owner;
+#   - a guest has GUEST_CONCURRENT turns in flight at most. Cost is booked when
+#     a turn ends, so parallel turns were the way past the budget; a turn that
+#     never books (an early refusal, a crash) stops counting after
+#     GUEST_PENDING_SECONDS rather than holding the guest out all day.
+# The owner is never in the guest pool. Memory only, like _day: a restart
+# forgives the day, which errs towards the guest.
+GUEST_DAILY_COST = float(os.getenv("ARC_GUEST_DAILY_COST", "1.0"))    # dollars; 0 = none
+GUEST_DAILY_TURNS = int(os.getenv("ARC_GUEST_DAILY_TURNS", "150"))    # 0 = none
+GUEST_SHARE = 0.5
+GUEST_CONCURRENT = 2
+GUEST_PENDING_SECONDS = 300
+_guest_day = {"stamp": time.strftime("%Y-%m-%d"), "spend": defaultdict(float),
+              "turns": defaultdict(int), "pending": defaultdict(deque)}
+
+
+def _guest_key(request) -> str:
+    """The guest's address, lowercased, or "" for the owner. A bare object with
+    no cookies (a test's stand-in request) is nobody's session, so no guest."""
+    if not hasattr(request, "cookies") or not is_guest(request):
+        return ""
+    return ((current_session(request, touch=False) or {}).get("email") or "").strip().lower()
+
+
+def _guest_check(who: str, now: float) -> None:
+    """Raise 429 when this guest, or guests together, have had today's share."""
+    g = _guest_day
+    q = g["pending"][who]
+    while q and now - q[0] > GUEST_PENDING_SECONDS:
+        q.popleft()
+    if len(q) >= GUEST_CONCURRENT:
+        raise HTTPException(429, "One moment: I'm still working on your last question.")
+    if GUEST_DAILY_TURNS and g["turns"][who] >= GUEST_DAILY_TURNS:
+        raise HTTPException(429, "That's today's questions for this account. It resets tomorrow.")
+    if GUEST_DAILY_COST and g["spend"][who] >= GUEST_DAILY_COST:
+        raise HTTPException(429, "That's today's allowance for this account. It resets tomorrow.")
+    if DAILY_COST_CAP > 0 and sum(g["spend"].values()) >= DAILY_COST_CAP * GUEST_SHARE:
+        raise HTTPException(429, "Guest accounts have used today's allowance. It resets tomorrow.")
+    if sum(g["turns"].values()) >= DAILY_CAP * GUEST_SHARE:
+        raise HTTPException(429, "Guest accounts have used today's questions. It resets tomorrow.")
+
+
+def _guest_booked(who: str, cost: float) -> None:
+    """A guest's turn (or note) has been paid for: on their meter, and no
+    longer in flight."""
+    if not who:
+        return
+    _guest_day["spend"][who] += cost
+    q = _guest_day["pending"][who]
+    if q:
+        q.popleft()
 
 
 # Failed sign-ins, counted globally as well as per-IP. Per-IP alone was the
@@ -2898,6 +2968,7 @@ async def chat(request: Request, _=Depends(require_auth)):
     # --- what ARC can actually do this turn -------------------------------
     # Computer control only for the local desktop, never over the tunnel.
     guest = is_guest(request)
+    guest_who = _guest_key(request) if guest else ""   # whose budget book() charges
     # A guest is never "local", whatever the socket says. Belt and braces: it
     # already takes a loopback peer with no forwarding headers to be local, but
     # this way one check decides computer control, live screen and pc tools
@@ -3149,6 +3220,7 @@ async def chat(request: Request, _=Depends(require_auth)):
             # still the commonest failure there is (the API overloaded on the
             # first call), and Arc Watch's error count should see it.
             stats.record(model=model, error=True, turn=False)
+            _guest_booked(guest_who, 0.0)   # no longer in flight, and nothing to charge
             return
         _day["tok_in"] += tokens_in
         _day["tok_out"] += tokens_out
@@ -3160,6 +3232,7 @@ async def chat(request: Request, _=Depends(require_auth)):
                           cache_read - at_step[2], cache_write - at_step[3],
                           searches - at_step[4]) + early_spent
         _day["cost"] += spent
+        _guest_booked(guest_who, spent)
         # What the cache kept, less the write premium it cost; see cache_saved.
         saved = cache_saved(model, cache_read - at_step[2],
                             cache_write - at_step[3]) + early_saved
@@ -3533,6 +3606,7 @@ async def summarize(request: Request, _=Depends(require_auth)):
     # invisibly and never counts towards the cap.
     note_cost = turn_cost(MODEL, s_in, s_out)
     _day["cost"] += note_cost
+    _guest_booked(_guest_key(request), note_cost)
     # And on disk, for Arc Watch: it reached the daily cap but never usage.json,
     # so the spend Arc Watch showed was short by every note ever written
     # (Claude 4's cost audit). Not a turn — nobody asked anything.

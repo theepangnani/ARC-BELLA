@@ -100,6 +100,11 @@ back.
   always spoken by the free Edge voice, never ElevenLabs, even with
   `ARC_PREFER_ELEVEN` on: that bill is the owner's. Before 14 Sep 2026 guests
   got ElevenLabs too, so a guest hearing a different voice is this, not a fault.
+- **Guests have their own budget** inside the deployment's: $1 and 150 turns
+  a day each (`ARC_GUEST_DAILY_COST`, `ARC_GUEST_DAILY_TURNS`), all guests
+  together at most half of `ARC_DAILY_COST_CAP` and `ARC_DAILY_CAP`, and two
+  turns in flight per guest. The rest of the day is the owner's, so no guest
+  can lock the owner out. The numbers are the owner's to change.
 - **Every personal store is per person** (`whose.py`): notes, plan, panels,
   to-dos, reminders, alarms, price alerts, standing rules. A request reads and
   writes its own slice through `_load()`/`_save()`. The background loops serve
