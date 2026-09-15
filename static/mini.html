@@ -164,9 +164,13 @@
   history.forEach(m => add(m.role === "user" ? "me" : "bella", m.content));
 
   async function ask(text) {
-    const approve = (pendingConsent && isPlainYes(text))
-      ? pendingApprovals.map(a => a && a.token).filter(t => typeof t === "string")
-      : [];
+    // Only ever ONE held action by a plain yes: with several, a yes cannot say
+    // which, so full Bella's Allow buttons are the way (Claude 6's review).
+    const held = pendingApprovals.map(a => a && a.token).filter(t => typeof t === "string");
+    const approve = (pendingConsent && isPlainYes(text) && held.length === 1) ? held : [];
+    if (pendingConsent && isPlainYes(text) && held.length > 1) {
+      add("sys", "Several actions are waiting, so a yes can't tell which. Open full Bella to allow each one.");
+    }
     const messages = history.concat([{ role: "user", content: text }]).slice(-KEEP);
     add("me", text);
     const wait = add("sys thinking", "Bella is thinking…");
@@ -204,7 +208,9 @@
         pendingConsent = true;
         pendingApprovals = data.consent.slice(0, 8);
         const what = pendingApprovals.map(a => String(a && a.preview || "")).filter(Boolean).join(" · ");
-        add("sys", "Bella wants to: " + (what || "do something") + ". Reply \"yes\" to allow just that.");
+        add("sys", "Bella wants to: " + (what || "do something") + (pendingApprovals.length > 1
+          ? ". Open full Bella to allow each one."
+          : ". Reply \"yes\" to allow just that."));
       } else {
         pendingConsent = false;
         pendingApprovals = [];

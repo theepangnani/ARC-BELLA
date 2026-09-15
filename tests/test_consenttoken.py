@@ -195,9 +195,25 @@ c.truthy("  the HUD's allow_actions means only the lock", "const authorize = !as
 c.truthy("  a yes sends the held tokens", "approve: approve," in body and "pendingApprovals.map" in body)
 c.truthy("  and remembers them from the server's consent list", "data.consent" in body)
 c("  the old whole-turn yes is gone", "pendingConsent && isAffirmation(userText));" in body, False)
+c.truthy("  a spoken yes approves only when exactly one action is waiting",
+         "if (held.length === 1) approve = held;" in body)
+c.truthy("  with several, it approves none and says why",
+         "held.length > 1" in body and "a yes can't tell which one" in body)
+c.truthy("  each held action gets its own Allow button, which approves that token alone",
+         '"Allow: "' in page and "chosenApproval = a.token;" in page
+         and "approve = [chosenApproval];" in body)
+
+print("\nThe preview shows who an action reaches before what it says:")
+long_text = "x" * 400
+pv = consent.preview("tg_draft_message", {"text": long_text, "to": "@stranger"})
+c.truthy("  the recipient is shown even after a long message", "@stranger" in pv)
+c.truthy("  and comes first", pv.index("to=") < pv.index("text="))
+c.truthy("  and still within the cap", len(pv) <= consent.PREVIEW_CHARS)
 mini = io.open(ARC / "static" / "mini.html", encoding="utf-8").read()
 c.truthy("  the mini chat does the same, with its lock never off",
          "allow_actions: false," in mini and "approve: approve," in mini and "data.consent" in mini)
+c.truthy("  and a plain yes there also approves only a single waiting action",
+         "held.length === 1" in mini and "Open full Bella to allow each one" in mini)
 
 session.revoke_all()
 c.done()

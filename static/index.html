@@ -2433,6 +2433,11 @@ You are an upbeat, motivating coach in the user's corner.
   // the server (consent.py). A yes sends these tokens back, and only those exact
   // actions may then run — never "anything this turn".
   let pendingApprovals = [];
+  // The one action an Allow button was pressed for. A spoken yes can only
+  // approve when exactly ONE action is waiting: with several, "yes" cannot say
+  // which, and a mail that got an extra action held alongside the wanted one
+  // would ride through on it (Claude 6's review, 15 Sep).
+  let chosenApproval = null;
 
   function consentBlock() {
     if (!askFirst) return "";
@@ -6770,9 +6775,18 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // allow_actions is now only "the lock is off". A yes approves the actions
     // ARC just said she was holding back, by their tokens, and nothing else.
     const authorize = !askFirst;
-    const approve = (askFirst && pendingConsent && isAffirmation(userText))
-      ? pendingApprovals.map(a => a && a.token).filter(t => typeof t === "string")
-      : [];
+    let approve = [];
+    if (askFirst && chosenApproval) {
+      approve = [chosenApproval];
+      chosenApproval = null;
+    } else if (askFirst && pendingConsent && isAffirmation(userText)) {
+      const held = pendingApprovals.map(a => a && a.token).filter(t => typeof t === "string");
+      if (held.length === 1) approve = held;
+      else if (held.length > 1) {
+        addEntry("sys", "SYSTEM", "Several actions are waiting, so a yes can't tell which one " +
+          "you mean. Press Allow on each one you want.");
+      }
+    }
     // Only commit to history once the call succeeds. Previously a failed
     // request left an unanswered user turn behind, so the *next* question
     // sent two user messages in a row and the API rejected it.
@@ -6882,8 +6896,27 @@ Answer questions about the date, day, or time directly from the above. Do not sa
       // Said as text (addEntry uses textContent for SYSTEM lines): the preview
       // carries the model's own arguments.
       const what = pendingApprovals.map(a => String(a && a.preview || "")).filter(Boolean).join(" · ");
-      addEntry("sys", "SYSTEM", "Awaiting your go-ahead before I act" + (what ? ": " + what : "") +
-               ". Say \"yes\" to allow just that, or turn off “Ask before acting”.");
+      const card = addEntry("sys", "SYSTEM", "Awaiting your go-ahead before I act" + (what ? ": " + what : "") +
+               (pendingApprovals.length > 1
+                 ? ". Press Allow on each one you want."
+                 : ". Say \"yes\" to allow just that, or turn off “Ask before acting”."));
+      if (card && pendingApprovals.length > 1) {
+        const row = document.createElement("div");
+        row.className = "remember-ask";
+        pendingApprovals.forEach(a => {
+          if (!a || typeof a.token !== "string") return;
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = "Allow: " + String(a.preview || a.tool || "this");
+          b.addEventListener("click", () => {
+            b.disabled = true;
+            chosenApproval = a.token;
+            submit("Yes, go ahead with " + String(a.tool || "that") + ".");
+          });
+          row.appendChild(b);
+        });
+        card.appendChild(row);
+      }
     } else {
       pendingConsent = false;
       pendingApprovals = [];

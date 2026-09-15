@@ -75,10 +75,32 @@ def family_of(tool: str) -> str:
     return ""
 
 
+# Who or where an action reaches, shown before what it says. Sorted JSON put
+# "text" before "to", so a long Telegram message pushed the recipient past the
+# cap, and the person said yes without seeing who it went to (Claude 6's review).
+_FIRST = ("to", "recipient", "recipients", "chat", "contact", "name", "email",
+          "attendees", "number", "path", "command", "command_id", "pending_id",
+          "url", "app", "window", "key", "keys", "when", "start", "title")
+_VALUE_CHARS = 48
+
+
+def _args_line(args) -> str:
+    if not isinstance(args, dict):
+        return json.dumps(args, ensure_ascii=False, default=str)
+    keys = [k for k in _FIRST if k in args] + sorted(k for k in args if k not in _FIRST)
+    parts = []
+    for k in keys:
+        v = json.dumps(args[k], ensure_ascii=False, default=str)
+        if len(v) > _VALUE_CHARS:
+            v = v[:_VALUE_CHARS - 1] + "…"
+        parts.append("%s=%s" % (k, v))
+    return "{" + ", ".join(parts) + "}"
+
+
 def preview(tool: str, args, describe: str = "") -> str:
     """What the person is shown before they say yes. `describe` replaces the
     raw arguments when the caller knows better (a prepared command's text)."""
-    body = describe or json.dumps(args or {}, sort_keys=True, ensure_ascii=False, default=str)
+    body = describe or _args_line(args)
     text = "%s %s" % (tool, body)
     return text if len(text) <= PREVIEW_CHARS else text[:PREVIEW_CHARS - 1] + "…"
 
