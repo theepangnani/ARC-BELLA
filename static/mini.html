@@ -1,0 +1,231 @@
+<meta charset="utf-8">
+<!-- ARC — Ambient Response Core.  Copyright (c) 2026 Theepan Gnanasabapathy.
+     All rights reserved. Proprietary; see LICENSE. Visibility is not permission. -->
+<!-- The mini chat: what the little circle in the corner of the desktop opens
+     while Bella's window is minimised (bubble.py). For a question typed when
+     talking isn't possible. It is deliberately smaller than the HUD in what it
+     can DO, not only in size:
+       · it asks the same /api/chat, through the same consent gate, and never
+         authorises an action on its own — only a plain yes to an action Bella
+         just said she was holding back;
+       · it never runs a directive ([[remember:]], [[timer:]], [[board:]] and
+         the rest). Those are stripped from what is shown and ignored; the main
+         page, with its Keep/Skip card, is where they belong;
+       · reply text only ever reaches the page through textContent.
+     tests/test_minichat.py guards all three. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<!-- Exactly this: bubble.py finds an open mini chat by its title and brings it
+     forward instead of opening a second. tests/test_bubble.py pins it. -->
+<title>Mini Bella</title>
+<link rel="icon" type="image/svg+xml" href="/static/arc-logo.svg">
+<meta name="theme-color" content="#04070c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --void:      #04070c;
+    --deep:      #091320;
+    --line:      #12293c;
+    --cyan:      #5fd9ff;
+    --cyan-dim:  #1c6d8f;
+    --ice:       #d7eefc;
+    --amber:     #ffb454;
+    --rose:      #ff6b7a;
+    /* The HUD's own stacks, so Tamil and the rest render here too. */
+    --fallback: "Segoe UI", "Nirmala UI", "Noto Sans", "Noto Sans Tamil",
+                "Noto Sans Arabic", "Noto Sans Hebrew", "Noto Sans Devanagari",
+                "Noto Sans Thai", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic",
+                "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    --display: "Rajdhani", "Oswald", "Helvetica Neue", var(--fallback);
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, var(--fallback);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--void); color: var(--ice);
+    font: 15px/1.45 var(--fallback);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--deep);
+  }
+  header img { width: 22px; height: 22px; }
+  header h1 {
+    margin: 0; font: 600 17px/1 var(--display); letter-spacing: .14em;
+    text-transform: uppercase; color: var(--cyan); flex: 1;
+  }
+  header a {
+    font: 500 11px/1 var(--mono); letter-spacing: .08em; color: var(--cyan-dim);
+    text-decoration: none; border: 1px solid var(--line); padding: 6px 8px; border-radius: 4px;
+  }
+  header a:hover, header a:focus-visible { color: var(--ice); border-color: var(--cyan-dim); outline: none; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #log:empty::before {
+    content: "Type a question. Bella answers here while her window stays minimised.";
+    color: var(--cyan-dim); font: 13px/1.5 var(--mono); margin: auto 8px; text-align: center;
+  }
+  .msg { max-width: 88%; padding: 8px 11px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .me { align-self: flex-end; background: #0f2a3d; border: 1px solid var(--cyan-dim); }
+  .bella { align-self: flex-start; background: var(--deep); border: 1px solid var(--line); }
+  .sys { align-self: center; max-width: 100%; color: var(--amber); font: 12px/1.4 var(--mono); text-align: center; }
+  .sys.err { color: var(--rose); }
+  .thinking { color: var(--cyan-dim); font: 12px/1 var(--mono); letter-spacing: .1em; }
+  form { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--deep); }
+  #say {
+    flex: 1; resize: none; min-height: 38px; max-height: 110px;
+    background: var(--void); color: var(--ice); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font: 15px/1.35 var(--fallback);
+  }
+  #say:focus { outline: none; border-color: var(--cyan-dim); }
+  #send {
+    background: transparent; color: var(--cyan); border: 1px solid var(--cyan-dim); border-radius: 8px;
+    padding: 0 14px; font: 600 14px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; cursor: pointer;
+  }
+  #send:disabled { color: var(--cyan-dim); cursor: default; }
+  #send:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+</style>
+
+<header>
+  <img src="/static/arc-logo.svg" alt="">
+  <h1>Bella</h1>
+  <a id="full" href="/" title="Open the full Bella in this window">Open full Bella</a>
+</header>
+<main id="log" aria-live="polite"></main>
+<form id="ask">
+  <textarea id="say" rows="1" placeholder="Ask Bella…" aria-label="Your message" autocomplete="off"></textarea>
+  <button id="send" type="submit">Send</button>
+</form>
+
+<script>
+(function () {
+  "use strict";
+  const log = document.getElementById("log");
+  const form = document.getElementById("ask");
+  const say = document.getElementById("say");
+  const send = document.getElementById("send");
+  const KEY = "arc.mini.history";
+  // Enough for a follow-up to make sense, and well inside what the server takes.
+  const KEEP = 20;
+
+  let history = [];
+  try { history = JSON.parse(sessionStorage.getItem(KEY) || "[]"); } catch (_) { history = []; }
+  if (!Array.isArray(history)) history = [];
+  history = history.filter(m => m && (m.role === "user" || m.role === "assistant")
+                                && typeof m.content === "string" && m.content);
+
+  // Bella said she was holding an action back until the person says yes. Only
+  // then may the NEXT message authorise it, and only if that message is a
+  // plain yes. The mini chat has no lock switch: it is always "ask first".
+  let pendingConsent = false;
+
+  const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|go for it|yes do it|confirm|confirmed)$/;
+  function isPlainYes(text) {
+    const t = String(text || "").toLowerCase().replace(/[.,!?]/g, "")
+      .replace(/\b(bella|arc|sir|please|now|then)\b/g, " ").replace(/\s+/g, " ").trim();
+    return YES.test(t);
+  }
+
+  // Every directive out, and none of them acted on. A board is fenced with a
+  // closing marker, so it goes whole; anything else in [[ ]] goes by itself.
+  function stripDirectives(text) {
+    let t = String(text || "");
+    let board = false;
+    t = t.replace(/\[\[\s*board\s*:[^\]\n]*\]\][\s\S]*?\[\[\s*\/\s*board\s*\]\]/gi, () => { board = true; return ""; });
+    t = t.replace(/\[\[[^\]]*\]\]/g, "");
+    t = t.replace(/\n{3,}/g, "\n\n").trim();
+    if (board) t += (t ? "\n\n" : "") + "(There's a board with this — open full Bella to see it.)";
+    return t;
+  }
+
+  function add(kind, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function save() {
+    history = history.slice(-KEEP);
+    // A kept history must start with the person, as the API requires.
+    while (history.length && history[0].role !== "user") history.shift();
+    try { sessionStorage.setItem(KEY, JSON.stringify(history)); } catch (_) {}
+  }
+
+  history.forEach(m => add(m.role === "user" ? "me" : "bella", m.content));
+
+  async function ask(text) {
+    const authorize = pendingConsent && isPlainYes(text);
+    const messages = history.concat([{ role: "user", content: text }]).slice(-KEEP);
+    add("me", text);
+    const wait = add("sys thinking", "Bella is thinking…");
+    send.disabled = true;
+    const ctrl = new AbortController();
+    const bail = setTimeout(() => ctrl.abort(), 90000);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          messages: messages,
+          prompt: "main",
+          model: "auto",
+          // Only a plain yes to an action Bella is holding back. Never otherwise.
+          allow_actions: authorize,
+        }),
+      });
+      if (!res.ok) {
+        let detail = "";
+        try { const e = await res.json(); detail = e && e.detail ? String(e.detail) : ""; } catch (_) {}
+        if (res.status === 401) detail = "Your sign-in has ended. Open full Bella to sign in again.";
+        throw new Error(detail || ("Bella couldn't answer (HTTP " + res.status + ")."));
+      }
+      const data = await res.json();
+      const shown = stripDirectives(data.reply) || "…";
+      wait.remove();
+      add("bella", shown);
+      history = messages.concat([{ role: "assistant", content: shown }]);
+      save();
+      if (!authorize && Array.isArray(data.blocked) && data.blocked.length) {
+        pendingConsent = true;
+        add("sys", "Bella is waiting for your go-ahead. Reply \"yes\" to let her do it.");
+      } else {
+        pendingConsent = false;
+      }
+    } catch (e) {
+      wait.remove();
+      const said = e && e.name === "AbortError" ? "No reply in time. Try again." : (e && e.message) || "Couldn't reach Bella.";
+      add("sys err", said);
+      pendingConsent = false;
+    } finally {
+      clearTimeout(bail);
+      send.disabled = false;
+      say.focus();
+    }
+  }
+
+  form.addEventListener("submit", ev => {
+    ev.preventDefault();
+    const text = say.value.trim();
+    if (!text || send.disabled) return;
+    say.value = "";
+    ask(text);
+  });
+  say.addEventListener("keydown", ev => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+      ev.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  say.focus();
+})();
+</script>

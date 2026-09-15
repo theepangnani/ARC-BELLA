@@ -5367,6 +5367,16 @@ async def index(request: Request):
     return FileResponse(ROOT / "static" / "index.html", headers=_NO_CACHE)
 
 
+@app.get("/mini")
+async def mini(request: Request, _=Depends(require_auth)):
+    """The small chat box the desktop bubble opens while Bella's window is
+    minimised (bubble.py). Typed questions only, answered through the same
+    /api/chat as the HUD with the same consent gate. The owner's, not a
+    guest's: it lives on the owner's desktop, and a guest has the full page."""
+    deny_guest(request)
+    return FileResponse(ROOT / "static" / "mini.html", headers=_NO_CACHE)
+
+
 @app.get("/home")
 async def home_page():
     """Public homepage — describes ARC. Reachable without signing in so
