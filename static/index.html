@@ -2429,6 +2429,10 @@ You are an upbeat, motivating coach in the user's corner.
   let askFirst = true;
   try { askFirst = localStorage.getItem("arc.askfirst") !== "0"; } catch (_) {}
   let pendingConsent = false;   // ARC asked to do something and is waiting on a yes
+  // What she is waiting to do: one {token, tool, preview} per held action, from
+  // the server (consent.py). A yes sends these tokens back, and only those exact
+  // actions may then run — never "anything this turn".
+  let pendingApprovals = [];
 
   function consentBlock() {
     if (!askFirst) return "";
@@ -6723,7 +6727,12 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // Consent: authorise actions this turn only if the lock is off, or the user
     // is clearly confirming an action ARC just asked about. Otherwise the server
     // will refuse any action and ARC will ask first.
-    const authorize = !askFirst || (pendingConsent && isAffirmation(userText));
+    // allow_actions is now only "the lock is off". A yes approves the actions
+    // ARC just said she was holding back, by their tokens, and nothing else.
+    const authorize = !askFirst;
+    const approve = (askFirst && pendingConsent && isAffirmation(userText))
+      ? pendingApprovals.map(a => a && a.token).filter(t => typeof t === "string")
+      : [];
     // Only commit to history once the call succeeds. Previously a failed
     // request left an unanswered user turn behind, so the *next* question
     // sent two user messages in a row and the API rejected it.
@@ -6754,6 +6763,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
           chat: chatMode,
           // Only a genuine, user-approved turn may act. Background calls never set this.
           allow_actions: authorize,
+          approve: approve,
           // Send the mode, not a local guess. The server turns anything but
           // "off" into adaptive thinking and lets the model judge each
           // question — it is better at that than the keyword heuristic here,
@@ -6826,11 +6836,17 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // Track whether ARC is now waiting on the user's go-ahead: it wanted to act
     // but the lock held it, so the NEXT clear yes should authorise it. If this
     // turn was itself authorised (the action ran), the request is settled.
-    if (askFirst && !authorize && Array.isArray(data.blocked) && data.blocked.length) {
+    if (askFirst && Array.isArray(data.consent) && data.consent.length) {
       pendingConsent = true;
-      addEntry("sys", "SYSTEM", "Awaiting your go-ahead before I act. Say \"yes\" to allow, or turn off “Ask before acting”.");
+      pendingApprovals = data.consent.slice(0, 8);
+      // Said as text (addEntry uses textContent for SYSTEM lines): the preview
+      // carries the model's own arguments.
+      const what = pendingApprovals.map(a => String(a && a.preview || "")).filter(Boolean).join(" · ");
+      addEntry("sys", "SYSTEM", "Awaiting your go-ahead before I act" + (what ? ": " + what : "") +
+               ". Say \"yes\" to allow just that, or turn off “Ask before acting”.");
     } else {
       pendingConsent = false;
+      pendingApprovals = [];
     }
     saveHistory();                // survive a reload
     maybeRefreshThread();         // keep the rolling thread-continuity note current
@@ -8681,7 +8697,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
   const consentBtn = document.getElementById("consentBtn");
   function applyConsent(on) {
     askFirst = on;
-    if (!on) pendingConsent = false;
+    if (!on) { pendingConsent = false; pendingApprovals = []; }
     try { localStorage.setItem("arc.askfirst", on ? "1" : "0"); } catch (_) {}
     if (consentBtn) {
       consentBtn.classList.toggle("off", !on);

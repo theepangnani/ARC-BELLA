@@ -55,8 +55,9 @@ c("  nothing is ever written as markup",
 c("  no inline event handlers", re.findall(r"\son[a-z]+\s*=", PAGE), [])
 c.truthy("  it doesn't load a squashed second Bella into its own small window",
          'href="/"' not in PAGE and "right-click the circle" in PAGE)
-c.truthy("  it never sets allow_actions to true outright",
-         "allow_actions: authorize" in SCRIPT[0] and not re.search(r"allow_actions\s*:\s*true", SCRIPT[0]))
+c.truthy("  its lock is never off, and a yes approves by token (consent.py)",
+         "allow_actions: false" in SCRIPT[0] and "approve: approve" in SCRIPT[0]
+         and not re.search(r"allow_actions\s*:\s*(true|authorize)", SCRIPT[0]))
 c("  and it never calls the routes a directive would",
   [r for r in ("/api/chat/remember", "/api/memory", "/api/alarm", "/api/timer") if r in SCRIPT[0]], [])
 
@@ -115,7 +116,8 @@ STUB = r"""<script>
 window.__sent = [];
 window.__replies = [
   { reply: "I can switch that off for you. [[remember: the user likes it dark]] [[timer: 60|lights]]",
-    blocked: ["run_command"] },
+    blocked: ["run_prepared"],
+    consent: [{ token: "TOKEN-ONE", tool: "run_prepared", preview: "run_prepared this command: lights off" }] },
   { reply: "Done, the lights are off.", blocked: [] },
   { reply: "Sure. [[board: notes]]\nsecret board text\n[[/board]]", blocked: [] },
   { reply: "<img src=x onerror=\"window.pwned=1\"> is what that tag looks like.", blocked: [] },
@@ -140,6 +142,7 @@ PROBE = r"""<pre id="probe"></pre><script>
   const shown = [...document.querySelectorAll("#log .msg")].map(d => d.textContent);
   const out = {
     allow: window.__sent.filter(s => s.url === "/api/chat").map(s => s.body.allow_actions),
+    approve: window.__sent.filter(s => s.url === "/api/chat").map(s => s.body.approve),
     urls: window.__sent.map(s => s.url),
     shown: shown,
     imgs: document.querySelectorAll("#log img").length,
@@ -181,14 +184,16 @@ if got is None:
 else:
     c.truthy("  the browser ran the page", bool(got))
     got = got or {}
-    c("  consent: no, then yes to a held action, then no again",
-      got.get("allow", [])[:3], [False, True, False])
-    c("  ...and a later question is never authorised", got.get("allow", [])[3:], [False, False])
+    c("  the lock is never off, whatever is said", got.get("allow", []), [False] * 5)
+    c("  a yes sends the held action's token, once, and nothing else ever does",
+      got.get("approve", []), [[], ["TOKEN-ONE"], [], [], []])
+    c.truthy("  and what she wants to do is shown before the yes",
+             any("this command: lights off" in s for s in got.get("shown", [])))
     c("  only /api/chat was ever called, so no directive reached its route",
       sorted(set(got.get("urls", []))), ["/api/chat"])
     shown = got.get("shown", [])
     c("  no [[directive]] is shown", [s for s in shown if "[[" in s], [])
-    c.truthy("  the held action is said, in words", any("go-ahead" in s for s in shown))
+    c.truthy("  the held action is said, in words", any("Reply \"yes\" to allow just that" in s for s in shown))
     c.truthy("  a board is not drawn, and its text is not shown",
              not any("secret board text" in s for s in shown)
              and any("open full Bella" in s for s in shown))
