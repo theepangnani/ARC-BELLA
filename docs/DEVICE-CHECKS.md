@@ -68,8 +68,63 @@ the check quick; set it back afterwards.
 
 The count resets at midnight, and also on every restart.
 
+## 4. Your phone still reaches Bella
+
+Since the request gate (15 Sep 2026), Bella only answers to addresses she knows.
+
+1. Open Bella on your phone the way you usually do.
+2. **You should see:** Bella, as normal.
+3. **If you see a short error page with the code 421:** add the address your phone
+   uses (the part after `https://`, without any path) to `ARC_ALLOWED_HOSTS` in the
+   desktop settings, then restart.
+
+## 5. Mini Bella
+
+On the desktop, with the private Bella running.
+
+1. Minimise Bella's window.
+2. **You should see:** a small circle with her logo at the bottom right, just above
+   the taskbar.
+3. Bring Bella back. **You should see:** the circle disappears.
+4. Minimise her again and **left-click** the circle. **You should see:** a small
+   "Mini Bella" chat window opens just above it.
+5. Type "what time is it" and press Enter. **You should see:** an answer in text.
+6. Click the circle again. **You should see:** the same chat comes to the front, not
+   a second one.
+7. **Right-click** the circle. **You should see:** Bella's full window comes back.
+
+**If no circle appears:** check that `ARC_MINI_BELLA` isn't set to `off`, then tell
+Claude 2.
+
+## 6. A yes covers what you were asked about
+
+With "Ask before acting" on.
+
+1. Ask Bella to do something on the computer, like "open Notepad and type hello".
+2. **You should see:** a SYSTEM note listing exactly what she wants to do, ending
+   "Say "yes" to allow just that".
+3. Say "yes". **You should see:** she does that, and more of the same kind (clicks and
+   typing) in the same answer.
+4. Ask for something of a different kind in the same breath, like running a command.
+   **You should see:** she asks again for that one.
+
+In Mini Bella the note ends "Reply "yes" to allow just that". There is no switch to
+turn asking off.
+
+## 7. Outside reading makes alarms and timers ask
+
+1. Ask Bella to read your latest email or search the news.
+2. In the same conversation, ask "set a timer for 1 minute".
+3. **You should see:** instead of a timer starting, a note "Bella wants to start a
+   60-second timer. This came up while reading something from outside. Do it?"
+   with **Do it** and **Skip**.
+4. Click **Do it**. **You should see:** the timer starts. **Skip** starts nothing.
+5. After 15 minutes with no outside reading, a timer starts straight away again.
+
 ## Who to tell
 
 - **Claude 1:** anything that needs a setting changed or a restart, and Live screen
   problems.
-- **Claude 2:** streaming or the picture limit behaving wrongly.
+- **Claude 2:** streaming, the picture limit, Mini Bella's circle, or the Do it / Skip
+  cards behaving wrongly.
+- **Claude 4:** the Mini Bella chat page, or a yes covering too much or too little.

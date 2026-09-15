@@ -105,6 +105,20 @@ back.
   together at most half of `ARC_DAILY_COST_CAP` and `ARC_DAILY_CAP`, and two
   turns in flight per guest. The rest of the day is the owner's, so no guest
   can lock the owner out. The numbers are the owner's to change.
+- **A yes covers one action and its kind** (`consent.py`). With ask-first on, a
+  held action gets a single-use token bound to the person, the browser, the
+  tool and its exact arguments; the yes sends the token back, and that call
+  runs, plus further calls of the same family (`FAMILIES`: the screen) in that
+  turn only. Any other kind still asks. The owner chose that on 15 Sep 2026
+  over one yes per click; a `run_prepared` preview shows the command's text.
+- **Outside reading holds what the page would do.** `[[remember:]]` waits for
+  Keep/Skip, and `[[alarm:]]`, `[[timer:]]`, `[[canceltimer]]` and `[[market:]]`
+  wait for Do it/Skip, while `/api/chat`'s `outside` (lessons.read_outside_within,
+  15 minutes) is non-empty. Mode, view and voice change only the screen.
+- **Mini Bella** (`bubble.py`, `/mini`): a circle at the bottom right while the
+  private Bella is minimised, started by `launch-bella-private.ps1`
+  (`ARC_MINI_BELLA=off` skips it). The chat opens in Bella's own browser profile
+  and never turns ask-first off; it acts on no directive.
 - **Every personal store is per person** (`whose.py`): notes, plan, panels,
   to-dos, reminders, alarms, price alerts, standing rules. A request reads and
   writes its own slice through `_load()`/`_save()`. The background loops serve
@@ -125,7 +139,7 @@ back.
 ## Running things
 
 ```
-python tests/run_all.py          # 46 suites, ~6 minutes; set PYTHONIOENCODING=utf-8
+python tests/run_all.py          # 102 suites, ~3 minutes; set PYTHONIOENCODING=utf-8
 python tests/test_guest.py       # or one suite on its own
 python -m compileall -q .        # what CI does
 ```
