@@ -178,23 +178,44 @@ def _folder_names() -> list:
     return [n for n in names if len(n) > 2]
 
 
+_subfolders_cache = {"at": -1e9, "names": frozenset()}
+
+
 def _subfolder_names() -> set:
     """The name of every folder inside this one, the skipped ones included
-    (.git, backups): Explorer can show those as well as anything else."""
-    names = set()
-    for dirpath, dirnames, _ in os.walk(ROOT):
-        names.update(d.lower() for d in dirnames)
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
-    return {n for n in names if n}
+    (.git, backups): Explorer can show those as well as anything else.
+
+    Kept for NAMES_TTL like _names(), for the same reason: a click is checked
+    per event, and each check walked the whole folder."""
+    now = time.monotonic()
+    if now - _subfolders_cache["at"] > NAMES_TTL:
+        names = set()
+        for dirpath, dirnames, _ in os.walk(ROOT):
+            names.update(d.lower() for d in dirnames)
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        _subfolders_cache.update(at=now, names=frozenset(n for n in names if n))
+    return set(_subfolders_cache["names"])
+
+
+_names_cache = {"at": -1e9, "names": frozenset()}
+NAMES_TTL = 5.0
 
 
 def _names() -> set:
     """The distinctive names a command or a window title would use for this
-    code: every locked file's name, and this folder's own path and name."""
-    names = {p.name.lower() for p in code_files()}
-    names |= _STATE_NAMES | _SECRET_NAMES
-    names.discard("")
-    return names
+    code: every locked file's name, and this folder's own path and name.
+
+    Kept for a few seconds. The auto-clicker and hold_key ask the lock before
+    every event, up to 50 times a second, and each ask walked the whole folder.
+    A file added in the last few seconds is still caught by its path, and the
+    snapshot (which is never cached) still sees any change."""
+    now = time.monotonic()
+    if now - _names_cache["at"] > NAMES_TTL:
+        names = {p.name.lower() for p in code_files()}
+        names |= _STATE_NAMES | _SECRET_NAMES
+        names.discard("")
+        _names_cache.update(at=now, names=frozenset(names))
+    return set(_names_cache["names"])
 
 
 # --- the shell ---------------------------------------------------------------
@@ -231,12 +252,37 @@ _INLINE = re.compile(
 # string, cmd's delayed !variables!, a variable set and then expanded. Each
 # spells a path the checks below never see. And a link made to this folder is
 # a second name for it that no check here knows about.
+#
+# The first version refused the SHAPES outright, and the bug check found that
+# refuses ordinary work: ffmpeg -i "in.mov" -f mp3, curl "x" -F file=@a,
+# ("Free: " + $n), set PATH=%PATH%;C:\tools. So joining is refused only when a
+# piece being joined looks like part of a path, a format only when its template
+# has a {0} in it, and a cmd variable only when it is set in one step and used
+# in a LATER one (set PATH=%PATH%;... reads the old value, not a built one).
+_PATHY = r"[\"'](?:[a-z]:[^\"']*|[^\"']*[\\/][^\"']*|[^\"']*\.[a-z0-9]{1,4})[\"']"
 _BUILT = re.compile(
-    r"(?i)[\"']\s*\+\s*[\"'$(]|[)\"']\s*\+\s*\(|\s-join\b|\[string\]::|\[io\.path\]::combine"
-    r"|[\"']\s+-f\s|\bcmd(\.exe)?\s+(/[a-z]\s+)*/v\b|enabledelayedexpansion"
-    r"|(^|[\s;&|(])set\s+\"?[a-z_][a-z0-9_]*=.*%[a-z_][a-z0-9_]*(:[^%]*)?%"
+    r"(?i)" + _PATHY + r"\s*\+|\+\s*" + _PATHY
+    + r"|" + _PATHY + r".*\s-join\b|\s-join\b.*" + _PATHY
+    + r"|\[string\]::(concat|join|format)|\[io\.path\]::combine"
+    r"|[\"'](?=[^\"']*\{\d+\})(?=[^\"']*[\\/:.])[^\"']*[\"']\s+-f\s"
+    r"|[\"'][^\"']*\{\d+\}[^\"']*[\"']\s+-f\s.*" + _PATHY + r"|\bcmd(\.exe)?\s+(/[a-z]\s+)*/v\b|enabledelayedexpansion"
     r"|\bmklink\b|-itemtype\s+[\"']?(junction|symboliclink|hardlink)|\bfsutil\s+hardlink\b"
     r"|(^|[\s;&|(])subst\s")
+
+
+def _set_then_used(cmd: str) -> bool:
+    """A cmd variable set in one step and expanded in a later one:
+    `set a=C:\\de& echo x > %a%v\\t.txt`. Steps are split on & | and newlines."""
+    steps = re.split(r"&&?|\|\|?|\n", cmd)
+    for i, step in enumerate(steps):
+        m = re.match(r"\s*set\s+\"?([a-z_][a-z0-9_]*)=", step, re.I)
+        if not m:
+            continue
+        name = re.escape(m.group(1))
+        later = "&".join(steps[i + 1:])
+        if re.search(r"(?i)%" + name + r"(:[^%]*)?%|!" + name + r"!", later):
+            return True
+    return False
 _PIPED = re.compile(
     r"(?i)\|\s*&?\s*[\"']?" + _INTERP[:-1] + r"|powershell|pwsh|cmd|bash|sh|wsl)(\.exe)?[\"']?(\s|$)")
 # git rewrites the working tree (checkout, pull, reset, apply, stash) — and a
@@ -309,6 +355,23 @@ def _wild_reaches_root(pattern: str) -> bool:
     return False
 
 
+def _wild_in_other_folder(low: str, at: int) -> bool:
+    r"""Is the wildcard at `at` the file part of a full path to a folder that
+    neither is nor holds this one? "dir C:\Users\me\Documents\*.txt" is
+    somebody's notes. "del /s C:\dev\*.py" holds ARC and stays refused, and so
+    does any bare or relative "*.py", which could be anywhere."""
+    start = max(low.rfind(ch, 0, at) for ch in " \t\"'|;&<>,()=") + 1
+    token = low[start:at]
+    if not re.match(r"[a-z]:\\", token) or not token.endswith("\\") or _WILD.search(token):
+        return False
+    try:
+        folder = Path(os.path.expandvars(token)).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return folder.is_dir() and folder != ROOT and folder not in ROOT.parents \
+        and ROOT not in folder.parents
+
+
 def check_command(command: str):
     """None if the command may run; the refusal, as a sentence, if not."""
     cmd = command or ""
@@ -327,7 +390,7 @@ def check_command(command: str):
     if _HIDDEN.search(cmd):
         return (f"{LAW} — that command hides what it runs (encoded, eval'd or "
                 f"built at run time), so I cannot check it doesn't touch my code.")
-    if _BUILT.search(cmd):
+    if _BUILT.search(cmd) or _set_then_used(cmd):
         return (f"{LAW} — that command builds a path out of pieces, or makes a "
                 f"link, so I cannot see where it ends up. Spell the full path.")
     if _INLINE.search(cmd) or _PIPED.search(cmd):
@@ -363,7 +426,9 @@ def check_command(command: str):
     # all of them. A wildcard over a code extension is refused wherever it points.
     # Searched in the WHOLE command, paths included: "del /s C:\dev\*.py" is a
     # path that resolves outside this folder and still reaches into it.
-    glob = re.search(r"\*+\.(%s)\b" % "|".join(e.lstrip(".") for e in _CODE_EXT), _norm(cmd))
+    glob = next((m for m in re.finditer(r"\*+\.(%s)\b" % "|".join(e.lstrip(".") for e in _CODE_EXT),
+                                        _norm(cmd))
+                 if not _wild_in_other_folder(_norm(cmd), m.start())), None)
     if glob:
         return (f"{LAW} — a wildcard over *.{glob.group(1)} files could reach my "
                 f"code wherever it points. Name the files instead.")

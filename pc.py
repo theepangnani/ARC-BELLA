@@ -936,7 +936,9 @@ def mouse_control(action: str, x=None, y=None, amount=None) -> str:
     # different window whenever the click is somewhere else on the screen.
     if a in ("click", "left", "left_click", "double", "double_click", "doubleclick",
              "right", "right_click", "rightclick"):
-        refusal = input_refusal((x, y) if x is not None and y is not None else "pointer")
+        spot = (x, y) if x is not None and y is not None else "pointer"
+        step_aside_editor(spot)
+        refusal = input_refusal(spot)
         if refusal:
             raise RuntimeError(refusal)
     if a in ("click", "left", "left_click"):
@@ -1427,6 +1429,49 @@ def _pointer() -> tuple:
         return None
 
 
+def _minimize(hwnd) -> None:
+    import ctypes
+    ctypes.windll.user32.ShowWindow(hwnd, 6)        # SW_MINIMIZE
+
+
+def step_aside_editor(at=None) -> bool:
+    """If the window input would reach is a code editor, minimise it, so the
+    click or the keystrokes land on the window behind it instead. True if one
+    was minimised.
+
+    The owner's choice (15 Sep 2026). The lock refuses input to an editor
+    whole, because from outside nothing can tell its terminal from its text,
+    and on the desktop VS Code is in front nearly all the time, so Bella "no
+    longer used the mouse". Moving the editor out of the way changes nothing
+    in it and types nothing into it; whatever is behind is then judged by the
+    lock like any other window. Terminals are NOT stepped around: a terminal
+    in front means somebody is using it."""
+    if not IS_WIN:
+        return False
+    moved = False
+    for _ in range(3):                  # an editor can sit behind another editor
+        if at is None:
+            hwnd, _title = _focused()
+        else:
+            pt = _pointer() if at == "pointer" else at
+            if not pt:
+                return moved
+            hwnd, _title = _window_at(*pt)
+        if not hwnd or _exe_of(hwnd) not in codeguard._IDES:
+            return moved
+        try:
+            _minimize(hwnd)
+        except Exception:
+            return moved
+        moved = True
+        for _ in range(10):             # give the window manager a moment
+            time.sleep(0.05)
+            h2 = _focused()[0] if at is None else _window_at(*(_pointer() if at == "pointer" else at))[0]
+            if h2 != hwnd:
+                break
+    return moved
+
+
 def input_refusal(at=None):
     """The code lock's answer for input about to be sent: None, or why not.
 
@@ -1521,6 +1566,8 @@ def keyboard(text: str = "", key: str = "") -> str:
     if len(t) > 2000:
         return "That's too much text to type in one go."
 
+    if k != "win" and step_aside_editor():
+        pass                            # the editor in front was moved aside
     hwnd, title = _focused()
     # The Windows key goes to the shell whatever is in front; everything else
     # goes to the focused window, so it matters which one that is.

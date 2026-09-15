@@ -49,6 +49,7 @@ assert pc._tap_vk.__name__ == "<lambda>", "real keystrokes are NOT intercepted"
 
 focus = {"hwnd": 0, "title": ""}
 pc._focused = lambda: (focus["hwnd"], focus["title"])
+pc._minimize = lambda h: None      # never minimise a real window from a test
 
 
 def at(title, hwnd=42):

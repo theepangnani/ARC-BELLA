@@ -266,6 +266,8 @@ print("\nTyping is refused into terminals and editors showing the code:")
 focus = {"hwnd": 7, "title": "", "exe": ""}
 pc._focused = lambda: (focus["hwnd"], focus["title"])
 pc._exe_of = lambda h: focus["exe"]
+minimised = []
+pc._minimize = lambda h: minimised.append(h)   # never a real window from a test
 
 
 def at(title, exe="notepad.exe"):
@@ -365,6 +367,7 @@ pc._exe_of = lambda h: under["exe"] if h == 9 else focus["exe"]
 under.update(title="run.py - %s - Visual Studio Code" % codeguard.ROOT.name, exe="code.exe")
 c.truthy("  a click on the editor is refused",
          codeguard.LAW in refused(pc.mouse_control, "click", 100, 100))
+c.truthy("  ...after trying to move the editor aside, which here did not move", 9 in minimised)
 c.truthy("  auto_click on it is refused", codeguard.LAW in automation.auto_click(2, 1, x=100, y=100))
 c("  nothing started", automation.running(), False)
 # Explorer is the taskbar and the desktop as well as the address bar. Typing
@@ -451,9 +454,23 @@ for cmd in (
         "fsutil hardlink create a b"):
     c.truthy("  %-60s refused" % cmd[:60], refused(codeguard.check_command, cmd))
 for cmd in ("dir C:\\Users\\me\\Documents", "echo hello + goodbye",
+            # Refused by the first version of the pieces check (bug hunt, 14 Sep).
+            'ffmpeg -i "in.mov" -f mp3 out.mp3', 'curl "https://example.test" -F file=@a.txt',
+            'powershell ("Free: " + (Get-PSDrive C).Free)', "set PATH=%PATH%;C:\\tools",
+            'powershell "{0} items" -f 3',
             "powershell Get-Process | Sort-Object CPU", "ping 8.8.8.8",
             "set /a 2+3", "type C:\\Users\\me\\Documents\\notes.env.txt"):
     c("  %-60s allowed" % cmd, codeguard.check_command(cmd), None)
+
+print("\nA wildcard over somebody's own documents is theirs:")
+import tempfile as _tf   # noqa: E402
+with _tf.TemporaryDirectory() as docs:
+    for cmd in ("dir %s\\*.txt" % docs, 'type "%s\\*.md"' % docs):
+        c("  %-60s allowed" % cmd[-60:], codeguard.check_command(cmd), None)
+for cmd in ("dir *.txt", "del /s %s\\*.py" % str(codeguard.ROOT.parent),
+            "del %s\\*.py" % str(codeguard.ROOT), "del /s C:\\*.py",
+            "dir C:\\no-such-folder-arc\\*.py"):
+    c.truthy("  %-60s refused" % cmd[-60:], refused(codeguard.check_command, cmd))
 
 print("\nAn export goes where exports go, never over code or a stranger's file:")
 import selfheal   # noqa: E402
@@ -468,6 +485,29 @@ with tempfile.TemporaryDirectory() as d:
     c.truthy("  not over somebody's existing .json", "isn't an ARC export" in selfheal.export_all(other))
     c("  which is left as it was", open(other).read(), "{}")
     c.truthy("  but into a folder of their own, fine", "Exported" in selfheal.export_all(d))
+
+print("\nAn editor in front is moved aside, and the input goes to what is behind (owner, 15 Sep):")
+stack = [(21, "run.py - arc - Visual Studio Code", "code.exe"), (22, "notes.txt - Notepad", "notepad.exe")]
+pc._window_at = lambda x, y: stack[0][:2]
+pc._focused = lambda: stack[0][:2]
+pc._exe_of = lambda h: next((e for hh, _, e in stack if hh == h), "")
+minimised.clear()
+pc._minimize = lambda h: (minimised.append(h), stack.pop(0) if stack and stack[0][0] == h else None)
+c("  a click: the editor is minimised", pc.step_aside_editor((100, 100)), True)
+c("  ...only the editor", minimised, [21])
+c("  and the lock then judges what is behind it", pc.input_refusal((100, 100)), None)
+stack[:] = [(31, "Windows PowerShell", "powershell.exe")]
+minimised.clear()
+c("  a terminal in front is never moved aside", (pc.step_aside_editor(), minimised), (False, []))
+c.truthy("  and still refused", codeguard.LAW in (pc.input_refusal() or ""))
+stack[:] = [(41, "x - Cursor", "cursor.exe"), (42, "run.py - arc - Visual Studio Code", "code.exe"),
+            (43, "Spotify", "spotify.exe")]
+minimised.clear()
+c("  two editors stacked are both moved", (pc.step_aside_editor(), minimised), (True, [41, 42]))
+pc_src = open(ARC / "pc.py", encoding="utf-8").read()
+c.truthy("  mouse clicks, typing and the automation jobs all move an editor first",
+         pc_src.count("step_aside_editor(") >= 3 and
+         open(ARC / "automation.py", encoding="utf-8").read().count("pc.step_aside_editor(") == 3)
 
 print("\nThe law is written where the next person will read it:")
 src = open(ARC / "codeguard.py", encoding="utf-8").read()

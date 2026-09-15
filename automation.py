@@ -172,6 +172,7 @@ def auto_click(rate: float = 5, seconds: float = 30, button: str = "left",
     # one() for every click, because a spot that was a game when this started
     # can be an editor with ARC's code open by the time the tenth click lands.
     for spot in (spots or ["pointer"]):
+        pc.step_aside_editor(spot)      # the owner's choice: an editor is moved aside
         refusal = pc.input_refusal(spot)
         if refusal:
             return refusal
@@ -225,6 +226,7 @@ def hold_key(key: str = "", seconds: float = 5) -> str:
     except (TypeError, ValueError):
         seconds = 5.0
 
+    pc.step_aside_editor()
     refusal = pc.input_refusal()
     if refusal:
         return refusal
@@ -295,6 +297,7 @@ def key_macro(keys: str = "", repeat: int = 1, gap: float = 0.15) -> str:
     total = len(seq) * repeat
     seconds = min(total * gap + 1, MAX_SECONDS)
 
+    pc.step_aside_editor()
     refusal = pc.input_refusal()
     if refusal:
         return refusal
