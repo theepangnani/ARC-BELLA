@@ -75,6 +75,16 @@ $env:ARC_APP_VARIANT = 'private'   # light-blue-on-black logo + its own app name
 $py = Find-Python
 Start-Process -FilePath $py -ArgumentList 'run.py' -WorkingDirectory $root -WindowStyle Hidden
 
+# Mini Bella: a small circle at the bottom right while this Bella's window is
+# minimised; click it for a mini chat (bubble.py). The pythonw beside the
+# python found above, so there is no console. It keeps one circle per port on
+# its own, so launching twice is harmless. ARC_MINI_BELLA=off in arc.env skips it.
+if ($env:ARC_MINI_BELLA -ne 'off') {
+  $pyw = Join-Path (Split-Path $py -Parent) 'pythonw.exe'
+  if (-not (Test-Path $pyw)) { $pyw = $py }
+  Start-Process -FilePath $pyw -ArgumentList 'bubble.py', '--port', "$port" -WorkingDirectory $root -WindowStyle Hidden
+}
+
 Write-Host ''
 Write-Host "  Your private Bella is starting at  http://localhost:$port" -ForegroundColor Cyan
 Write-Host "  Data folder (yours only):          $data"
