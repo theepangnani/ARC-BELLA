@@ -1106,6 +1106,7 @@ passphrase any more.
 | `ARC_ALLOWED_HOSTS` | *(empty)* | Extra host names this server answers to, comma-separated (the funnel's `…ts.net` name when `ARC_PUBLIC_URL` is left empty). Loopback at the listening port and `ARC_PUBLIC_URL`'s host are always allowed; any other Host is refused with 421. |
 | `ARC_GUEST_DAILY_COST` | `1.0` | Dollars each guest may spend per day. Guests together never get more than half of `ARC_DAILY_COST_CAP`. `0` = no per-guest limit. |
 | `ARC_GUEST_DAILY_TURNS` | `150` | Replies each guest may have per day, and together at most half of `ARC_DAILY_CAP`. `0` = no per-guest limit. |
+| `ARC_GUEST_TURN_RESERVE` | `0.10` | Dollars a guest's reply counts for against the guests' share while it is still running, until its real cost is booked. |
 | `ARC_SECRET` | *(random)* | Signs the short-lived sign-in cookie. Set it, or a restart mid-sign-in fails. |
 | `ARC_AUTH_MODE` | `google` | `open` disables sign-in entirely, and is refused unless the bind is loopback. |
 | `ARC_STREAM` | *(off)* | `1` streams replies: the words arrive as they're written, so Bella starts speaking the first sentence sooner. A server without it answers the ordinary way, and the page falls back on its own. |
@@ -1245,8 +1246,10 @@ two replies running at once, and all guests together at most half of the day's
 spending cap and turn limit. The rest of the day is yours, so a busy guest can't
 use up the allowance and lock you out. Change the per-guest numbers with
 `ARC_GUEST_DAILY_COST` and `ARC_GUEST_DAILY_TURNS` (`0` means no per-guest
-limit). The half-share is checked before each reply starts, so guests together
-can run a little past it with replies already under way.
+limit). While a guest's reply is still running it counts against the guests'
+share at ten cents (`ARC_GUEST_TURN_RESERVE`) until its real cost is booked, so
+replies already under way can't carry guests past their half. Only a single
+reply costing more than that can nudge it over, and only by the difference.
 
 The list is **default-deny**: a tool added later is refused to guests until
 someone puts it in `GUEST_TOOLS` on purpose. ARC is also told it's on a guest
