@@ -150,6 +150,31 @@ try:
         run._guest_day["pending"][GUEST].extend([old, old])
         c("  a turn that never booked stops counting in time", ask(G).status_code, 200)
 
+        print("\nTurns still running count at their reserve:")
+        c("  the reserve per turn in flight", run.GUEST_TURN_RESERVE, 0.10)
+        fresh()
+        run.GUEST_DAILY_COST = 0
+        run.DAILY_COST_CAP = 0.30                # guests together: $0.15
+        now = time.time()
+        run._guest_day["pending"][OTHER].extend([now, now])   # $0.20 held, nothing booked
+        r = ask(G)
+        c("  another guest's two running turns fill the guests' share",
+          (r.status_code, "Guest accounts" in r.text), (429, True))
+        c("  ...while the owner is still answered", ask(O).status_code, 200)
+        fresh()
+        run.GUEST_DAILY_COST = 0.15
+        run._guest_day["spend"][GUEST] = 0.06
+        run._guest_day["pending"][GUEST].append(time.time())  # + $0.10 held = $0.16
+        r = ask(G)
+        c("  a guest's own running turn counts against their own dollars",
+          (r.status_code, "allowance" in r.text), (429, True))
+        fresh()
+        run._guest_day["spend"][GUEST] = 0.06
+        stale = time.time() - run.GUEST_PENDING_SECONDS - 1
+        run._guest_day["pending"][GUEST].append(stale)
+        c("  ...but one that stopped counting holds nothing back", ask(G).status_code, 200)
+        run.GUEST_DAILY_COST, run.DAILY_COST_CAP = real[0], real[2]
+
         print("\nA turn that fails still leaves flight:")
         fresh()
         mode["fail"] = True

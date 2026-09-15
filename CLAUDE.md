@@ -103,8 +103,10 @@ back.
 - **Guests have their own budget** inside the deployment's: $1 and 150 turns
   a day each (`ARC_GUEST_DAILY_COST`, `ARC_GUEST_DAILY_TURNS`), all guests
   together at most half of `ARC_DAILY_COST_CAP` and `ARC_DAILY_CAP`, and two
-  turns in flight per guest. The rest of the day is the owner's, so no guest
-  can lock the owner out. The numbers are the owner's to change.
+  turns in flight per guest, each counted at `ARC_GUEST_TURN_RESERVE` ($0.10)
+  until it books, so turns still running cannot carry guests past their share.
+  The rest of the day is the owner's, so no guest can lock the owner out. The
+  numbers are the owner's to change.
 - **A yes covers one action and its kind** (`consent.py`). With ask-first on, a
   held action gets a single-use token bound to the person, the browser, the
   tool and its exact arguments; the yes sends the token back, and that call

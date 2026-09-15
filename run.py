@@ -1951,6 +1951,10 @@ GUEST_DAILY_TURNS = int(os.getenv("ARC_GUEST_DAILY_TURNS", "150"))    # 0 = none
 GUEST_SHARE = 0.5
 GUEST_CONCURRENT = 2
 GUEST_PENDING_SECONDS = 300
+# What a guest turn still running is assumed to cost until it books. A long,
+# tool-heavy Sonnet turn is a few cents; guessing high only refuses a guest a
+# little early, while guessing low is the overshoot this exists to stop.
+GUEST_TURN_RESERVE = float(os.getenv("ARC_GUEST_TURN_RESERVE", "0.10"))
 _guest_day = {"stamp": time.strftime("%Y-%m-%d"), "spend": defaultdict(float),
               "turns": defaultdict(int), "pending": defaultdict(deque)}
 
@@ -1973,9 +1977,15 @@ def _guest_check(who: str, now: float) -> None:
         raise HTTPException(429, "One moment: I'm still working on your last question.")
     if GUEST_DAILY_TURNS and g["turns"][who] >= GUEST_DAILY_TURNS:
         raise HTTPException(429, "That's today's questions for this account. It resets tomorrow.")
-    if GUEST_DAILY_COST and g["spend"][who] >= GUEST_DAILY_COST:
+    # Spend is booked when a turn ends, so turns still running are counted at
+    # GUEST_TURN_RESERVE each. Without it, guests could pass their share by
+    # whatever their in-flight turns went on to cost (Claude 4's audit).
+    held = {k: sum(1 for t in v if now - t <= GUEST_PENDING_SECONDS) * GUEST_TURN_RESERVE
+            for k, v in g["pending"].items()}
+    if GUEST_DAILY_COST and g["spend"][who] + held.get(who, 0.0) >= GUEST_DAILY_COST:
         raise HTTPException(429, "That's today's allowance for this account. It resets tomorrow.")
-    if DAILY_COST_CAP > 0 and sum(g["spend"].values()) >= DAILY_COST_CAP * GUEST_SHARE:
+    if DAILY_COST_CAP > 0 and (sum(g["spend"].values()) + sum(held.values())
+                               >= DAILY_COST_CAP * GUEST_SHARE):
         raise HTTPException(429, "Guest accounts have used today's allowance. It resets tomorrow.")
     if sum(g["turns"].values()) >= DAILY_CAP * GUEST_SHARE:
         raise HTTPException(429, "Guest accounts have used today's questions. It resets tomorrow.")
