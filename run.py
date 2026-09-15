@@ -3145,7 +3145,11 @@ async def chat(request: Request, _=Depends(require_auth)):
             return
         booked.append(True)
         if error and not (tokens_in or tokens_out or cache_read or cache_write or searches):
-            return      # failed before any round came back: nothing was spent
+            # Failed before any round came back: nothing was spent, but it is
+            # still the commonest failure there is (the API overloaded on the
+            # first call), and Arc Watch's error count should see it.
+            stats.record(model=model, error=True, turn=False)
+            return
         _day["tok_in"] += tokens_in
         _day["tok_out"] += tokens_out
         _day["tok_cache_read"] += cache_read
@@ -3221,6 +3225,12 @@ async def chat(request: Request, _=Depends(require_auth)):
         except anthropic.APIStatusError as e:
             book(error=True)
             raise _claude_error(e)
+        except Exception:
+            # A streamed round that drops mid-reply raises httpx's own error
+            # (ReadTimeout, RemoteProtocolError), not one of the three above,
+            # and the rounds before it were still paid for.
+            book(error=True)
+            raise
 
         u = resp.usage
         tokens_in += getattr(u, "input_tokens", 0) or 0
@@ -4916,10 +4926,48 @@ SANDBOX_HOSTS = _sandbox_hosts()
 _refused_hosts: set = set()
 
 
+def _ip_host(host: str, port) -> bool:
+    """An IP address at the listening port: a phone on the same Wi-Fi opening
+    http://192.168.1.20:8420. DNS rebinding needs a NAME the attacker's DNS
+    answers for; a bare address has no DNS to rebind, so it is safe to allow."""
+    import ipaddress
+    h, _, p = host.rpartition(":")
+    if not h or p != str(port):
+        return False
+    try:
+        ipaddress.ip_address(h[1:-1] if h.startswith("[") and h.endswith("]") else h)
+        return True
+    except ValueError:
+        return False
+
+
+# Cloudflare's quick tunnel (start-tunnel.bat) invents a new name every run, so
+# it cannot be listed ahead. Its DNS is Cloudflare's, not a visitor's, so like a
+# ts.net name it cannot be pointed at this machine by somebody else's page.
+_QUICK_TUNNEL = re.compile(r"[a-z0-9-]+\.trycloudflare\.com")
+
+
 def host_allowed(host: str, port) -> bool:
     host = (host or "").strip().lower()
     return bool(host) and (host in loopback_hosts(port) or host in ALLOWED_HOSTS
-                           or host in SANDBOX_HOSTS)
+                           or host in SANDBOX_HOSTS or _ip_host(host, port)
+                           or bool(_QUICK_TUNNEL.fullmatch(host)))
+
+
+# Tailscale may not be up yet when the guardian starts ARC at logon, so the name
+# looked up at startup can be missing. A refused ts.net name asks again, at most
+# once a minute, and is let in if it turns out to be this machine's own.
+_ts_retry = {"at": 0.0}
+
+
+async def late_tailscale_name(host: str) -> bool:
+    if not host.endswith(".ts.net") or time.monotonic() - _ts_retry["at"] < 60:
+        return False
+    _ts_retry["at"] = time.monotonic()
+    name = await asyncio.to_thread(tailscale_name)
+    if name:
+        ALLOWED_HOSTS.add(name)
+    return bool(name) and name == host
 
 
 def origin_matches(headers: dict, host: str) -> bool:
@@ -4953,7 +5001,7 @@ class RequestGate:
         async def refuse(status, detail):
             await JSONResponse({"detail": detail}, status_code=status)(scope, receive, send)
 
-        if not host_allowed(host, port):
+        if not host_allowed(host, port) and not await late_tailscale_name(host):
             if host not in _refused_hosts and len(_refused_hosts) < 50:
                 _refused_hosts.add(host)
                 print(f"{C_AMBER}  ! refused a request for host {host[:80]!r}. If that "

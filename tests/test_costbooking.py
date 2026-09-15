@@ -85,7 +85,7 @@ def turn(script):
     try:
         async def go():
             sid = session.create(OWNER, "desk")
-            transport = httpx.ASGITransport(app=run.app)
+            transport = httpx.ASGITransport(app=run.app, raise_app_exceptions=False)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as cl:
                 return await cl.post("/api/chat", cookies={run.COOKIE: sid}, json={
                     "messages": [{"role": "user", "content": "weather in Toronto"}],
@@ -124,7 +124,9 @@ c.truthy("  and it counts towards the daily cap",
 print("\nA turn that fails before anything comes back:")
 status, recs, added = turn([overloaded()])
 c.truthy("  an error status", status >= 400)
-c("  books nothing", (len(recs), added), (0, 0.0))
+c("  costs nothing", added, 0.0)
+c("  but is still counted in Arc Watch's errors, as no turn and no spend",
+  [(r.get("error"), r.get("turn"), r.get("cost", 0)) for r in recs], [(True, False, 0)])
 
 print("\nA connection that drops, and a rate limit, book the same way:")
 req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
@@ -133,6 +135,12 @@ for label, exc in (("a dropped connection", anthropic.APIConnectionError(request
                    ("a rate limit", limited)):
     status, recs, added = turn([Resp([ToolBlk("weather")], Usage(500, 10), stop="tool_use"), exc])
     c("  %-21s books its first round, once" % label, (len(recs), recs[0]["tok_in"] if recs else 0), (1, 500))
+# What a streamed round raises when the reply stops arriving: httpx's own error,
+# not an anthropic one. The first round was still paid for.
+status, recs, added = turn([Resp([ToolBlk("weather")], Usage(500, 10), stop="tool_use"),
+                            httpx.ReadTimeout("stream stalled", request=req)])
+c("  a stream that stalls      books its first round, once",
+  (len(recs), recs[0]["tok_in"] if recs else 0, bool(recs and recs[0].get("error"))), (1, 500, True))
 
 print("\nThe rolling note (/api/summarize) is on Arc Watch, not only on the cap:")
 note_records = []

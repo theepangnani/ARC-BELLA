@@ -114,6 +114,31 @@ c("  still not local", run.is_local_request(Request({
     "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8420), "query_string": b""})), False)
 run.ALLOWED_HOSTS.discard(FAKE)
 run.shutil.which = real_which
+
+print("\nThe other ways README gives a phone, and a Tailscale that was late:")
+c("  a phone on the same Wi-Fi, by address", run.host_allowed("192.168.1.20:8420", 8420), True)
+c("  an IPv6 address too", run.host_allowed("[fe80::1]:8420", 8420), True)
+c("  but only at the listening port", run.host_allowed("192.168.1.20:9999", 8420), False)
+c("  and a name that merely looks like one is not", run.host_allowed("192.168.1.20.evil.example:8420", 8420), False)
+c("  Cloudflare's quick tunnel, whatever it is called today",
+  run.host_allowed("brave-otter-tuesday.trycloudflare.com", 8420), True)
+c("  but not a lookalike", run.host_allowed("trycloudflare.com.evil.example", 8420), False)
+c("  a Wi-Fi address is still not local", run.is_local_request(Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"host", b"192.168.1.20:8420")], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8420), "query_string": b""})), False)
+late = FAKE
+real_name = run.tailscale_name
+calls = []
+run.tailscale_name = lambda *a, **k: (calls.append(1), late)[1]
+run._ts_retry["at"] = -1e9
+c("  a ts.net name missing at startup is asked for again, and let in",
+  local.get("/api/health", headers={"host": late}).status_code, 401)
+run.ALLOWED_HOSTS.discard(late)
+c("  but not asked again within the minute",
+  (local.get("/api/health", headers={"host": late}).status_code, len(calls)), (421, 1))
+run._ts_retry["at"] = -1e9
+c("  and only this machine's own name gets in",
+  local.get("/api/health", headers={"host": "other.example.ts.net"}).status_code, 421)
+run.tailscale_name = real_name
+run.ALLOWED_HOSTS.discard(late)
 for fn in ("main", "serve_cloud"):
     src = inspect.getsource(getattr(run, fn))
     c.truthy("  %s looks before it serves" % fn,
