@@ -304,9 +304,31 @@ def _stems(text: str) -> set:
     return {_stem(w) for w in _keys(text)}
 
 
+# Words that can sit in front of the subject: "The user's…", "my…", "I…".
+_LEAD = {"the", "a", "an", "i", "my", "s"}
+
+
+def _about(text: str, subjects) -> set:
+    """The meaning-carrying stems once the SUBJECT is set aside.
+
+    Only the words the fact opens with are the subject. Setting subject words
+    aside wherever they appeared folded "Maya is a guest" onto "Maya is a user"
+    and "Maya likes him" onto "Maya likes them" — the subject words there are
+    what the fact SAYS, and one replaced the other (Claude 2, landing Claude 5's
+    recall work). So "The owner likes hiking" and "The user likes to hike" are
+    still one fact, and those two pairs are two each.
+    """
+    subj = {_stem(w) for w in subjects}
+    words = re.findall(r"[^\W\d_]+", (text or "").lower(), re.UNICODE)
+    i = 0
+    while i < len(words) and (words[i] in _LEAD or _stem(words[i]) in subj):
+        i += 1
+    kept = " ".join(words[i:])
+    return _stems(kept) - {_stem(w) for w in _PHRASING}
+
+
 def _supersedes(new: str, old: str, subjects=frozenset(_SELF)) -> bool:
-    drop = {_stem(w) for w in _PHRASING | set(subjects)}
-    a, b = _stems(new) - drop, _stems(old) - drop
+    a, b = _about(new, subjects), _about(old, subjects)
     return bool(a) and a == b
 
 

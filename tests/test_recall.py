@@ -331,6 +331,25 @@ memory.remember("His sister's name is Maya")
 memory.remember("Maya is learning Python")
 memory.remember("The owner is learning Python")
 c("  a sister's name is not taken for theirs", memory.count(), 3)
+# Only the words a fact OPENS with are its subject. Anywhere else, "guest",
+# "user", "him" and "them" are what the fact says, and folding them away made
+# "Maya is a guest" replace "Maya is a user" (Claude 2, landing the recall work).
+for first, second in (("Maya is a user", "Maya is a guest"),
+                      ("Maya likes him", "Maya likes them")):
+    fresh()
+    memory.remember(first)
+    memory.remember(second)
+    c("  a subject word later in the fact is part of it: %r / %r" % (first, second),
+      texts(), [first, second])
+fresh()
+memory.remember("The owner likes hiking")
+memory.remember("The user likes to hike")
+c("  ...while 'the owner' and 'the user' in front still fold together",
+  texts(), ["The user likes to hike"])
+fresh()
+memory.remember("I like green tea")
+memory.remember("The owner likes green tea")
+c("  and 'I' in front is the same subject as 'the owner'", texts(), ["The owner likes green tea"])
 
 print("\nA name is per person, like everything else here:")
 fresh()
