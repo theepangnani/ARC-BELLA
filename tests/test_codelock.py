@@ -92,11 +92,11 @@ bad = [
     ("base64 decoding",          "[Convert]::FromBase64String($x)"),
     ("python -c",                "python -c \"open('x','w')\""),
     # A path that does not SPELL the folder but resolves to it.
-    # Built from this folder's own drive. It was "C:\Windows\..\" + the rest of
-    # the path, which on a runner that checks the repo out onto D: pointed at
-    # C:\a\... — a real path into nothing, correctly not refused, and CI red for
-    # a lock that was working. Same rule as the bypasses below: from the
-    # environment, never typed out.
+    # Built from this folder's own drive. It used to name the system drive and
+    # the Windows folder outright, so on a runner that checks the repo out onto
+    # another drive it walked into somewhere that does not exist — correctly not
+    # refused, and CI red for a lock that was working. Same rule as the bypasses
+    # below, and the one test_meta enforces: from the environment, never typed.
     ("a .. path into the folder",
      "notepad %s%s\\..\\%s\\run.py" % (_anchor, _first, root[len(_anchor):])),
     ("a quoted .. path",         'type "%s\\static\\..\\run.py"' % root),
