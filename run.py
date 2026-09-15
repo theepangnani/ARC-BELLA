@@ -3589,6 +3589,12 @@ async def chat(request: Request, _=Depends(require_auth)):
         # One entry per held action: its token and what it would do. The page
         # shows the preview and sends the tokens back with a yes (consent.py).
         "consent": consent_needed,
+        # Tools through which this person read outside text lately (this turn
+        # or the last OUTSIDE_WINDOW). Names only. The page asks before it
+        # acts on an alarm, timer or watchlist directive while this is
+        # non-empty: those run in the page with no tool gate, so a line
+        # planted in a mail and quoted back would otherwise just run.
+        "outside": lessons.read_outside_within(),
         "cost_today": round(_day_cost(), 4),
     })
 

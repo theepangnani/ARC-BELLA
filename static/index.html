@@ -2618,6 +2618,33 @@ You are an upbeat, motivating coach in the user's corner.
     d.appendChild(row);
   }
 
+  /* The same question for what a reply would DO in this page: set an alarm or
+     a timer, cancel timers, change the watchlist. Those directives run here,
+     with no tool and so no consent gate, and a line planted in a mail or a web
+     page that Bella quotes back would otherwise just run — cancelling the
+     owner's alarm, say. So while the server says this person read outside
+     text lately (data.outside), each one waits for a click. `what` is shown
+     through textContent; `run` is the directive's own action, unchanged. */
+  function askToDo(what, run) {
+    const d = addEntry("sys", "SYSTEM", "Bella wants to " + what +
+      ". This came up while reading something from outside. Do it?");
+    if (!d) return;
+    const row = document.createElement("div");
+    row.className = "remember-ask";
+    const yes = document.createElement("button");
+    yes.type = "button"; yes.textContent = "Do it";
+    const skip = document.createElement("button");
+    skip.type = "button"; skip.textContent = "Skip";
+    const done = said => { row.textContent = said; };
+    yes.addEventListener("click", () => {
+      yes.disabled = skip.disabled = true;
+      try { run(); done("Done."); } catch (_) { done("Couldn't do that."); }
+    });
+    skip.addEventListener("click", () => done("Not done."));
+    row.append(yes, skip);
+    d.appendChild(row);
+  }
+
   /* ---------------- thread continuity ----------------
      Discrete facts (above) answer "what do I know about this person"; this note
      answers "what are we in the middle of". It's a compact, rolling digest of
@@ -3313,8 +3340,13 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
 
   /* Directives ARC can put at the end of a reply. All are stripped before
      anything is spoken, so they never interrupt the conversation. */
-  function extractDirectives(text) {
+  function extractDirectives(text, outside) {
     let silent = false;
+    // After outside reading, an alarm, timer or watchlist change asks first
+    // (askToDo). Otherwise it runs at once, as it always has.
+    const act = (outside && outside.length)
+      ? (what, run) => askToDo(what, run)
+      : (_what, run) => run();
 
     // The board comes out FIRST, before any other rule gets to look at the
     // text. What ARC shows is quoted material — a lesson on ARC's own markers
@@ -3333,21 +3365,30 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
     });
 
     out = out.replace(/\[\[\s*timer\s*:\s*(\d+)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi, (_, secs, label) => {
-      startTimer(parseInt(secs, 10), label || "");
+      act("start a " + secs + "-second timer" + (label ? " (" + label + ")" : ""),
+          () => startTimer(parseInt(secs, 10), label || ""));
       return "";
     });
 
     out = out.replace(/\[\[\s*alarm\s*:\s*([^\]|]+?)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi, (_, when, label) => {
-      startAlarm(when, label || "");
+      act("set an alarm for " + when + (label ? " (" + label + ")" : ""),
+          () => startAlarm(when, label || ""));
       return "";
     });
 
     out = out.replace(/\[\[\s*canceltimer\s*(?::\s*([^\]]*?))?\s*\]\]/gi, (_, which) => {
-      cancelTimers(which || "");
+      act(which ? "cancel the timer " + which : "cancel your timers",
+          () => cancelTimers(which || ""));
       return "";
     });
 
     out = out.replace(/\[\[\s*market\s*:\s*(add|remove|del|delete|drop|watch|chart)\s+([^\]]+?)\s*\]\]/gi, (_, op, name) => {
+      act((/^(add|watch|chart)$/i.test(op) ? "add " + name + " to" : "remove " + name + " from") +
+          " your watchlist", () => marketDirective(op, name));
+      return "";
+    });
+
+    function marketDirective(op, name) {
       if (window.arcMarket) {
         if (/^add$/i.test(op)) window.arcMarket.add(name);
         // "watch Nvidia" puts it on the chart AND on the panel: asking to
@@ -3360,8 +3401,7 @@ If a different person tells you it is them, end with [[learner: <their name>]] s
         }
         else window.arcMarket.remove(name);
       }
-      return "";
-    });
+    }
 
     // [[mode: work|relax|business|off]] — the same three buttons, by voice.
     // Client-side like the markets panel: it changes this screen and how ARC
@@ -6821,7 +6861,7 @@ Answer questions about the date, day, or time directly from the above. Do not sa
     // Directives come out FIRST, markdown second. The board carries code, and
     // code is made of exactly the characters the markdown strip removes.
     const raw = (data.reply || "").trim();
-    const out = extractDirectives(raw);
+    const out = extractDirectives(raw, data.outside);
 
     state.history = pending.concat([{ role: "assistant", content: out.text || "…" }]);
     el.rSearch.textContent = data.searched ? "USED" : "IDLE";

@@ -41,7 +41,10 @@ print("\nThe whiteboard:")
 c.truthy("  addBoard exists", "function addBoard" in page)
 
 print("\nMarkdown is stripped AFTER directives are extracted, not before:")
-c.truthy("  the reply goes to extractDirectives raw", "extractDirectives(raw)" in page)
+# Moved once: the call also carries data.outside now, so an alarm or timer
+# directive after outside reading asks first (tests/test_directiveconsent.py).
+# The point pinned here is unchanged: the RAW reply goes in.
+c.truthy("  the reply goes to extractDirectives raw", "extractDirectives(raw, data.outside)" in page)
 c.truthy("  ...untrimmed of formatting first", 'const raw = (data.reply || "").trim();' in page)
 c("  the old pre-strip is gone from the chat path",
   'const raw = (data.reply || "").replace(/[*_#`]/g' in page, False)
