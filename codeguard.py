@@ -398,7 +398,8 @@ def check_window(title: str, exe: str = "", typing: bool = True):
     if e in _IDES:
         return (f"{LAW} — the window in front is a code editor with a terminal "
                 f"inside it ({e}), and from outside I cannot tell which one the "
-                f"keystrokes would reach.")
+                f"keystrokes would reach. Minimise it or bring the window you want "
+                f"to the front, and ask me again.")
     if _norm(str(ROOT)) in _norm(t):
         return f"{LAW} — the window in front is showing ARC's own folder."
     # Editors that show the whole path (Notepad++, Sublime) say exactly which
