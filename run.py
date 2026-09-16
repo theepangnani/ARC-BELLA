@@ -5589,6 +5589,40 @@ def _find_browser() -> str:
     return shutil.which("chrome") or shutil.which("msedge") or ""
 
 
+# Which process owns Bella's own window, for Mini Bella (bubble.py). Both
+# instances title their window the same, so the circle could show for the
+# shared ARC while the private Bella was minimised, and restore the wrong one.
+# The pid is per data directory, so each instance names its own.
+WINDOW_FILE = DATA_DIR / "window.json"
+
+
+def note_window(pid: int, port: int) -> None:
+    try:
+        storefile.write(WINDOW_FILE, {"pid": int(pid), "port": int(port), "at": time.time()}, indent=2)
+    except Exception:
+        pass            # a missing note only costs Mini Bella its certainty
+
+
+def start_mini_bella(port: int) -> None:
+    """The circle in the corner while this Bella is minimised. Started here so
+    it comes back with the server: the guardian restarts run.py, not the
+    launcher, so after a crash the circle was simply gone. bubble.py holds a
+    mutex per port, so a second one exits at once. ARC_MINI_BELLA=off skips it."""
+    if sys.platform != "win32" or CLOUD:
+        return
+    if os.getenv("ARC_MINI_BELLA", "").strip().lower() == "off":
+        return
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    try:
+        subprocess.Popen([str(pyw if pyw.exists() else exe), str(ROOT / "bubble.py"),
+                          "--port", str(port)],
+                         cwd=str(ROOT),
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        print(f"{C_DIM}  Mini Bella did not start ({type(e).__name__}){C_OFF}")
+
+
 def open_window(port: int):
     """Open Bella as its own chromeless app window. Chromium '--app' mode keeps
     real speech recognition working (a native webview wrapper would not), while
@@ -5602,7 +5636,7 @@ def open_window(port: int):
         webbrowser.open(url)
         return
     try:
-        subprocess.Popen([
+        proc = subprocess.Popen([
             exe,
             f"--app={url}",
             f"--user-data-dir={WINDOW_PROFILE}",
@@ -5610,6 +5644,7 @@ def open_window(port: int):
             "--no-first-run",
             "--no-default-browser-check",
         ])
+        note_window(proc.pid, port)
     except Exception as e:
         print(f"{C_DIM}  window launch failed ({e}) â€” opening a normal tab{C_OFF}")
         webbrowser.open(url)
@@ -5741,6 +5776,7 @@ def main():
     if not port_free(PORT):
         print(f"{C_DIM}  ARC is already running on {PORT} â€” opening a window{C_OFF}")
         open_window(PORT)
+        start_mini_bella(PORT)
         return
 
     if not auth_preflight():
@@ -5749,6 +5785,7 @@ def main():
     banner(PORT)
 
     threading.Timer(1.2, lambda: open_window(PORT)).start()
+    threading.Timer(2.0, lambda: start_mini_bella(PORT)).start()
 
     allow_tailscale_name()
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning", **_UVICORN_PROXY)

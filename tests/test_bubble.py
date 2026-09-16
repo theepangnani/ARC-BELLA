@@ -74,6 +74,44 @@ if mini.exists():
 else:
     print("  NOTE  static/mini.html not written yet; its title is checked once it is.")
 
+print("\nWhich Bella the circle belongs to (owner, 15 Sep):")
+# (title, exe, minimised, hwnd, pid). Both Bellas title their window the same,
+# so without the note the private Bella's circle showed for the shared one.
+MINE, THEIRS = 111, 222
+both = [(B, "chrome.exe", True, 11, MINE), (B, "chrome.exe", False, 22, THEIRS)]
+c("  ours minimised, theirs in front: shown", bubble.should_show(both, MINE), True)
+c("  ours in front, theirs minimised: hidden",
+  bubble.should_show([(B, "chrome.exe", False, 11, MINE), (B, "chrome.exe", True, 22, THEIRS)], MINE), False)
+c("  with no note, every Bella counts, as before", bubble.should_show(both, 0), False)
+c("  a note naming a process with no window falls back to every Bella",
+  bubble.should_show(both, 999), False)
+c("  and the window it brings back is ours", [w[3] for w in bubble.mine(both, MINE)], [11])
+data = sandbox_dir = os.environ.get("ARC_DATA_DIR", "")
+c("  the pid is read from the data folder's window.json",
+  bubble.window_pid({"ARC_DATA_DIR": data}), 0)
+io.open(os.path.join(data, "window.json"), "w", encoding="utf-8").write('{"pid": 4242, "port": 8421}')
+c("  ...once run.py has written it", bubble.window_pid({"ARC_DATA_DIR": data}), 4242)
+c("  a damaged note is no note", (io.open(os.path.join(data, "window.json"), "w",
+                                          encoding="utf-8").write("not json"),
+                                 bubble.window_pid({"ARC_DATA_DIR": data}))[1], 0)
+os.remove(os.path.join(data, "window.json"))
+
+print("\nIt survives its own mistakes, and can always be closed:")
+c.truthy("  the poll catches everything, not only OSError",
+         "except Exception:" in io.open(ARC / "bubble.py", encoding="utf-8").read())
+c.truthy("  a middle click closes it",
+         'canvas.bind("<Button-2>", quit_circle)' in io.open(ARC / "bubble.py", encoding="utf-8").read())
+
+print("\nThe server starts it, so it comes back with a restart:")
+run_src = io.open(ARC / "run.py", encoding="utf-8").read()
+c.truthy("  run.py starts bubble.py with its own port",
+         'str(ROOT / "bubble.py"),' in run_src and '"--port", str(port)' in run_src)
+c.truthy("  without a console window", "CREATE_NO_WINDOW" in run_src)
+c.truthy("  and can be switched off", 'os.getenv("ARC_MINI_BELLA", "").strip().lower() == "off"' in run_src)
+c.truthy("  never in the cloud, never off Windows",
+         'if sys.platform != "win32" or CLOUD:' in run_src)
+c.truthy("  and run.py notes which process owns its window", "note_window(proc.pid, port)" in run_src)
+
 print("\nThe private Bella starts it:")
 launch = io.open(ARC / "launch-bella-private.ps1", encoding="utf-8-sig").read()
 c.truthy("  launched with its port, without a console",

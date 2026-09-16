@@ -25,6 +25,7 @@ It talks to nothing itself: no HTTP, no files but its logo. Run it with
 pythonw so there is no console: `pythonw bubble.py --port 8421`.
 """
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -104,11 +105,34 @@ def chat_command(exe: str, port: int, profile: Path, pos) -> list:
             "--no-first-run", "--no-default-browser-check"]
 
 
-def should_show(windows) -> bool:
-    """windows: (title, exe, minimised) for every top-level window. Shown while
-    a Bella window exists and every one of them is minimised: one in front
-    means she is right there, and none at all means she is not running."""
+def window_pid(env) -> int:
+    """The process that owns THIS instance's Bella window, as run.py recorded
+    it in the data folder (window.json). Both Bellas title their window the
+    same, so without this the circle for the private Bella showed while the
+    shared one was minimised, and brought back the wrong window. 0 when there
+    is no note yet, and then the title is all there is to go on."""
+    try:
+        blob = json.loads((Path(env.get("ARC_DATA_DIR") or ROOT).resolve()
+                           / "window.json").read_text(encoding="utf-8"))
+        return int(blob.get("pid") or 0)
+    except Exception:
+        return 0
+
+
+def mine(windows, pid: int) -> list:
+    """Bella's windows: this instance's, when the noted process still has one,
+    and otherwise every Bella window, as before the note existed."""
     bella = [w for w in windows if w[0] == BELLA_TITLE and w[1] in BROWSERS]
+    ours = [w for w in bella if pid and len(w) > 4 and w[4] == pid]
+    return ours or bella
+
+
+def should_show(windows, pid: int = 0) -> bool:
+    """windows: (title, exe, minimised[, hwnd, pid]) for every top-level
+    window. Shown while a Bella window exists and every one of them is
+    minimised: one in front means she is right there, and none at all means
+    she is not running."""
+    bella = mine(windows, pid)
     return bool(bella) and all(w[2] for w in bella)
 
 
@@ -148,7 +172,7 @@ def top_windows():
                     exe = os.path.basename(path.value).lower()
             finally:
                 k.CloseHandle(h)
-        out.append((buf.value, exe, bool(u.IsIconic(hwnd)), hwnd))
+        out.append((buf.value, exe, bool(u.IsIconic(hwnd)), hwnd, pid.value))
         return True
 
     u.EnumWindows(proto(each), 0)
@@ -219,28 +243,40 @@ def main(argv=None) -> int:
         root.geometry("%dx%d+%d+%d" % (SIZE, SIZE, x, y))
 
     def open_chat(_event=None):
-        for title, wexe, _mini, hwnd in top_windows():
-            if title == MINI_TITLE and wexe in BROWSERS:
-                bring_forward(hwnd)
+        for w in top_windows():
+            if w[0] == MINI_TITLE and w[1] in BROWSERS:
+                bring_forward(w[3])
                 return
         subprocess.Popen(chat_command(exe, port, profile_dir(os.environ), chat_position(work_area())))
 
     def open_bella(_event=None):
-        for title, wexe, _mini, hwnd in top_windows():
-            if title == BELLA_TITLE and wexe in BROWSERS:
-                bring_forward(hwnd)
-                return
+        for w in mine(top_windows(), window_pid(os.environ)):
+            bring_forward(w[3])
+            return
+
+    def quit_circle(_event=None):
+        """A middle click closes Mini Bella, so a circle that ever gets stuck
+        is one click to be rid of. run.py starts it again on the next restart."""
+        root.destroy()
 
     canvas.bind("<Button-1>", open_chat)
     canvas.bind("<Button-3>", open_bella)
+    canvas.bind("<Button-2>", quit_circle)
 
     shown = {"now": True}
 
+    trouble = {"n": 0}
+
     def tick():
         try:
-            want = should_show([w[:3] for w in top_windows()])
-        except OSError:
-            want = False
+            want = should_show(top_windows(), window_pid(os.environ))
+            trouble["n"] = 0
+        except Exception:
+            # Any failure at all, not only OSError: a Tcl error or a bad window
+            # handle used to end the poll, and the circle then sat there for
+            # ever, showing or hidden, with nothing left to change it.
+            trouble["n"] += 1
+            want = shown["now"] if trouble["n"] < 5 else False
         if want and not shown["now"]:
             place()
             root.deiconify()
